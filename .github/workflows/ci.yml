@@ -44,6 +44,15 @@ jobs:
       - name: Run Rust lints
         run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 
+      - name: Build documentation
+        run: cargo doc --manifest-path rust/Cargo.toml --no-deps --all-features
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-docs
+          path: rust/target/doc/
+
   luau-lint:
     name: Luau Lint
     runs-on: ubuntu-latest
