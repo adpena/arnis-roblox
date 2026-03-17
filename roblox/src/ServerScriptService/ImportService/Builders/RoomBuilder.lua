@@ -56,53 +56,8 @@ local function addRoomToMesh(editableMesh, points, floorY, height, indices)
 	end
 end
 
-function RoomBuilder.BuildAll(parent, buildings, originStuds)
-	-- We'll merge rooms by floor material to keep draw calls low
-	local groups = {}
-	for _, bldg in ipairs(buildings) do
-		for _, room in ipairs(bldg.rooms or {}) do
-			local mat = room.floorMaterial or "WoodPlanks"
-			if not groups[mat] then
-				groups[mat] = {}
-			end
-			table.insert(groups[mat], { room = room, buildingIndices = bldg.indices })
-		end
-	end
-
-	for matName, group in pairs(groups) do
-		local meshPart = Instance.new("MeshPart")
-		meshPart.Name = "MergedRooms_" .. matName
-		meshPart.Anchored = true
-		meshPart.CanCollide = true
-		
-		local successMat, material = pcall(function()
-			return Enum.Material[matName]
-		end)
-		meshPart.Material = successMat and material or Enum.Material.WoodPlanks
-		
-		meshPart.Transparency = 0 -- Keep slabs opaque
-		meshPart.Parent = parent
-
-		local editableMesh
-		local success, _ = pcall(function()
-			editableMesh = AssetService:CreateEditableMesh()
-		end)
-
-		if success and editableMesh then
-			for _, entry in ipairs(group) do
-				local points = {}
-				for _, p in ipairs(entry.room.footprint) do
-					table.insert(points, offsetPoint(p, originStuds))
-				end
-				if #points >= 3 then
-					addRoomToMesh(editableMesh, points, entry.room.floorY, entry.room.height, entry.buildingIndices)
-				end
-			end
-			editableMesh.Parent = meshPart
-		else
-			meshPart:Destroy()
-		end
-	end
+-- RoomBuilder is a future feature; rooms are not yet emitted by the pipeline.
+function RoomBuilder.BuildAll(_parent, _buildings, _originStuds)
 end
 
 return RoomBuilder

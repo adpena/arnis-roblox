@@ -156,69 +156,14 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 	end
 end
 
--- Optimized entry point to build ALL buildings in a chunk into merged MeshParts
+-- Build ALL buildings in a chunk using Part-based geometry.
 function BuildingBuilder.BuildAll(parent, buildings, originStuds)
 	if not buildings or #buildings == 0 then
 		return
 	end
 
-	local groups = {}
 	for _, bldg in ipairs(buildings) do
-		local material = getMaterial(bldg.material, bldg.kind)
-		local color = getColor3(bldg.color)
-		local key = material.Name .. (color and tostring(color) or "none")
-		
-		if not groups[key] then
-			groups[key] = {
-				material = material,
-				color = color,
-				buildings = {}
-			}
-		end
-		table.insert(groups[key].buildings, bldg)
-	end
-
-	for _, group in pairs(groups) do
-		local meshPart = Instance.new("MeshPart")
-		meshPart.Name = "MergedBuildings_" .. group.material.Name
-		meshPart.Anchored = true
-		meshPart.CanCollide = true
-		meshPart.Material = group.material
-		if group.color then
-			meshPart.Color = group.color
-		end
-		meshPart.Parent = parent
-
-		local editableMesh
-		local success, err = pcall(function()
-			editableMesh = AssetService:CreateEditableMesh()
-		end)
-
-		if success and editableMesh then
-			for _, bldg in ipairs(group.buildings) do
-				local points = {}
-				for _, p in ipairs(bldg.footprint) do
-					table.insert(points, offsetPoint(p, originStuds))
-				end
-				if #points >= 3 then
-					addBuildingToMesh(editableMesh, points, bldg.baseY or 0, bldg.height or 20, bldg.indices, bldg.levels, bldg.roofLevels)
-				end
-			end
-			editableMesh.Parent = meshPart
-			
-			-- SurfaceAppearance logic (PBR overrides)
-			-- Check if we have a template for this material/style
-			local template = ReplicatedStorage.Assets:FindFirstChild("Materials") and ReplicatedStorage.Assets.Materials:FindFirstChild(group.material.Name)
-			if template and template:IsA("SurfaceAppearance") then
-				template:Clone().Parent = meshPart
-			end
-		else
-			Logger.warn("Failed to create EditableMesh for merged buildings:", err or "unknown error")
-			meshPart:Destroy()
-			for _, bldg in ipairs(group.buildings) do
-				BuildingBuilder.FallbackBuild(parent, bldg, originStuds)
-			end
-		end
+		BuildingBuilder.FallbackBuild(parent, bldg, originStuds)
 	end
 end
 

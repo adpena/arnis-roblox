@@ -1,7 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local AssetService = game:GetService("AssetService")
 
-local Logger = require(ReplicatedStorage.Shared.Logger)
+local _Logger = require(ReplicatedStorage.Shared.Logger) -- reserved for future use
 
 local WaterBuilder = {}
 
@@ -102,71 +101,15 @@ local function addPolygonToMesh(editableMesh, points, indices)
 	end
 end
 
--- New optimized entry point to build ALL water features in a chunk into a single MeshPart
+-- Build ALL water features in a chunk using Part-based geometry.
+-- EditableMesh is skipped as it is not reliably available in all Studio/server contexts.
 function WaterBuilder.BuildAll(parent, waters, originStuds)
 	if not waters or #waters == 0 then
 		return
 	end
 
-	local groups = {}
 	for _, water in ipairs(waters) do
-		local material = getMaterial(water.material)
-		local color = getColor3(water.color)
-		local key = material.Name .. (color and tostring(color) or "none")
-		
-		if not groups[key] then
-			groups[key] = {
-				material = material,
-				color = color,
-				waters = {}
-			}
-		end
-		table.insert(groups[key].waters, water)
-	end
-
-	for _, group in pairs(groups) do
-		local meshPart = Instance.new("MeshPart")
-		meshPart.Name = "MergedWater_" .. group.material.Name
-		meshPart.Anchored = true
-		meshPart.CanCollide = true
-		meshPart.Transparency = 0.35
-		if group.color then
-			meshPart.Color = group.color
-		else
-			meshPart.Color = Color3.fromRGB(0, 100, 200)
-		end
-		meshPart.Material = group.material
-		meshPart.Parent = parent
-
-		local editableMesh
-		local success, err = pcall(function()
-			editableMesh = AssetService:CreateEditableMesh()
-		end)
-
-		if success and editableMesh then
-			for _, water in ipairs(group.waters) do
-				if water.points then
-					local pts = {}
-					for _, p in ipairs(water.points) do
-						table.insert(pts, offsetPoint(p, originStuds))
-					end
-					addRibbonToMesh(editableMesh, pts, water.widthStuds or 8)
-				elseif water.footprint then
-					local pts = {}
-					for _, p in ipairs(water.footprint) do
-						table.insert(pts, offsetPoint(p, originStuds))
-					end
-					addPolygonToMesh(editableMesh, pts, water.indices)
-				end
-			end
-			editableMesh.Parent = meshPart
-		else
-			Logger.warn("Failed to create EditableMesh for merged water:", err or "unknown error")
-			meshPart:Destroy()
-			for _, water in ipairs(group.waters) do
-				WaterBuilder.FallbackBuild(parent, water, originStuds)
-			end
-		end
+		WaterBuilder.FallbackBuild(parent, water, originStuds)
 	end
 end
 

@@ -98,61 +98,14 @@ local function addRibbonToMesh(editableMesh, points, width, lanes)
 	end
 end
 
--- New optimized entry point to build ALL roads in a chunk into a single MeshPart
+-- Build ALL roads in a chunk using Part-based geometry.
 function RoadBuilder.BuildAll(parent, roads, originStuds)
 	if not roads or #roads == 0 then
 		return
 	end
 
-	-- Group roads by material and color to minimize MeshParts
-	local groups = {}
 	for _, road in ipairs(roads) do
-		local material = getMaterial(road.material, road.kind)
-		local color = getColor3(road.color)
-		local key = material.Name .. (color and tostring(color) or "none")
-		
-		if not groups[key] then
-			groups[key] = {
-				material = material,
-				color = color,
-				roads = {}
-			}
-		end
-		table.insert(groups[key].roads, road)
-	end
-
-	for _, group in pairs(groups) do
-		local meshPart = Instance.new("MeshPart")
-		meshPart.Name = "MergedRoads_" .. group.material.Name
-		meshPart.Anchored = true
-		meshPart.CanCollide = true
-		meshPart.Material = group.material
-		if group.color then
-			meshPart.Color = group.color
-		end
-		meshPart.Parent = parent
-
-		local editableMesh
-		local success, err = pcall(function()
-			editableMesh = AssetService:CreateEditableMesh()
-		end)
-
-		if success and editableMesh then
-			for _, road in ipairs(group.roads) do
-				local points = {}
-				for _, p in ipairs(road.points) do
-					table.insert(points, offsetPoint(p, originStuds))
-				end
-				addRibbonToMesh(editableMesh, points, road.widthStuds or 10, road.lanes)
-			end
-			editableMesh.Parent = meshPart
-		else
-			Logger.warn("Failed to create EditableMesh for merged roads:", err or "unknown error")
-			meshPart:Destroy()
-			for _, road in ipairs(group.roads) do
-				RoadBuilder.FallbackBuild(parent, road, originStuds)
-			end
-		end
+		RoadBuilder.FallbackBuild(parent, road, originStuds)
 	end
 end
 

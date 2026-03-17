@@ -99,12 +99,14 @@ impl Mercator {
     }
 
     /// Projects a LatLon to local studs relative to a center point.
+    /// X+ = East, Z+ = South (matches Roblox/Minecraft convention).
     pub fn project(latlon: LatLon, center: LatLon, meters_per_stud: f64) -> Vec3 {
         let (cx, cy) = Self::latlon_to_meters(center);
         let (px, py) = Self::latlon_to_meters(latlon);
 
         let dx = (px - cx) / meters_per_stud;
-        let dz = (py - cy) / meters_per_stud;
+        // Negate: Mercator Y increases northward, but Roblox Z+ = south.
+        let dz = (cy - py) / meters_per_stud;
 
         Vec3::new(dx as f32, 0.0, dz as f32)
     }

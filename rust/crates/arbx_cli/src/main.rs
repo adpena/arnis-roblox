@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use arbx_geo::{BoundingBox, PerlinElevationProvider};
+use arbx_geo::{BoundingBox, FlatElevationProvider};
 use arbx_pipeline::{run_pipeline, NormalizeStage, TriangulateStage, ValidateStage};
 use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig};
 
@@ -71,7 +71,8 @@ fn cmd_sample(args: &[String]) -> Result<(), String> {
 fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut out_path: Option<PathBuf> = None;
     let mut source_path: Option<PathBuf> = None;
-    let mut bbox = BoundingBox::new(30.245, -97.765, 30.305, -97.715);
+    // Default bbox covers downtown Austin. Overridden by --bbox to match the OSM fetch area.
+    let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
 
     let mut i = 0;
     while i < args.len() {
@@ -140,7 +141,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("pipeline failed: {:?}", e))?;
 
     let config = ExportConfig::default();
-    let elevation = PerlinElevationProvider::default();
+    let elevation = FlatElevationProvider { height: 0.0 };
     let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation).to_json_pretty();
     let duration = start.elapsed();
 

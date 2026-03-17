@@ -397,12 +397,16 @@ impl SourceAdapter for OverpassAdapter {
                 } else if let Some(highway) = tags.get("highway") {
                     let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
                     let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
+                    let width_studs = tags
+                        .get("width")
+                        .and_then(|w| w.parse::<f32>().ok())
+                        .unwrap_or_else(|| road_width_from_kind(highway));
 
                     features.push(Feature::Road(RoadFeature {
                         id: format!("osm_{}", el.id),
                         kind: highway.clone(),
                         lanes,
-                        width_studs: 12.0, // default width
+                        width_studs,
                         has_sidewalk,
                         points,
                     }));
@@ -457,6 +461,22 @@ impl SourceAdapter for OverpassAdapter {
 
 fn tracks_from_tags(tags: &HashMap<String, String>) -> Option<u32> {
     tags.get("railway:tracks").and_then(|l| l.parse().ok())
+}
+
+fn road_width_from_kind(kind: &str) -> f32 {
+    match kind {
+        "motorway" | "motorway_link" => 28.0,
+        "trunk" | "trunk_link" => 24.0,
+        "primary" | "primary_link" => 20.0,
+        "secondary" | "secondary_link" => 16.0,
+        "tertiary" | "tertiary_link" => 12.0,
+        "residential" | "living_street" => 10.0,
+        "service" | "alley" => 6.0,
+        "footway" | "path" | "steps" | "pedestrian" => 3.0,
+        "cycleway" => 3.0,
+        "track" | "unclassified" => 8.0,
+        _ => 10.0,
+    }
 }
 
 pub fn run_pipeline(

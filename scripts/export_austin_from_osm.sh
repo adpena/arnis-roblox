@@ -28,6 +28,7 @@ echo "[export_austin_from_osm] Running full pipeline + exporter..."
 cd "$RUST_DIR"
 cargo run -p arbx_cli -- compile \
   --source "data/austin_overpass.json" \
+  --bbox "30.26,-97.75,30.27,-97.74" \
   --out "out/austin-manifest.json"
 
 echo "[export_austin_from_osm] Done. Manifest written to rust/out/austin-manifest.json"

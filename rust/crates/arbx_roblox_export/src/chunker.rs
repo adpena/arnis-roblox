@@ -31,7 +31,8 @@ pub fn chunk_origin(
     let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
     let lon_per_stud = 1.0 / (111_111.0 * center_latlon.lat.to_radians().cos() * meters_per_stud);
 
-    let lat = center_latlon.lat + (z as f64 * lat_per_stud);
+    // Z+ = south, so a positive Z offset means decreasing latitude.
+    let lat = center_latlon.lat - (z as f64 * lat_per_stud);
     let lon = center_latlon.lon + (x as f64 * lon_per_stud);
 
     let y_meters = elevation.sample_height_at(LatLon::new(lat, lon));

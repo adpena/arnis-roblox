@@ -62,17 +62,16 @@ function TerrainBuilder.Build(_parent, chunk)
 			local cellCenterRelX = x * cellSize + cellSize * 0.5
 			local cellCenterRelZ = z * cellSize + cellSize * 0.5
 
-			-- We fill from (surfaceHeight - TERRAIN_THICKNESS) to surfaceHeight.
-			local fillHeight = surfaceHeight + TERRAIN_THICKNESS
-			if fillHeight > 0 then
-				local fillSize = Vector3.new(cellSize, fillHeight, cellSize)
-				local fillCFrame = CFrame.new(
-					origin.x + cellCenterRelX,
-					origin.y + surfaceHeight - (fillHeight * 0.5),
-					origin.z + cellCenterRelZ
-				)
-				terrain:FillBlock(fillCFrame, fillSize, material)
-			end
+		-- Fill a slab of constant thickness below the surface.
+			-- Using a constant fillHeight avoids skipping cells with negative surfaceHeight.
+			local fillHeight = TERRAIN_THICKNESS
+			local fillSize = Vector3.new(cellSize, fillHeight, cellSize)
+			local fillCFrame = CFrame.new(
+				origin.x + cellCenterRelX,
+				origin.y + surfaceHeight - fillHeight * 0.5,
+				origin.z + cellCenterRelZ
+			)
+			terrain:FillBlock(fillCFrame, fillSize, material)
 		end
 	end
 end
