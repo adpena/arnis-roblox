@@ -28,7 +28,7 @@
 ## Epic D — Tooling
 
 - [x] stronger repo checks (selene + cargo test)
-- [ ] optional TestEZ integration
+- [x] optional TestEZ integration
 - [x] CI workflow
 - [x] serialized perf snapshots
 
