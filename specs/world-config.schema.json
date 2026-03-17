@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/world-config.schema.json",
+  "title": "Arnis Roblox World Config",
+  "type": "object",
+  "required": [
+    "metersPerStud",
+    "chunkSizeStuds",
+    "terrainMode",
+    "roadMode",
+    "buildingMode",
+    "streamingEnabled",
+    "instanceBudget"
+  ],
+  "properties": {
+    "metersPerStud": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "chunkSizeStuds": {
+      "type": "integer",
+      "minimum": 16
+    },
+    "terrainMode": {
+      "type": "string",
+      "enum": ["none", "debugParts", "voxel"]
+    },
+    "roadMode": {
+      "type": "string",
+      "enum": ["parts", "mesh", "hybrid"]
+    },
+    "buildingMode": {
+      "type": "string",
+      "enum": ["none", "shellParts", "shellMesh", "prefab"]
+    },
+    "streamingEnabled": {
+      "type": "boolean"
+    },
+    "streamingTargetRadius": {
+      "type": "number",
+      "minimum": 0
+    },
+    "instanceBudget": {
+      "type": "object",
+      "required": ["maxPerChunk", "maxPropsPerChunk"],
+      "properties": {
+        "maxPerChunk": { "type": "integer", "minimum": 1 },
+        "maxPropsPerChunk": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scaffold-checks:
+    name: Scaffold Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run scaffold checks
+        run: python scripts/run_all_checks.py
+
+  rust-tests:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust/Cargo.toml --all-features
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+
+      - name: Run Rust lints
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+
+  luau-lint:
+    name: Luau Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install selene
+        run: |
+          curl -L https://github.com/Kampfkarren/selene/releases/latest/download/selene-linux-x86_64.tar.gz | tar xz
+          chmod +x selene
+          sudo mv selene /usr/local/bin/
+
+      - name: Run selene lint
+        run: selene roblox/src
+
+  build-sample:
+    name: Build Sample Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build sample manifest
+        run: cargo run --manifest-path rust/Cargo.toml -p arbx_cli -- sample --grid 2,2 --out /tmp/sample-manifest.json
+
+      - name: Validate sample manifest
+        run: cargo run --manifest-path rust/Cargo.toml -p arbx_cli -- validate /tmp/sample-manifest.json

@@ -1,0 +1,7 @@
+{
+  "name": "ArnisRobloxImporter",
+  "tree": {
+    "$className": "Model",
+    "$path": "plugin/src"
+  }
+}

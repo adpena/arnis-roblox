@@ -1,0 +1,13 @@
+[package]
+name = "arbx_pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arbx_geo = { path = "../arbx_geo" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lib]
+path = "src/lib.rs"

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "0.2.0",
+  "meta":   {
+    "worldName": "ExportedWorld",
+    "generator": "arbx_roblox_export",
+    "source": "pipeline-export",
+    "metersPerStud": 1,
+    "chunkSizeStuds": 256,
+    "bbox":     {
+      "minLat": 30.260000,
+      "minLon": -97.750000,
+      "maxLat": 30.270000,
+      "maxLon": -97.740000
+    },
+    "totalFeatures": 3,
+    "notes": [
+      "exported via chunker from features"
+    ]
+  },
+  "chunks": [
+    {
+      "id": "0_1",
+      "originStuds":       { "x": 0, "y": 0, "z": 256 },
+      "roads": [
+        {
+          "id": "osm_201",
+          "kind": "tertiary",
+          "widthStuds": 12,
+          "points": [
+            { "x": 111.319, "y": 0, "z": 130.665 },
+            { "x": 3.071, "y": 0, "z": 256 }
+          ]
+        }
+      ],
+      "buildings": [
+        {
+          "id": "osm_101",
+          "footprint": [
+            { "x": 211.507, "z": 27.553 },
+            { "x": 211.507, "z": 40.442 },
+            { "x": 200.375, "z": 40.442 },
+            { "x": 200.375, "z": 27.553 },
+            { "x": 211.507, "z": 27.553 }
+          ],
+          "baseY": 0,
+          "height": 15,
+          "roof": "flat"
+        }
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    },
+    {
+      "id": "0_2",
+      "originStuds":       { "x": 0, "y": 0, "z": 512 },
+      "roads": [
+        {
+          "id": "osm_201",
+          "kind": "tertiary",
+          "widthStuds": 12,
+          "points": [
+            { "x": 3.071, "y": 0, "z": 0 },
+            { "x": 0, "y": 0, "z": 3.555 }
+          ]
+        }
+      ],
+      "buildings": [
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    }
+  ]
+}

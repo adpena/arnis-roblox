@@ -1,0 +1,27 @@
+{
+  "name": "ArnisRoblox",
+  "servePort": 34872,
+  "globIgnorePaths": [
+    "**/*.md",
+    "**/.DS_Store"
+  ],
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage"
+    },
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+    "ServerStorage": {
+      "$path": "src/ServerStorage"
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "StreamingEnabled": true
+      },
+      "$path": "src/Workspace"
+    }
+  }
+}

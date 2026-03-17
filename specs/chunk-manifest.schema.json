@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/chunk-manifest.schema.json",
+  "title": "Arnis Roblox Chunk Manifest",
+  "type": "object",
+  "required": ["schemaVersion", "meta", "chunks"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "0.2.0"
+    },
+    "meta": {
+      "$ref": "#/$defs/meta"
+    },
+    "chunks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/chunk"
+      }
+    }
+  },
+  "$defs": {
+    "bbox": {
+      "type": "object",
+      "required": ["minLat", "minLon", "maxLat", "maxLon"],
+      "properties": {
+        "minLat": { "type": "number" },
+        "minLon": { "type": "number" },
+        "maxLat": { "type": "number" },
+        "maxLon": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "worldName",
+        "generator",
+        "source",
+        "metersPerStud",
+        "chunkSizeStuds",
+        "bbox",
+        "totalFeatures"
+      ],
+      "properties": {
+        "worldName": { "type": "string" },
+        "generator": { "type": "string" },
+        "source": { "type": "string" },
+        "metersPerStud": { "type": "number", "exclusiveMinimum": 0 },
+        "chunkSizeStuds": { "type": "integer", "minimum": 16 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "totalFeatures": { "type": "integer", "minimum": 0 },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "point2": {
+      "type": "object",
+      "required": ["x", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "z": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "point3": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "color": {
+      "type": "object",
+      "required": ["r", "g", "b"],
+      "properties": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255 }
+      },
+      "additionalProperties": false
+    },
+    "terrainGrid": {
+      "type": "object",
+      "required": ["cellSizeStuds", "width", "depth", "heights", "material"],
+      "properties": {
+        "cellSizeStuds": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "depth": { "type": "integer", "minimum": 1 },
+        "heights": {
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        "materials": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "material": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "road": {
+      "type": "object",
+      "required": ["id", "kind", "widthStuds", "points", "material"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "material": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" },
+        "lanes": { "type": "integer", "minimum": 1 },
+        "widthStuds": { "type": "number", "exclusiveMinimum": 0 },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/point3" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rail": {
+      "type": "object",
+      "required": ["id", "kind", "widthStuds", "points", "material"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "material": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" },
+        "lanes": { "type": "integer", "minimum": 1 },
+        "widthStuds": { "type": "number", "exclusiveMinimum": 0 },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/point3" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "building": {
+      "type": "object",
+      "required": ["id", "footprint", "baseY", "height", "roof", "material"],
+      "properties": {
+        "id": { "type": "string" },
+        "material": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" },
+        "footprint": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/point2" }
+        },
+        "indices": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "baseY": { "type": "number" },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "roof": { "type": "string" },
+        "rooms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/room" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "water": {
+      "type": "object",
+      "required": ["id", "kind", "material"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "material": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" },
+        "widthStuds": { "type": "number", "exclusiveMinimum": 0 },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/point3" }
+        },
+        "footprint": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/point2" }
+        },
+        "indices": {
+          "type": "array",
+          "items": { "type": "integer" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "prop": {
+      "type": "object",
+      "required": ["id", "kind", "position", "yawDegrees", "scale"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "position": { "$ref": "#/$defs/point3" },
+        "yawDegrees": { "type": "number" },
+        "scale": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "room": {
+      "type": "object",
+      "required": ["id", "name", "footprint", "floorY", "height"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "footprint": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/point2" }
+        },
+        "floorY": { "type": "number" },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "wallMaterial": { "type": "string" },
+        "floorMaterial": { "type": "string" },
+        "hasDoor": { "type": "boolean" },
+        "hasWindow": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "chunk": {
+      "type": "object",
+      "required": ["id", "originStuds"],
+      "properties": {
+        "id": { "type": "string" },
+        "originStuds": { "$ref": "#/$defs/point3" },
+        "terrain": { "$ref": "#/$defs/terrainGrid" },
+        "roads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/road" }
+        },
+        "rails": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rail" }
+        },
+        "buildings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/building" }
+        },
+        "water": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/water" }
+        },
+        "props": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/prop" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

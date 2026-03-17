@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "0.2.0",
+  "meta": {
+    "worldName": "SampleAustinLikeBlock",
+    "generator": "arbx_cli sample",
+    "source": "synthetic-scaffold",
+    "metersPerStud": 1.0,
+    "chunkSizeStuds": 256,
+    "bbox": {
+      "minLat": 30.264,
+      "minLon": -97.75,
+      "maxLat": 30.266,
+      "maxLon": -97.748
+    },
+    "totalFeatures": 5,
+    "notes": [
+      "Synthetic sample for importer scaffolding",
+      "Replace with real chunk export later"
+    ]
+  },
+  "chunks": [
+    {
+      "id": "0_0",
+      "originStuds": { "x": 0, "y": 0, "z": 0 },
+      "terrain": {
+        "cellSizeStuds": 16,
+        "width": 4,
+        "depth": 4,
+        "heights": [0, 1, 2, 1, 1, 2, 3, 2, 0, 1, 2, 2, 0, 0, 1, 1],
+        "material": "Grass"
+      },
+      "roads": [
+        {
+          "id": "road_main",
+          "kind": "primary",
+          "material": "Asphalt",
+          "color": { "r": 68, "g": 68, "b": 68 },
+          "lanes": 2,
+          "widthStuds": 10,
+          "points": [
+            { "x": 0, "y": 2, "z": 64 },
+            { "x": 128, "y": 2, "z": 64 },
+            { "x": 256, "y": 2, "z": 64 }
+          ]
+        }
+      ],
+      "rails": [],
+      "buildings": [
+        {
+          "id": "bldg_1",
+          "material": "Concrete",
+          "color": { "r": 170, "g": 170, "b": 170 },
+          "footprint": [
+            { "x": 24, "z": 24 },
+            { "x": 80, "z": 24 },
+            { "x": 80, "z": 72 },
+            { "x": 24, "z": 72 }
+          ],
+          "baseY": 2,
+          "height": 36,
+          "roof": "flat"
+        }
+      ],
+      "water": [
+        {
+          "id": "water_1",
+          "kind": "stream",
+          "material": "Water",
+          "widthStuds": 8,
+          "points": [
+            { "x": 32, "y": 1, "z": 220 },
+            { "x": 96, "y": 1, "z": 190 },
+            { "x": 180, "y": 1, "z": 160 }
+          ]
+        }
+      ],
+      "props": [
+        {
+          "id": "tree_1",
+          "kind": "tree",
+          "position": { "x": 120, "y": 3, "z": 110 },
+          "yawDegrees": 0,
+          "scale": 1
+        },
+        {
+          "id": "light_1",
+          "kind": "light",
+          "position": { "x": 150, "y": 3, "z": 68 },
+          "yawDegrees": 90,
+          "scale": 1
+        }
+      ]
+    }
+  ]
+}

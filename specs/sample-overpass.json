@@ -1,0 +1,49 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API",
+  "osm3s": {
+    "timestamp_osm_base": "2024-01-01T00:00:00Z",
+    "copyright": "The data working group"
+  },
+  "elements": [
+    { "type": "node", "id": 1, "lat": 30.2672, "lon": -97.7431 },
+    { "type": "node", "id": 2, "lat": 30.2673, "lon": -97.7431 },
+    { "type": "node", "id": 3, "lat": 30.2673, "lon": -97.7432 },
+    { "type": "node", "id": 4, "lat": 30.2672, "lon": -97.7432 },
+    {
+      "type": "way",
+      "id": 101,
+      "nodes": [1, 2, 3, 4, 1],
+      "tags": {
+        "building": "office",
+        "height": "120",
+        "name": "Frost Bank Tower"
+      }
+    },
+    { "type": "node", "id": 10, "lat": 30.2660, "lon": -97.7420 },
+    { "type": "node", "id": 11, "lat": 30.2665, "lon": -97.7420 },
+    { "type": "node", "id": 12, "lat": 30.2665, "lon": -97.7425 },
+    { "type": "node", "id": 13, "lat": 30.2660, "lon": -97.7425 },
+    {
+      "type": "way",
+      "id": 102,
+      "nodes": [10, 11, 12, 13, 10],
+      "tags": {
+        "building": "residential",
+        "height": "45"
+      }
+    },
+    { "type": "node", "id": 20, "lat": 30.2650, "lon": -97.7400 },
+    { "type": "node", "id": 21, "lat": 30.2700, "lon": -97.7400 },
+    {
+      "type": "way",
+      "id": 201,
+      "nodes": [20, 21],
+      "tags": {
+        "highway": "primary",
+        "name": "Congress Avenue",
+        "lanes": "4"
+      }
+    }
+  ]
+}

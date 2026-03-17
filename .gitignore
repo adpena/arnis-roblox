@@ -1,0 +1,25 @@
+# Rust
+/target
+**/target
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Roblox / Rojo
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+sourcemap.json
+Packages/
+*.local.project.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

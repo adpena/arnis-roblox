@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "0.1.0",
+  "meta":   {
+    "worldName": "ExportedWorld",
+    "generator": "arbx_roblox_export",
+    "source": "pipeline-export",
+    "metersPerStud": 1,
+    "chunkSizeStuds": 256,
+    "bbox":     {
+      "minLat": 30.260000,
+      "minLon": -97.750000,
+      "maxLat": 30.270000,
+      "maxLon": -97.740000
+    },
+    "notes": [
+      "exported via chunker from features"
+    ]
+  },
+  "chunks": [
+    {
+      "id": "0_0",
+      "originStuds":       { "x": 0, "y": 0, "z": 0 },
+      "roads": [
+      ],
+      "buildings": [
+        {
+          "id": "capitol",
+          "footprint": [
+            { "x": 100, "z": 100 },
+            { "x": 200, "z": 100 },
+            { "x": 200, "z": 200 },
+            { "x": 100, "z": 200 }
+          ],
+          "baseY": 2,
+          "height": 50,
+          "roof": "dome"
+        }
+      ],
+      "water": [
+      ],
+      "props": [
+        {
+          "id": "tree_99",
+          "kind": "oak",
+          "position":           { "x": 50, "y": 2, "z": 50 },
+          "yawDegrees": 0,
+          "scale": 1.200
+        }
+      ]
+    },
+    {
+      "id": "1_0",
+      "originStuds":       { "x": 256, "y": 0, "z": 0 },
+      "roads": [
+        {
+          "id": "congress_ave",
+          "kind": "primary",
+          "widthStuds": 20,
+          "points": [
+            { "x": 0, "y": 2, "z": 0 },
+            { "x": 512, "y": 2, "z": 0 }
+          ]
+        }
+      ],
+      "buildings": [
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    },
+    {
+      "id": "3_0",
+      "originStuds":       { "x": 768, "y": 0, "z": 0 },
+      "roads": [
+        {
+          "id": "congress_ave",
+          "kind": "primary",
+          "widthStuds": 20,
+          "points": [
+            { "x": 512, "y": 2, "z": 0 },
+            { "x": 1024, "y": 2, "z": 0 }
+          ]
+        }
+      ],
+      "buildings": [
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    },
+    {
+      "id": "2_2",
+      "originStuds":       { "x": 512, "y": 0, "z": 512 },
+      "roads": [
+      ],
+      "buildings": [
+        {
+          "id": "frost_tower",
+          "footprint": [
+            { "x": 600, "z": 600 },
+            { "x": 700, "z": 600 },
+            { "x": 700, "z": 700 },
+            { "x": 600, "z": 700 }
+          ],
+          "baseY": 2,
+          "height": 100,
+          "roof": "pointed"
+        }
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    }
+  ]
+}

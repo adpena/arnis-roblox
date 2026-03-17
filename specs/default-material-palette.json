@@ -1,0 +1,21 @@
+{
+  "terrain": {
+    "default": { "material": "Grass", "color": "#5ea044" },
+    "water": { "material": "Water", "color": "#0064c8" },
+    "sand": { "material": "Sand", "color": "#d7c39a" }
+  },
+  "roads": {
+    "default": { "material": "Asphalt", "color": "#333333" },
+    "primary": { "material": "Asphalt", "color": "#444444" },
+    "service": { "material": "Concrete", "color": "#888888" }
+  },
+  "buildings": {
+    "default": { "material": "Concrete", "color": "#aaaaaa" },
+    "industrial": { "material": "Metal", "color": "#777777" },
+    "residential": { "material": "Concrete", "color": "#ccaa88" }
+  },
+  "props": {
+    "tree": { "material": "Grass", "color": "#329632" },
+    "light": { "material": "Metal", "color": "#cccccc" }
+  }
+}

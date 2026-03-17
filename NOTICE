@@ -1,0 +1,15 @@
+Arnis Roblox Scaffold for Kodex
+Copyright 2026
+
+This repository scaffold was prepared as original scaffold code and documentation.
+It is inspired by the public Arnis project architecture and by public Roblox tooling/documentation,
+but it does not include copied upstream Arnis source code.
+
+Upstream references worth reviewing before integrating real code:
+- Arnis: https://github.com/louis-e/arnis
+- Roblox Creator Docs: https://create.roblox.com/docs
+- Rojo Docs: https://rojo.space/docs/v7/
+- TestEZ: https://github.com/Roblox/testez
+
+If future development copies or derives code from upstream projects, ensure the resulting repository
+continues to satisfy the applicable license terms for those incorporated components.

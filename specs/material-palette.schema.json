@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/material-palette.schema.json",
+  "title": "Arnis Roblox Material Palette",
+  "type": "object",
+  "required": ["terrain", "roads", "buildings", "props"],
+  "properties": {
+    "terrain": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "roads": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "buildings": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

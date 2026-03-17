@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "0.2.0",
+  "meta":   {
+    "worldName": "ExportedWorld",
+    "generator": "arbx_roblox_export",
+    "source": "pipeline-export",
+    "metersPerStud": 1,
+    "chunkSizeStuds": 256,
+    "bbox":     {
+      "minLat": 30.260000,
+      "minLon": -97.750000,
+      "maxLat": 30.270000,
+      "maxLon": -97.740000
+    },
+    "totalFeatures": 2,
+    "notes": [
+      "exported via chunker from features"
+    ]
+  },
+  "chunks": [
+    {
+      "id": "0_0",
+      "originStuds":       { "x": 0, "y": 0, "z": 0 },
+      "roads": [
+        {
+          "id": "way_456",
+          "kind": "residential",
+          "widthStuds": 12,
+          "points": [
+            { "x": 0, "y": 0, "z": 0 },
+            { "x": 100, "y": 0, "z": 100 }
+          ]
+        }
+      ],
+      "buildings": [
+        {
+          "id": "osmid_123",
+          "footprint": [
+            { "x": 10, "z": 10 },
+            { "x": 20, "z": 10 },
+            { "x": 20, "z": 20 },
+            { "x": 10, "z": 20 }
+          ],
+          "baseY": 0,
+          "height": 15,
+          "roof": "flat"
+        }
+      ],
+      "water": [
+      ],
+      "props": [
+      ]
+    }
+  ]
+}
