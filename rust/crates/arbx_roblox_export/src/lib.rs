@@ -79,6 +79,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                         color: config.style.get_road_color("primary"),
                         lanes: Some(2),
                         width_studs: 10.0,
+                        has_sidewalk: false,
                         points: vec![
                             Vec3::new(0.0, 2.0, 64.0),
                             Vec3::new(128.0, 2.0, 64.0),

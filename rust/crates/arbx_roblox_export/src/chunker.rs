@@ -6,8 +6,7 @@ use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
     BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance,
-    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
-    Room,
+    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature, Room,
 };
 use crate::materials::StyleMapper;
 
@@ -155,6 +154,7 @@ impl Chunker {
                         color,
                         lanes: f.lanes,
                         width_studs: f.width_studs,
+                        has_sidewalk: f.has_sidewalk,
                         points: relative_points,
                     });
                 }

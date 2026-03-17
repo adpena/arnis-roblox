@@ -82,6 +82,7 @@ function ChunkSchema.validateManifest(manifest)
             assertType(road.kind, "string", prefix .. ".roads[].kind must be a string")
             assertType(road.material, "string", prefix .. ".roads[].material must be a string")
             assertType(road.widthStuds, "number", prefix .. ".roads[].widthStuds must be a number")
+            assertType(road.hasSidewalk, "boolean", prefix .. ".roads[].hasSidewalk must be a boolean")
             assertType(road.points, "table", prefix .. ".roads[].points must be a table")
             assert(#road.points >= 2, prefix .. ".roads[].points must contain at least two points")
             for pointIndex, point in ipairs(road.points) do
