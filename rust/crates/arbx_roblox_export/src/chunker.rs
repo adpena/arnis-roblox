@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
-    BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance,
-    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature, Room,
+    BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance, RailSegment,
+    RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
 
@@ -57,7 +57,12 @@ impl Chunker {
         }
     }
 
-    fn ensure_chunk(&mut self, id: ChunkId, elevation: &dyn ElevationProvider, style: &StyleMapper) -> &mut Chunk {
+    fn ensure_chunk(
+        &mut self,
+        id: ChunkId,
+        elevation: &dyn ElevationProvider,
+        style: &StyleMapper,
+    ) -> &mut Chunk {
         let chunk_size = self.chunk_size_studs;
         let meters_per_stud = self.meters_per_stud;
         let center = self.center_latlon;
@@ -74,16 +79,16 @@ impl Chunker {
             let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
             let lon_per_stud = 1.0 / (111_111.0 * center.lat.to_radians().cos() * meters_per_stud);
             let cell_size_f64 = cell_size as f64;
-            
+
             // Pre-compute chunk corner coordinates
             let chunk_lat_start = center.lat + (id.z as f64 * chunk_size as f64 * lat_per_stud);
             let chunk_lon_start = center.lon + (id.x as f64 * chunk_size as f64 * lon_per_stud);
-            
+
             // Pre-compute row latitudes
             let row_lats: Vec<f64> = (0..grid_dim)
                 .map(|cz| chunk_lat_start + (cz as f64 * cell_size_f64 * lat_per_stud))
                 .collect();
-            
+
             // Pre-compute column longitudes
             let col_lons: Vec<f64> = (0..grid_dim)
                 .map(|cx| chunk_lon_start + (cx as f64 * cell_size_f64 * lon_per_stud))
@@ -273,7 +278,7 @@ impl Chunker {
                 } else {
                     color
                 };
-                
+
                 // Assign a procedural facade style if it's a default building
                 let facade_style = if f.roof == "dome" {
                     Some("facade_modern".to_string())
@@ -287,7 +292,7 @@ impl Chunker {
                 let mut rooms = Vec::new();
                 let levels = f.levels.unwrap_or(1);
                 let floor_height = f.height / levels as f32;
-                
+
                 for i in 0..levels {
                     rooms.push(Room {
                         id: format!("{}_floor_{}", f.id, i),
@@ -344,7 +349,7 @@ impl Chunker {
                 let count = f.footprint.points.len() as f32;
                 let centroid = Vec3::new(sum_x / count, 0.0, sum_z / count);
                 let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
-                
+
                 let chunk_size = self.chunk_size_studs;
                 let chunk = self.ensure_chunk(chunk_id, elevation, style);
                 let material = style.get_terrain_material(&f.kind);
@@ -353,12 +358,14 @@ impl Chunker {
                     if let Some(materials) = &mut terrain.materials {
                         let cell_size = terrain.cell_size_studs as f32;
                         let grid_dim = terrain.width;
-                        
+
                         for cz in 0..grid_dim {
                             for cx in 0..grid_dim {
-                                let lx = (chunk_id.x as f32 * chunk_size as f32) + (cx as f32 * cell_size);
-                                let lz = (chunk_id.z as f32 * chunk_size as f32) + (cz as f32 * cell_size);
-                                
+                                let lx = (chunk_id.x as f32 * chunk_size as f32)
+                                    + (cx as f32 * cell_size);
+                                let lz = (chunk_id.z as f32 * chunk_size as f32)
+                                    + (cz as f32 * cell_size);
+
                                 if point_in_poly(Vec2::new(lx, lz), &f.footprint.points) {
                                     materials[cz * grid_dim + cx] = material.clone();
                                 }
@@ -434,8 +441,11 @@ impl Chunker {
                     p1.z + t_end * dz,
                 );
 
-                let midpoint =
-                    Vec3::new((sp1.x + sp2.x) * 0.5, (sp1.y + sp2.y) * 0.5, (sp1.z + sp2.z) * 0.5);
+                let midpoint = Vec3::new(
+                    (sp1.x + sp2.x) * 0.5,
+                    (sp1.y + sp2.y) * 0.5,
+                    (sp1.z + sp2.z) * 0.5,
+                );
                 let chunk_id = world_to_chunk(midpoint, chunk_size);
 
                 let chunk_segments = segments_by_chunk.entry(chunk_id).or_insert_with(Vec::new);
@@ -492,7 +502,8 @@ fn point_in_poly(p: Vec2, poly: &[Vec2]) -> bool {
     let mut j = poly.len() - 1;
     for i in 0..poly.len() {
         if ((poly[i].y > p.y) != (poly[j].y > p.y))
-            && (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
+            && (p.x
+                < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
         {
             inside = !inside;
         }

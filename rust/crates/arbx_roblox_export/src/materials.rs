@@ -1,6 +1,6 @@
+use crate::manifest::Color;
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::manifest::Color;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StyleEntry {
@@ -19,27 +19,105 @@ pub struct StyleMapper {
 impl Default for StyleMapper {
     fn default() -> Self {
         let mut terrain = HashMap::new();
-        terrain.insert("default".to_string(), StyleEntry { material: "Grass".to_string(), color: "#5ea044".to_string() });
-        terrain.insert("sand".to_string(), StyleEntry { material: "Sand".to_string(), color: "#d7c39a".to_string() });
-        terrain.insert("water".to_string(), StyleEntry { material: "Water".to_string(), color: "#0064c8".to_string() });
+        terrain.insert(
+            "default".to_string(),
+            StyleEntry {
+                material: "Grass".to_string(),
+                color: "#5ea044".to_string(),
+            },
+        );
+        terrain.insert(
+            "sand".to_string(),
+            StyleEntry {
+                material: "Sand".to_string(),
+                color: "#d7c39a".to_string(),
+            },
+        );
+        terrain.insert(
+            "water".to_string(),
+            StyleEntry {
+                material: "Water".to_string(),
+                color: "#0064c8".to_string(),
+            },
+        );
 
         let mut roads = HashMap::new();
-        roads.insert("default".to_string(), StyleEntry { material: "Asphalt".to_string(), color: "#333333".to_string() });
-        roads.insert("primary".to_string(), StyleEntry { material: "Asphalt".to_string(), color: "#444444".to_string() });
-        roads.insert("service".to_string(), StyleEntry { material: "Concrete".to_string(), color: "#888888".to_string() });
+        roads.insert(
+            "default".to_string(),
+            StyleEntry {
+                material: "Asphalt".to_string(),
+                color: "#333333".to_string(),
+            },
+        );
+        roads.insert(
+            "primary".to_string(),
+            StyleEntry {
+                material: "Asphalt".to_string(),
+                color: "#444444".to_string(),
+            },
+        );
+        roads.insert(
+            "service".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#888888".to_string(),
+            },
+        );
 
         let mut buildings = HashMap::new();
-        buildings.insert("default".to_string(), StyleEntry { material: "Concrete".to_string(), color: "#aaaaaa".to_string() });
-        buildings.insert("industrial".to_string(), StyleEntry { material: "Metal".to_string(), color: "#777777".to_string() });
-        buildings.insert("residential".to_string(), StyleEntry { material: "Concrete".to_string(), color: "#ccaa88".to_string() });
-        
+        buildings.insert(
+            "default".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#aaaaaa".to_string(),
+            },
+        );
+        buildings.insert(
+            "industrial".to_string(),
+            StyleEntry {
+                material: "Metal".to_string(),
+                color: "#777777".to_string(),
+            },
+        );
+        buildings.insert(
+            "residential".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#ccaa88".to_string(),
+            },
+        );
+
         // Add specific facade styles that the builder will recognize
-        buildings.insert("facade_modern".to_string(), StyleEntry { material: "SmoothPlastic".to_string(), color: "#ffffff".to_string() });
-        buildings.insert("facade_brick".to_string(), StyleEntry { material: "Brick".to_string(), color: "#aa4444".to_string() });
+        buildings.insert(
+            "facade_modern".to_string(),
+            StyleEntry {
+                material: "SmoothPlastic".to_string(),
+                color: "#ffffff".to_string(),
+            },
+        );
+        buildings.insert(
+            "facade_brick".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#aa4444".to_string(),
+            },
+        );
 
         let mut props = HashMap::new();
-        props.insert("tree".to_string(), StyleEntry { material: "Grass".to_string(), color: "#329632".to_string() });
-        props.insert("light".to_string(), StyleEntry { material: "Metal".to_string(), color: "#cccccc".to_string() });
+        props.insert(
+            "tree".to_string(),
+            StyleEntry {
+                material: "Grass".to_string(),
+                color: "#329632".to_string(),
+            },
+        );
+        props.insert(
+            "light".to_string(),
+            StyleEntry {
+                material: "Metal".to_string(),
+                color: "#cccccc".to_string(),
+            },
+        );
 
         Self {
             terrain,

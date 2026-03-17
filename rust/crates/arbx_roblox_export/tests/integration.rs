@@ -15,8 +15,8 @@ fn full_pipeline_produces_valid_manifest() {
         &TriangulateStage as &dyn arbx_pipeline::PipelineStage,
     ];
 
-    let ctx = arbx_pipeline::run_pipeline(&adapter, bbox, &stages)
-        .expect("Pipeline should succeed");
+    let ctx =
+        arbx_pipeline::run_pipeline(&adapter, bbox, &stages).expect("Pipeline should succeed");
 
     let config = ExportConfig::default();
     let elevation = FlatElevationProvider { height: 0.0 };
@@ -122,13 +122,17 @@ fn multi_chunk_export_correct() {
     // Buildings should be in different chunks
     assert!(manifest.chunks.len() >= 2, "Should have at least 2 chunks");
 
-    let mut buildings_in_chunks: Vec<usize> = manifest.chunks
-        .iter()
-        .map(|c| c.buildings.len())
-        .collect();
+    let mut buildings_in_chunks: Vec<usize> =
+        manifest.chunks.iter().map(|c| c.buildings.len()).collect();
     buildings_in_chunks.sort();
     buildings_in_chunks.reverse();
 
-    assert_eq!(buildings_in_chunks[0], 1, "First chunk should have 1 building");
-    assert_eq!(buildings_in_chunks[1], 1, "Second chunk should have 1 building");
+    assert_eq!(
+        buildings_in_chunks[0], 1,
+        "First chunk should have 1 building"
+    );
+    assert_eq!(
+        buildings_in_chunks[1], 1,
+        "Second chunk should have 1 building"
+    );
 }

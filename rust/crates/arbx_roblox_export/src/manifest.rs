@@ -247,23 +247,33 @@ impl Chunk {
 
         out.push_str(",\n");
         write_key(out, indent + 2, "roads");
-        write_array(out, indent + 2, &self.roads, |item, out, indent| item.write_json(out, indent));
+        write_array(out, indent + 2, &self.roads, |item, out, indent| {
+            item.write_json(out, indent)
+        });
 
         out.push_str(",\n");
         write_key(out, indent + 2, "rails");
-        write_array(out, indent + 2, &self.rails, |item, out, indent| item.write_json(out, indent));
+        write_array(out, indent + 2, &self.rails, |item, out, indent| {
+            item.write_json(out, indent)
+        });
 
         out.push_str(",\n");
         write_key(out, indent + 2, "buildings");
-        write_array(out, indent + 2, &self.buildings, |item, out, indent| item.write_json(out, indent));
+        write_array(out, indent + 2, &self.buildings, |item, out, indent| {
+            item.write_json(out, indent)
+        });
 
         out.push_str(",\n");
         write_key(out, indent + 2, "water");
-        write_array(out, indent + 2, &self.water, |item, out, indent| item.write_json(out, indent));
+        write_array(out, indent + 2, &self.water, |item, out, indent| {
+            item.write_json(out, indent)
+        });
 
         out.push_str(",\n");
         write_key(out, indent + 2, "props");
-        write_array(out, indent + 2, &self.props, |item, out, indent| item.write_json(out, indent));
+        write_array(out, indent + 2, &self.props, |item, out, indent| {
+            item.write_json(out, indent)
+        });
 
         out.push('\n');
         write_indent(out, indent);
@@ -418,13 +428,13 @@ impl BuildingShell {
         out.push_str(",\n");
         write_key(out, indent + 2, "height");
         write_number(out, self.height);
-        
+
         if let Some(lvl) = self.levels {
             out.push_str(",\n");
             write_key(out, indent + 2, "levels");
             write!(out, "{}", lvl).unwrap();
         }
-        
+
         if let Some(rlvl) = self.roof_levels {
             out.push_str(",\n");
             write_key(out, indent + 2, "roofLevels");
@@ -444,9 +454,11 @@ impl BuildingShell {
         if !self.rooms.is_empty() {
             out.push_str(",\n");
             write_key(out, indent + 2, "rooms");
-            write_array(out, indent + 2, &self.rooms, |item, out, indent| item.write_json(out, indent));
+            write_array(out, indent + 2, &self.rooms, |item, out, indent| {
+                item.write_json(out, indent)
+            });
         }
-        
+
         out.push('\n');
         write_indent(out, indent);
         out.push('}');
@@ -471,7 +483,7 @@ impl Room {
         out.push_str(",\n");
         write_key(out, indent + 2, "height");
         write_number(out, self.height);
-        
+
         if let Some(wm) = &self.wall_material {
             out.push_str(",\n");
             write_key(out, indent + 2, "wallMaterial");
@@ -482,14 +494,14 @@ impl Room {
             write_key(out, indent + 2, "floorMaterial");
             write_string(out, fm);
         }
-        
+
         out.push_str(",\n");
         write_key(out, indent + 2, "hasDoor");
         out.push_str(if self.has_door { "true" } else { "false" });
         out.push_str(",\n");
         write_key(out, indent + 2, "hasWindow");
         out.push_str(if self.has_window { "true" } else { "false" });
-        
+
         out.push('\n');
         write_indent(out, indent);
         out.push('}');
@@ -513,19 +525,19 @@ impl WaterFeature {
             write_key(out, indent + 2, "color");
             write_color(out, color);
         }
-        
+
         if let Some(width) = self.width_studs {
             out.push_str(",\n");
             write_key(out, indent + 2, "widthStuds");
             write_number(out, width);
         }
-        
+
         if let Some(points) = &self.points {
             out.push_str(",\n");
             write_key(out, indent + 2, "points");
             write_vec3_array(out, points, indent + 2);
         }
-        
+
         if let Some(fp) = &self.footprint {
             out.push_str(",\n");
             write_key(out, indent + 2, "footprint");
@@ -672,7 +684,12 @@ fn write_vec3(out: &mut String, point: Vec3, indent: usize) {
 }
 
 fn write_color(out: &mut String, color: Color) {
-    write!(out, "{{ \"r\": {}, \"g\": {}, \"b\": {} }}", color.r, color.g, color.b).unwrap();
+    write!(
+        out,
+        "{{ \"r\": {}, \"g\": {}, \"b\": {} }}",
+        color.r, color.g, color.b
+    )
+    .unwrap();
 }
 
 fn write_key(out: &mut String, indent: usize, key: &str) {

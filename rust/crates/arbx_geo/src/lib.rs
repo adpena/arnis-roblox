@@ -146,17 +146,17 @@ impl ElevationProvider for PerlinElevationProvider {
     fn sample_height_at(&self, latlon: LatLon) -> f32 {
         let x = latlon.lat * self.scale + self.seed as f64;
         let y = latlon.lon * self.scale + self.seed as f64;
-        
+
         let mut total = 0.0;
         let mut freq = 1.0;
         let mut amp = self.amplitude;
-        
+
         for _ in 0..4 {
             total += simple_noise(x * freq, y * freq) * amp;
             freq *= 2.0;
             amp *= 0.5;
         }
-        
+
         total
     }
 }
@@ -202,7 +202,10 @@ impl HgtElevationProvider {
         let lon_prefix = if latlon.lon >= 0.0 { "E" } else { "W" };
         let lat_val = latlon.lat.abs().floor() as i32;
         let lon_val = latlon.lon.abs().floor() as i32;
-        self.data_dir.join(format!("{}{:02}{}{:03}.hgt", lat_prefix, lat_val, lon_prefix, lon_val))
+        self.data_dir.join(format!(
+            "{}{:02}{}{:03}.hgt",
+            lat_prefix, lat_val, lon_prefix, lon_val
+        ))
     }
 
     fn sample_from_file(&self, path: &PathBuf, latlon: LatLon) -> Option<f32> {
@@ -221,7 +224,7 @@ impl HgtElevationProvider {
 
         let lat_fract = latlon.lat.fract();
         let lon_fract = latlon.lon.fract();
-        
+
         let row = ((1.0 - lat_fract) * (resolution - 1) as f64).floor() as i64;
         let col = (lon_fract * (resolution - 1) as f64).floor() as i64;
 
@@ -230,10 +233,11 @@ impl HgtElevationProvider {
 
         let mut buf = [0u8; 2];
         file.read_exact(&mut buf).ok()?;
-        
+
         // HGT files are big-endian signed 16-bit integers
         let h = i16::from_be_bytes(buf);
-        if h == -32768 { // Void data value
+        if h == -32768 {
+            // Void data value
             None
         } else {
             Some(h as f32)

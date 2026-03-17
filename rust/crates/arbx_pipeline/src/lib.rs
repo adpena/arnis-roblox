@@ -1,4 +1,7 @@
-use arbx_geo::{BoundingBox, ElevationProvider, Footprint, LatLon, Mercator, PerlinElevationProvider, Vec2, Vec3};
+use arbx_geo::{
+    BoundingBox, ElevationProvider, Footprint, LatLon, Mercator, PerlinElevationProvider, Vec2,
+    Vec3,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -277,10 +280,11 @@ impl SourceAdapter for FileSourceAdapter {
     fn load(&self, _bbox: BoundingBox) -> PipelineResult<Vec<Feature>> {
         let content = fs::read_to_string(&self.path)
             .map_err(|e| PipelineError::IO(format!("failed to read file: {}", e)))?;
-        
-        let features: Vec<Feature> = serde_json::from_str(&content)
-            .map_err(|e| PipelineError::Serialization(format!("failed to deserialize features: {}", e)))?;
-        
+
+        let features: Vec<Feature> = serde_json::from_str(&content).map_err(|e| {
+            PipelineError::Serialization(format!("failed to deserialize features: {}", e))
+        })?;
+
         Ok(features)
     }
 }
@@ -314,9 +318,10 @@ impl SourceAdapter for OverpassAdapter {
     fn load(&self, bbox: BoundingBox) -> PipelineResult<Vec<Feature>> {
         let content = fs::read_to_string(&self.path)
             .map_err(|e| PipelineError::IO(format!("failed to read overpass file: {}", e)))?;
-        
-        let data: OverpassResponse = serde_json::from_str(&content)
-            .map_err(|e| PipelineError::Serialization(format!("failed to parse overpass json: {}", e)))?;
+
+        let data: OverpassResponse = serde_json::from_str(&content).map_err(|e| {
+            PipelineError::Serialization(format!("failed to parse overpass json: {}", e))
+        })?;
 
         let mut nodes = HashMap::new();
         for el in &data.elements {
@@ -335,27 +340,34 @@ impl SourceAdapter for OverpassAdapter {
                 let Some(tags) = &el.tags else { continue };
                 let Some(way_nodes) = &el.nodes else { continue };
 
-                let points: Vec<Vec3> = way_nodes.iter()
+                let points: Vec<Vec3> = way_nodes
+                    .iter()
                     .filter_map(|id| nodes.get(id))
                     .map(|&ll| Mercator::project(ll, center, 1.0))
                     .collect();
 
-                if points.len() < 2 { continue; }
+                if points.len() < 2 {
+                    continue;
+                }
 
                 if tags.contains_key("building") || tags.contains_key("building:part") {
-                    let levels = tags.get("building:levels").and_then(|l| l.parse::<u32>().ok());
+                    let levels = tags
+                        .get("building:levels")
+                        .and_then(|l| l.parse::<u32>().ok());
                     let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
-                    let min_height: Option<f32> = tags.get("min_height").and_then(|h| h.parse().ok());
+                    let min_height: Option<f32> =
+                        tags.get("min_height").and_then(|h| h.parse().ok());
                     let usage = tags.get("building").cloned();
-                    
-                    let height: f32 = tags.get("height")
+
+                    let height: f32 = tags
+                        .get("height")
                         .and_then(|h| h.parse::<f32>().ok())
                         .unwrap_or_else(|| {
                             // Est height from levels (3.5m per floor + 2m roof/base)
                             let lvl = levels.unwrap_or(1);
                             (lvl as f32 * 3.5) + 2.0
                         });
-                    
+
                     let base_y: f32 = min_height
                         .or_else(|| {
                             tags.get("building:min_level")
@@ -364,9 +376,8 @@ impl SourceAdapter for OverpassAdapter {
                         })
                         .unwrap_or(0.0);
 
-                    let footprint_points: Vec<Vec2> = points.iter()
-                        .map(|p| Vec2::new(p.x, p.z))
-                        .collect();
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
 
                     features.push(Feature::Building(BuildingFeature {
                         id: format!("osm_{}", el.id),
@@ -378,12 +389,15 @@ impl SourceAdapter for OverpassAdapter {
                         roof_levels,
                         min_height: Some(base_y),
                         usage,
-                        roof: tags.get("roof:shape").cloned().unwrap_or_else(|| "flat".to_string()),
+                        roof: tags
+                            .get("roof:shape")
+                            .cloned()
+                            .unwrap_or_else(|| "flat".to_string()),
                     }));
                 } else if let Some(highway) = tags.get("highway") {
                     let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
                     let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
-                    
+
                     features.push(Feature::Road(RoadFeature {
                         id: format!("osm_{}", el.id),
                         kind: highway.clone(),
@@ -409,9 +423,8 @@ impl SourceAdapter for OverpassAdapter {
                         points,
                     })));
                 } else if tags.get("natural") == Some(&"water".to_string()) {
-                    let footprint_points: Vec<Vec2> = points.iter()
-                        .map(|p| Vec2::new(p.x, p.z))
-                        .collect();
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
                     features.push(Feature::Water(WaterFeature::Polygon(WaterPolygonFeature {
                         id: format!("osm_{}", el.id),
                         kind: "lake".to_string(),
@@ -419,18 +432,16 @@ impl SourceAdapter for OverpassAdapter {
                         indices: None,
                     })));
                 } else if let Some(landuse) = tags.get("landuse") {
-                    let footprint_points: Vec<Vec2> = points.iter()
-                        .map(|p| Vec2::new(p.x, p.z))
-                        .collect();
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
                     features.push(Feature::Landuse(LanduseFeature {
                         id: format!("osm_{}", el.id),
                         kind: landuse.clone(),
                         footprint: Footprint::new(footprint_points),
                     }));
                 } else if let Some(natural) = tags.get("natural") {
-                    let footprint_points: Vec<Vec2> = points.iter()
-                        .map(|p| Vec2::new(p.x, p.z))
-                        .collect();
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
                     features.push(Feature::Landuse(LanduseFeature {
                         id: format!("osm_{}", el.id),
                         kind: natural.clone(),

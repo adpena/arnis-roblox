@@ -2,7 +2,7 @@ pub mod chunker;
 pub mod manifest;
 pub mod materials;
 
-use arbx_geo::{BoundingBox, ChunkId, ElevationProvider, PerlinElevationProvider, LatLon, Vec3};
+use arbx_geo::{BoundingBox, ChunkId, ElevationProvider, LatLon, PerlinElevationProvider, Vec3};
 use arbx_pipeline::Feature;
 
 use crate::chunker::Chunker;
@@ -121,35 +121,59 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
 
     // Since we want realistic terrain in the sample, let's actually run it through the chunker logic
     let mut chunker = Chunker::new(config.chunk_size_studs, config.meters_per_stud, center);
-    
+
     // Ingest the sample features
     for chunk in chunks {
         for road in chunk.roads {
             // Convert relative back to world for ingest
-            let world_points = road.points.into_iter().map(|p| Vec3::new(p.x + chunk.origin_studs.x, p.y + chunk.origin_studs.y, p.z + chunk.origin_studs.z)).collect();
-            chunker.ingest(Feature::Road(arbx_pipeline::RoadFeature {
-                id: road.id,
-                kind: road.kind,
-                lanes: road.lanes,
-                width_studs: road.width_studs,
-                has_sidewalk: false,
-                points: world_points,
-            }), &config.style, &elevation);
+            let world_points = road
+                .points
+                .into_iter()
+                .map(|p| {
+                    Vec3::new(
+                        p.x + chunk.origin_studs.x,
+                        p.y + chunk.origin_studs.y,
+                        p.z + chunk.origin_studs.z,
+                    )
+                })
+                .collect();
+            chunker.ingest(
+                Feature::Road(arbx_pipeline::RoadFeature {
+                    id: road.id,
+                    kind: road.kind,
+                    lanes: road.lanes,
+                    width_studs: road.width_studs,
+                    has_sidewalk: false,
+                    points: world_points,
+                }),
+                &config.style,
+                &elevation,
+            );
         }
         for bldg in chunk.buildings {
-            let fp_points = bldg.footprint.into_iter().map(|p| arbx_geo::Vec2::new(p.x + chunk.origin_studs.x, p.z + chunk.origin_studs.z)).collect();
-            chunker.ingest(Feature::Building(arbx_pipeline::BuildingFeature {
-                id: bldg.id,
-                footprint: arbx_geo::Footprint::new(fp_points),
-                indices: bldg.indices,
-                base_y: bldg.base_y + chunk.origin_studs.y,
-                height: bldg.height,
-                levels: bldg.levels,
-                roof_levels: bldg.roof_levels,
-                min_height: None,
-                usage: None,
-                roof: bldg.roof,
-            }), &config.style, &elevation);
+            let fp_points = bldg
+                .footprint
+                .into_iter()
+                .map(|p| {
+                    arbx_geo::Vec2::new(p.x + chunk.origin_studs.x, p.z + chunk.origin_studs.z)
+                })
+                .collect();
+            chunker.ingest(
+                Feature::Building(arbx_pipeline::BuildingFeature {
+                    id: bldg.id,
+                    footprint: arbx_geo::Footprint::new(fp_points),
+                    indices: bldg.indices,
+                    base_y: bldg.base_y + chunk.origin_studs.y,
+                    height: bldg.height,
+                    levels: bldg.levels,
+                    roof_levels: bldg.roof_levels,
+                    min_height: None,
+                    usage: None,
+                    roof: bldg.roof,
+                }),
+                &config.style,
+                &elevation,
+            );
         }
     }
 
@@ -161,14 +185,16 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
         chunk_size_studs: config.chunk_size_studs,
         bbox: arbx_geo::BoundingBox::new(30.264, -97.750, 30.266, -97.748),
         total_features: 0,
-        notes: vec![
-            "Synthetic sample with Perlin terrain".to_string(),
-        ],
+        notes: vec!["Synthetic sample with Perlin terrain".to_string()],
     });
 
     let mut total_features = 0;
     for chunk in &manifest.chunks {
-        total_features += chunk.roads.len() + chunk.rails.len() + chunk.buildings.len() + chunk.water.len() + chunk.props.len();
+        total_features += chunk.roads.len()
+            + chunk.rails.len()
+            + chunk.buildings.len()
+            + chunk.water.len()
+            + chunk.props.len();
     }
     manifest.meta.total_features = total_features;
     manifest
@@ -202,7 +228,7 @@ pub fn export_to_chunks(
         meters_per_stud: config.meters_per_stud as f32,
         chunk_size_studs: config.chunk_size_studs,
         bbox,
-        total_features: 0, 
+        total_features: 0,
         notes: vec!["exported via chunker from features".to_string()],
     });
 

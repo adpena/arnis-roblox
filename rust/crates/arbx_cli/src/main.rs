@@ -87,7 +87,8 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 i += 2;
             }
             "--bbox" => {
-                let value = args.get(i + 1)
+                let value = args
+                    .get(i + 1)
                     .ok_or("--bbox requires MIN_LAT,MIN_LON,MAX_LAT,MAX_LON")?;
                 let p: Vec<f64> = value
                     .split(',')
@@ -201,8 +202,11 @@ fn cmd_config(args: &[String]) -> Result<(), String> {
 }
 
 fn cmd_stats(args: &[String]) -> Result<(), String> {
-    let path = args.first().ok_or("stats requires a path to a manifest file")?;
-    let content = fs::read_to_string(path).map_err(|e| format!("failed to read manifest: {}", e))?;
+    let path = args
+        .first()
+        .ok_or("stats requires a path to a manifest file")?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("failed to read manifest: {}", e))?;
 
     let v: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {}", e))?;
@@ -224,7 +228,10 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
         for c in chunks {
             total_roads += c["roads"].as_array().map(|a| a.len() as u64).unwrap_or(0);
             total_rails += c["rails"].as_array().map(|a| a.len() as u64).unwrap_or(0);
-            total_bldgs += c["buildings"].as_array().map(|a| a.len() as u64).unwrap_or(0);
+            total_bldgs += c["buildings"]
+                .as_array()
+                .map(|a| a.len() as u64)
+                .unwrap_or(0);
             total_props += c["props"].as_array().map(|a| a.len() as u64).unwrap_or(0);
         }
         println!("  - Roads:     {}", total_roads);
@@ -237,25 +244,40 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
 }
 
 fn cmd_validate(args: &[String]) -> Result<(), String> {
-    let path = args.first().ok_or("validate requires a path to a manifest file")?;
+    let path = args
+        .first()
+        .ok_or("validate requires a path to a manifest file")?;
     let start = Instant::now();
 
-    let content = fs::read_to_string(path).map_err(|e| format!("failed to read manifest: {}", e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("failed to read manifest: {}", e))?;
     let v: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {}", e))?;
 
     // Validate top-level structure
-    let schema_version = v.get("schemaVersion")
+    let schema_version = v
+        .get("schemaVersion")
         .and_then(|v| v.as_str())
         .ok_or("missing or invalid schemaVersion")?;
 
     if schema_version != "0.2.0" {
-        return Err(format!("unsupported schemaVersion: {} (expected 0.2.0)", schema_version));
+        return Err(format!(
+            "unsupported schemaVersion: {} (expected 0.2.0)",
+            schema_version
+        ));
     }
 
     // Validate meta section
     let meta = v.get("meta").ok_or("missing meta section")?;
-    let required_meta = ["worldName", "generator", "source", "metersPerStud", "chunkSizeStuds", "bbox", "totalFeatures"];
+    let required_meta = [
+        "worldName",
+        "generator",
+        "source",
+        "metersPerStud",
+        "chunkSizeStuds",
+        "bbox",
+        "totalFeatures",
+    ];
     for field in &required_meta {
         if meta.get(field).is_none() {
             return Err(format!("meta missing required field: {}", field));
@@ -272,7 +294,9 @@ fn cmd_validate(args: &[String]) -> Result<(), String> {
     }
 
     // Validate chunks
-    let chunks = v.get("chunks").and_then(|v| v.as_array())
+    let chunks = v
+        .get("chunks")
+        .and_then(|v| v.as_array())
         .ok_or("missing or invalid chunks array")?;
 
     if chunks.is_empty() {
@@ -288,7 +312,9 @@ fn cmd_validate(args: &[String]) -> Result<(), String> {
         }
 
         // Validate originStuds
-        let origin = chunk.get("originStuds").ok_or(format!("{} missing originStuds", prefix))?;
+        let origin = chunk
+            .get("originStuds")
+            .ok_or(format!("{} missing originStuds", prefix))?;
         let origin_fields = ["x", "y", "z"];
         for field in &origin_fields {
             if origin.get(field).and_then(|v| v.as_f64()).is_none() {
@@ -304,14 +330,20 @@ fn cmd_validate(args: &[String]) -> Result<(), String> {
                     return Err(format!("{}.terrain missing field: {}", prefix, field));
                 }
             }
-            let heights = terrain.get("heights").and_then(|v| v.as_array())
+            let heights = terrain
+                .get("heights")
+                .and_then(|v| v.as_array())
                 .ok_or(format!("{}.terrain.heights must be an array", prefix))?;
             let width = terrain.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
             let depth = terrain.get("depth").and_then(|v| v.as_u64()).unwrap_or(0);
             let expected = width * depth;
             if heights.len() as u64 != expected {
-                return Err(format!("{}.terrain.heights length mismatch: expected {}, got {}",
-                    prefix, expected, heights.len()));
+                return Err(format!(
+                    "{}.terrain.heights length mismatch: expected {}, got {}",
+                    prefix,
+                    expected,
+                    heights.len()
+                ));
             }
         }
 
@@ -325,10 +357,15 @@ fn cmd_validate(args: &[String]) -> Result<(), String> {
                 if road.get("widthStuds").and_then(|v| v.as_f64()).is_none() {
                     return Err(format!("{} missing widthStuds", road_prefix));
                 }
-                let points = road.get("points").and_then(|v| v.as_array())
+                let points = road
+                    .get("points")
+                    .and_then(|v| v.as_array())
                     .ok_or(format!("{} missing points", road_prefix))?;
                 if points.len() < 2 {
-                    return Err(format!("{}.points must have at least 2 points", road_prefix));
+                    return Err(format!(
+                        "{}.points must have at least 2 points",
+                        road_prefix
+                    ));
                 }
             }
         }
@@ -369,14 +406,21 @@ fn cmd_diff(args: &[String]) -> Result<(), String> {
     let m1_path = &args[0];
     let m2_path = &args[1];
 
-    let m1_content = fs::read_to_string(m1_path).map_err(|e| format!("failed to read {}: {}", m1_path, e))?;
-    let m2_content = fs::read_to_string(m2_path).map_err(|e| format!("failed to read {}: {}", m2_path, e))?;
+    let m1_content =
+        fs::read_to_string(m1_path).map_err(|e| format!("failed to read {}: {}", m1_path, e))?;
+    let m2_content =
+        fs::read_to_string(m2_path).map_err(|e| format!("failed to read {}: {}", m2_path, e))?;
 
-    let v1: serde_json::Value = serde_json::from_str(&m1_content).map_err(|e| format!("invalid JSON in {}: {}", m1_path, e))?;
-    let v2: serde_json::Value = serde_json::from_str(&m2_content).map_err(|e| format!("invalid JSON in {}: {}", m2_path, e))?;
+    let v1: serde_json::Value = serde_json::from_str(&m1_content)
+        .map_err(|e| format!("invalid JSON in {}: {}", m1_path, e))?;
+    let v2: serde_json::Value = serde_json::from_str(&m2_content)
+        .map_err(|e| format!("invalid JSON in {}: {}", m2_path, e))?;
 
     if v1["schemaVersion"] != v2["schemaVersion"] {
-        println!("Schema versions differ: {} vs {}", v1["schemaVersion"], v2["schemaVersion"]);
+        println!(
+            "Schema versions differ: {} vs {}",
+            v1["schemaVersion"], v2["schemaVersion"]
+        );
     }
 
     let c1 = v1["chunks"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -404,7 +448,9 @@ fn cmd_explain() {
     println!("- Roblox-side importer/runtime modules");
     println!("- optional Studio plugin/editor helpers");
     println!();
-    println!("The next serious step is replacing placeholder builders with optimized implementations.");
+    println!(
+        "The next serious step is replacing placeholder builders with optimized implementations."
+    );
 }
 
 fn main() {
@@ -460,7 +506,11 @@ mod tests {
         }"#;
         let f1 = write_temp_manifest(content);
         let f2 = write_temp_manifest(content);
-        assert!(cmd_diff(&[f1.path().to_str().unwrap().to_string(), f2.path().to_str().unwrap().to_string()]).is_ok());
+        assert!(cmd_diff(&[
+            f1.path().to_str().unwrap().to_string(),
+            f2.path().to_str().unwrap().to_string()
+        ])
+        .is_ok());
     }
 
     #[test]
@@ -469,6 +519,10 @@ mod tests {
         let c2 = r#"{ "schemaVersion": "0.1.0", "meta": { "totalFeatures": 10 }, "chunks": [] }"#;
         let f1 = write_temp_manifest(c1);
         let f2 = write_temp_manifest(c2);
-        assert!(cmd_diff(&[f1.path().to_str().unwrap().to_string(), f2.path().to_str().unwrap().to_string()]).is_ok());
+        assert!(cmd_diff(&[
+            f1.path().to_str().unwrap().to_string(),
+            f2.path().to_str().unwrap().to_string()
+        ])
+        .is_ok());
     }
 }
