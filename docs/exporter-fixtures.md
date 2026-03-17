@@ -17,6 +17,25 @@ This repository keeps a loose but intentional contract between the Rust exporter
       - `ImportService.ImportManifest` imports multiple chunks (`stats.chunksImported == 2`).
       - Both chunk folders (`"0_0"` and `"1_0"`) are created under the world root.
 
+### Using real OSM data (Overpass) with the full pipeline
+
+For quick end-to-end tests with real OSM data, you can use the helper scripts under `scripts/`:
+
+- `scripts/fetch_osm_overpass.py`:
+  - Calls the public Overpass API with a bounding box and saves the JSON.
+  - Example:
+    - `python scripts/fetch_osm_overpass.py --bbox 30.26,-97.75,30.27,-97.74 --out rust/data/austin_overpass.json`
+- `scripts/export_austin_from_osm.sh`:
+  - Convenience wrapper that:
+    1. Fetches OSM data for an Austin bbox via Overpass.
+    2. Runs the full Rust pipeline + exporter using `arbx_cli compile`.
+  - Usage (from repo root):
+    - `bash scripts/export_austin_from_osm.sh`
+  - Output:
+    - `rust/out/austin-manifest.json` – ready to validate with `ChunkSchema` and import into Roblox.
+
+You can swap the bbox or output paths in these scripts as needed, or use them as templates for other cities.
+
 ### Updating fixtures when the exporter changes
 
 - If you change the Rust sample exporter or schema in a way that affects sample manifests:
