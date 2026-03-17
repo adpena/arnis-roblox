@@ -6,7 +6,8 @@ use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
     BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance,
-    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature, Room,
+    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    Room,
 };
 use crate::materials::StyleMapper;
 
