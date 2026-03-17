@@ -6,6 +6,7 @@ use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 use crate::manifest::{
     BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance,
     RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    Room,
 };
 use crate::materials::StyleMapper;
 
@@ -63,33 +64,50 @@ impl Chunker {
 
         self.chunks.entry(id).or_insert_with(|| {
             let origin = chunk_origin(id, chunk_size, center, meters_per_stud, elevation);
-            
+
             // Build terrain grid for the chunk
             let cell_size = 16;
             let grid_dim = (chunk_size / cell_size) as usize;
-            let mut heights = Vec::with_capacity(grid_dim * grid_dim);
-            let mut cell_materials = Vec::with_capacity(grid_dim * grid_dim);
-            
+            let total_cells = grid_dim * grid_dim;
+
+            // Pre-compute constants for coordinate transformation
             let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
             let lon_per_stud = 1.0 / (111_111.0 * center.lat.to_radians().cos() * meters_per_stud);
+            let cell_size_f64 = cell_size as f64;
+            
+            // Pre-compute chunk corner coordinates
+            let chunk_lat_start = center.lat + (id.z as f64 * chunk_size as f64 * lat_per_stud);
+            let chunk_lon_start = center.lon + (id.x as f64 * chunk_size as f64 * lon_per_stud);
+            
+            // Pre-compute row latitudes
+            let row_lats: Vec<f64> = (0..grid_dim)
+                .map(|cz| chunk_lat_start + (cz as f64 * cell_size_f64 * lat_per_stud))
+                .collect();
+            
+            // Pre-compute column longitudes
+            let col_lons: Vec<f64> = (0..grid_dim)
+                .map(|cx| chunk_lon_start + (cx as f64 * cell_size_f64 * lon_per_stud))
+                .collect();
 
             let default_material = style.get_terrain_material("grass");
+            let origin_y = origin.y;
+
+            let mut heights: Vec<f32> = Vec::with_capacity(total_cells);
+            heights.resize(total_cells, 0.0);
 
             for cz in 0..grid_dim {
+                let lat = row_lats[cz];
+                let row_start = cz * grid_dim;
+
                 for cx in 0..grid_dim {
-                    let lx = (id.x as f32 * chunk_size as f32) + (cx as f32 * cell_size as f32);
-                    let lz = (id.z as f32 * chunk_size as f32) + (cz as f32 * cell_size as f32);
-                    
-                    let lat = center.lat + (lz as f64 * lat_per_stud);
-                    let lon = center.lon + (lx as f64 * lon_per_stud);
-                    
+                    let lon = col_lons[cx];
                     let h_meters = elevation.sample_height_at(LatLon::new(lat, lon));
                     let h_studs = (h_meters as f64 / meters_per_stud) as f32;
-                    
-                    heights.push(h_studs - origin.y);
-                    cell_materials.push(default_material.clone());
+                    heights[row_start + cx] = h_studs - origin_y;
                 }
             }
+
+            let cell_materials = vec![default_material.clone(); total_cells];
 
             Chunk {
                 id,
@@ -236,7 +254,7 @@ impl Chunker {
                 let chunk = self.ensure_chunk(chunk_id, elevation, style);
                 let origin = chunk.origin_studs;
 
-                let relative_footprint = f
+                let relative_footprint: Vec<GroundPoint> = f
                     .footprint
                     .points
                     .iter()
@@ -265,6 +283,25 @@ impl Chunker {
                     None
                 };
 
+                // Generate rooms (one per level)
+                let mut rooms = Vec::new();
+                let levels = f.levels.unwrap_or(1);
+                let floor_height = f.height / levels as f32;
+                
+                for i in 0..levels {
+                    rooms.push(Room {
+                        id: format!("{}_floor_{}", f.id, i),
+                        name: format!("Floor {}", i + 1),
+                        footprint: relative_footprint.clone(),
+                        floor_y: (f.base_y - origin.y) + (i as f32 * floor_height),
+                        height: 0.2, // slab thickness
+                        wall_material: None,
+                        floor_material: Some("WoodPlanks".to_string()),
+                        has_door: i == 0,
+                        has_window: true,
+                    });
+                }
+
                 chunk.buildings.push(BuildingShell {
                     id: f.id,
                     footprint: relative_footprint,
@@ -277,7 +314,7 @@ impl Chunker {
                     roof_levels: f.roof_levels,
                     facade_style,
                     roof: f.roof,
-                    rooms: Vec::new(),
+                    rooms,
                 });
             }
             Feature::Prop(f) => {

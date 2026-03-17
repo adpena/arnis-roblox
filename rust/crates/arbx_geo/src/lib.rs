@@ -110,7 +110,7 @@ impl Mercator {
     }
 }
 
-pub trait ElevationProvider {
+pub trait ElevationProvider: Send + Sync {
     /// Sample height in meters at a given LatLon.
     fn sample_height_at(&self, latlon: LatLon) -> f32;
 }

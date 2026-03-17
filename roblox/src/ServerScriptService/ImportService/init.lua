@@ -111,6 +111,8 @@ function ImportService.ImportChunk(chunk, options)
         local pBldgs = Profiler.begin("BuildBuildings")
         if config.BuildingMode == "shellMesh" then
             BuildingBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds)
+            -- Build interiors (merged by material across chunk)
+            RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds)
         elseif config.BuildingMode == "shellParts" then
             for _, building in ipairs(chunk.buildings or {}) do
                 BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds)
@@ -118,16 +120,6 @@ function ImportService.ImportChunk(chunk, options)
         else
             for _, building in ipairs(chunk.buildings or {}) do
                 BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds)
-            end
-        end
-
-        -- Build rooms (interiors) for each building
-        for _, building in ipairs(chunk.buildings or {}) do
-            if building.rooms and #building.rooms > 0 then
-                local buildingFolder = buildingsFolder:FindFirstChild(building.id)
-                if buildingFolder then
-                    RoomBuilder.BuildAll(buildingFolder, building, building.rooms, chunk.originStuds)
-                end
             end
         end
 

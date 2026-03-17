@@ -436,6 +436,55 @@ impl BuildingShell {
         out.push_str(",\n");
         write_key(out, indent + 2, "roof");
         write_string(out, &self.roof);
+
+        if !self.rooms.is_empty() {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "rooms");
+            write_array(out, indent + 2, &self.rooms, |item, out, indent| item.write_json(out, indent));
+        }
+        
+        out.push('\n');
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl Room {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+        write_key(out, indent + 2, "id");
+        write_string(out, &self.id);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "name");
+        write_string(out, &self.name);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "footprint");
+        write_ground_points(out, &self.footprint, indent + 2);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "floorY");
+        write_number(out, self.floor_y);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "height");
+        write_number(out, self.height);
+        
+        if let Some(wm) = &self.wall_material {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "wallMaterial");
+            write_string(out, wm);
+        }
+        if let Some(fm) = &self.floor_material {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "floorMaterial");
+            write_string(out, fm);
+        }
+        
+        out.push_str(",\n");
+        write_key(out, indent + 2, "hasDoor");
+        out.push_str(if self.has_door { "true" } else { "false" });
+        out.push_str(",\n");
+        write_key(out, indent + 2, "hasWindow");
+        out.push_str(if self.has_window { "true" } else { "false" });
         
         out.push('\n');
         write_indent(out, indent);
