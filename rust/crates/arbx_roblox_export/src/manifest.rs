@@ -45,6 +45,7 @@ pub struct RoadSegment {
     pub color: Option<Color>,
     pub lanes: Option<u32>,
     pub width_studs: f32,
+    pub has_sidewalk: bool,
     pub points: Vec<Vec3>,
 }
 
@@ -343,6 +344,9 @@ impl RoadSegment {
         out.push_str(",\n");
         write_key(out, indent + 2, "widthStuds");
         write_number(out, self.width_studs);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "hasSidewalk");
+        out.push_str(if self.has_sidewalk { "true" } else { "false" });
         out.push_str(",\n");
         write_key(out, indent + 2, "points");
         write_vec3_array(out, &self.points, indent + 2);

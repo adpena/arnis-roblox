@@ -131,6 +131,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                 kind: road.kind,
                 lanes: road.lanes,
                 width_studs: road.width_studs,
+                has_sidewalk: false,
                 points: world_points,
             }), &config.style, &elevation);
         }

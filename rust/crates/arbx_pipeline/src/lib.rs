@@ -10,6 +10,7 @@ pub struct RoadFeature {
     pub kind: String,
     pub lanes: Option<u32>,
     pub width_studs: f32,
+    pub has_sidewalk: bool,
     pub points: Vec<Vec3>,
 }
 
@@ -220,6 +221,7 @@ impl SourceAdapter for SyntheticAustinAdapter {
             kind: "primary".to_string(),
             lanes: Some(4),
             width_studs: 40.0,
+            has_sidewalk: true,
             points: vec![
                 project_with_y(center.lat - 0.005, center.lon),
                 project_with_y(center.lat, center.lon),
@@ -380,11 +382,14 @@ impl SourceAdapter for OverpassAdapter {
                     }));
                 } else if let Some(highway) = tags.get("highway") {
                     let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
+                    let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
+                    
                     features.push(Feature::Road(RoadFeature {
                         id: format!("osm_{}", el.id),
                         kind: highway.clone(),
                         lanes,
                         width_studs: 12.0, // default width
+                        has_sidewalk,
                         points,
                     }));
                 } else if let Some(railway) = tags.get("railway") {
