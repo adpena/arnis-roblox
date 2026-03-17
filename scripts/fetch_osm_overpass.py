@@ -40,7 +40,7 @@ def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
     # Simple extract: highways, buildings, water, landuse
     # You can tune this later without changing the Rust side.
     return f"""
-    [out:json][timeout:60];
+    [out:json][timeout:120];
     (
       way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
       way["building"]({min_lat},{min_lon},{max_lat},{max_lon});

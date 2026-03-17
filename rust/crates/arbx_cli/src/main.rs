@@ -73,6 +73,8 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut source_path: Option<PathBuf> = None;
     // Default bbox covers downtown Austin. Overridden by --bbox to match the OSM fetch area.
     let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
+    // 1 stud = 1 meter by default. Use --meters-per-stud to scale the world.
+    let mut meters_per_stud: f64 = 1.0;
 
     let mut i = 0;
     while i < args.len() {
@@ -105,6 +107,16 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 bbox = BoundingBox::new(p[0], p[1], p[2], p[3]);
                 i += 2;
             }
+            "--meters-per-stud" => {
+                let value = args.get(i + 1).ok_or("--meters-per-stud requires a number")?;
+                meters_per_stud = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid --meters-per-stud value: {value}"))?;
+                if meters_per_stud <= 0.0 {
+                    return Err("--meters-per-stud must be positive".to_string());
+                }
+                i += 2;
+            }
             other => {
                 return Err(format!("unknown argument to compile: {other}"));
             }
@@ -118,7 +130,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             let content =
                 fs::read_to_string(path).map_err(|e| format!("failed to read source: {}", e))?;
             if content.contains("\"elements\"") {
-                Box::new(arbx_pipeline::OverpassAdapter { path: path.clone() })
+                Box::new(arbx_pipeline::OverpassAdapter {
+                    path: path.clone(),
+                    meters_per_stud,
+                })
             } else {
                 Box::new(arbx_pipeline::FileSourceAdapter { path: path.clone() })
             }
@@ -129,7 +144,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         Box::new(arbx_pipeline::SyntheticAustinAdapter)
     };
 
-    println!("Compiling from {}...", adapter.name());
+    println!("Compiling from {}... (meters_per_stud={meters_per_stud})", adapter.name());
 
     let stages = [
         &ValidateStage as &dyn arbx_pipeline::PipelineStage,
@@ -140,7 +155,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let ctx = run_pipeline(adapter.as_ref(), bbox, &stages)
         .map_err(|e| format!("pipeline failed: {:?}", e))?;
 
-    let config = ExportConfig::default();
+    let config = ExportConfig {
+        meters_per_stud,
+        ..ExportConfig::default()
+    };
     let elevation = FlatElevationProvider { height: 0.0 };
     let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation).to_json_pretty();
     let duration = start.elapsed();

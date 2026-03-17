@@ -83,6 +83,24 @@ impl BoundingBox {
     pub fn height_degrees(&self) -> f64 {
         self.max.lat - self.min.lat
     }
+
+    /// Returns true if the given point falls within this bbox.
+    pub fn contains(&self, ll: LatLon) -> bool {
+        ll.lat >= self.min.lat
+            && ll.lat <= self.max.lat
+            && ll.lon >= self.min.lon
+            && ll.lon <= self.max.lon
+    }
+
+    /// Returns a new BoundingBox expanded by `margin_degrees` on all sides.
+    pub fn expanded(&self, margin_degrees: f64) -> Self {
+        BoundingBox::new(
+            self.min.lat - margin_degrees,
+            self.min.lon - margin_degrees,
+            self.max.lat + margin_degrees,
+            self.max.lon + margin_degrees,
+        )
+    }
 }
 
 /// Simple Web Mercator projection for local coordinate conversion.

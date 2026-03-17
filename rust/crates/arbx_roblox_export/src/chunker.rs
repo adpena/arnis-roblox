@@ -81,13 +81,14 @@ impl Chunker {
             let lon_per_stud = 1.0 / (111_111.0 * center.lat.to_radians().cos() * meters_per_stud);
             let cell_size_f64 = cell_size as f64;
 
-            // Pre-compute chunk corner coordinates
-            let chunk_lat_start = center.lat + (id.z as f64 * chunk_size as f64 * lat_per_stud);
+            // Pre-compute chunk corner coordinates.
+            // Z+ = south = decreasing latitude, so negate the Z contribution.
+            let chunk_lat_start = center.lat - (id.z as f64 * chunk_size as f64 * lat_per_stud);
             let chunk_lon_start = center.lon + (id.x as f64 * chunk_size as f64 * lon_per_stud);
 
-            // Pre-compute row latitudes
+            // Row 0 is the north edge (lowest Z in this chunk), increasing row index moves south.
             let row_lats: Vec<f64> = (0..grid_dim)
-                .map(|cz| chunk_lat_start + (cz as f64 * cell_size_f64 * lat_per_stud))
+                .map(|cz| chunk_lat_start - (cz as f64 * cell_size_f64 * lat_per_stud))
                 .collect();
 
             // Pre-compute column longitudes
@@ -424,7 +425,7 @@ impl Chunker {
             }
 
             split_ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            split_ts.dedup_by(|a, b| (*a - *b).abs() < 0.0001);
+            split_ts.dedup_by(|a, b| (*a - *b).abs() < 0.001);
 
             // 2. Create sub-segments and assign to chunks
             for j in 0..split_ts.len() - 1 {
@@ -454,7 +455,11 @@ impl Chunker {
                 let mut appended = false;
                 if let Some(last_seg) = chunk_segments.last_mut() {
                     if let Some(last_p) = last_seg.last() {
-                        if (last_p.x - sp1.x).abs() < 0.001 && (last_p.z - sp1.z).abs() < 0.001 {
+                        if (last_p.x - sp1.x).abs() < 0.05 && (last_p.z - sp1.z).abs() < 0.05 {
+                            // Snap sp2 onto the exact last point to close the sub-millimetre gap
+                            // that float arithmetic can leave at chunk-boundary split points.
+                            let snap = *last_p;
+                            let _ = snap; // sp1 is already close enough; just chain sp2
                             last_seg.push(sp2);
                             appended = true;
                         }

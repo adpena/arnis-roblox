@@ -292,6 +292,9 @@ impl SourceAdapter for FileSourceAdapter {
 /// A simple adapter for Overpass JSON data.
 pub struct OverpassAdapter {
     pub path: PathBuf,
+    /// How many real-world meters correspond to one Roblox stud.
+    /// Must match the ExportConfig value used downstream.
+    pub meters_per_stud: f64,
 }
 
 #[derive(Deserialize)]
@@ -333,6 +336,11 @@ impl SourceAdapter for OverpassAdapter {
         }
 
         let center = bbox.center();
+        let mps = self.meters_per_stud;
+        // Allow a 10% buffer beyond the fetch bbox before clipping.
+        let lat_margin = bbox.height_degrees() * 0.1;
+        let lon_margin = bbox.width_degrees() * 0.1;
+        let clip_bbox = bbox.expanded(lat_margin.max(lon_margin));
         let mut features = Vec::new();
 
         for el in &data.elements {
@@ -340,10 +348,14 @@ impl SourceAdapter for OverpassAdapter {
                 let Some(tags) = &el.tags else { continue };
                 let Some(way_nodes) = &el.nodes else { continue };
 
+                // Only project nodes that lie within (or just outside) the fetch bbox.
+                // This prevents OSM ways that extend far beyond the bbox from creating
+                // chunks tens of km from the world origin.
                 let points: Vec<Vec3> = way_nodes
                     .iter()
                     .filter_map(|id| nodes.get(id))
-                    .map(|&ll| Mercator::project(ll, center, 1.0))
+                    .filter(|&&ll| clip_bbox.contains(ll))
+                    .map(|&ll| Mercator::project(ll, center, mps))
                     .collect();
 
                 if points.len() < 2 {
