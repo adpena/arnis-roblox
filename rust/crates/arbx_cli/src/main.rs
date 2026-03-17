@@ -71,7 +71,7 @@ fn cmd_sample(args: &[String]) -> Result<(), String> {
 fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut out_path: Option<PathBuf> = None;
     let mut source_path: Option<PathBuf> = None;
-    let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
+    let mut bbox = BoundingBox::new(30.245, -97.765, 30.305, -97.715);
 
     let mut i = 0;
     while i < args.len() {

@@ -8,12 +8,12 @@ local WorldConfig = {
     WaterMode = "mesh", -- Added for completeness
 
     StreamingEnabled = true,
-    StreamingTargetRadius = 2048, -- Distance to keep ANY representation loaded
-    HighDetailRadius = 1024, -- Distance to keep full buildings/water/props loaded
+    StreamingTargetRadius = 4096, -- Distance to keep ANY representation loaded
+    HighDetailRadius = 2048, -- Distance to keep full buildings/water/props loaded
 
     InstanceBudget = {
-        MaxPerChunk = 1500,
-        MaxPropsPerChunk = 250,
+        MaxPerChunk = 2000, -- Increased for higher detail
+        MaxPropsPerChunk = 500,
     },
 }
 

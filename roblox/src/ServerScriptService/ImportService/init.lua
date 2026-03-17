@@ -52,38 +52,83 @@ end
 function ImportService.ImportChunk(chunk, options)
     options = options or {}
     local config = options.config or DefaultWorldConfig
-    local profile = Profiler.begin("ImportChunk")
-    
+    -- PERFORMANCE: Capture instance count for delta tracking
+    local profile = Profiler.begin("ImportChunk", true)
+
     -- Authoritative overwrite: ensure any existing version of this chunk is unloaded first.
+    -- This prevents duplicate content on re-import.
     ChunkLoader.UnloadChunk(chunk.id)
 
     local worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME
     local worldRoot = getWorldRoot(worldRootName)
     local chunkFolder = ensureChunkFolder(worldRoot, chunk.id)
 
-    local terrainFolder = Instance.new("Folder")
-    terrainFolder.Name = "Terrain"
-    terrainFolder.Parent = chunkFolder
+    -- PERFORMANCE: Reuse existing folders if they exist instead of recreating
+    local terrainFolder = chunkFolder:FindFirstChild("Terrain")
+    if not terrainFolder then
+        terrainFolder = Instance.new("Folder")
+        terrainFolder.Name = "Terrain"
+        terrainFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(terrainFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
-    local roadsFolder = Instance.new("Folder")
-    roadsFolder.Name = "Roads"
-    roadsFolder.Parent = chunkFolder
+    local roadsFolder = chunkFolder:FindFirstChild("Roads")
+    if not roadsFolder then
+        roadsFolder = Instance.new("Folder")
+        roadsFolder.Name = "Roads"
+        roadsFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(roadsFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
-    local railsFolder = Instance.new("Folder")
-    railsFolder.Name = "Rails"
-    railsFolder.Parent = chunkFolder
+    local railsFolder = chunkFolder:FindFirstChild("Rails")
+    if not railsFolder then
+        railsFolder = Instance.new("Folder")
+        railsFolder.Name = "Rails"
+        railsFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(railsFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
-    local buildingsFolder = Instance.new("Folder")
-    buildingsFolder.Name = "Buildings"
-    buildingsFolder.Parent = chunkFolder
+    local buildingsFolder = chunkFolder:FindFirstChild("Buildings")
+    if not buildingsFolder then
+        buildingsFolder = Instance.new("Folder")
+        buildingsFolder.Name = "Buildings"
+        buildingsFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(buildingsFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
-    local waterFolder = Instance.new("Folder")
-    waterFolder.Name = "Water"
-    waterFolder.Parent = chunkFolder
+    local waterFolder = chunkFolder:FindFirstChild("Water")
+    if not waterFolder then
+        waterFolder = Instance.new("Folder")
+        waterFolder.Name = "Water"
+        waterFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(waterFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
-    local propsFolder = Instance.new("Folder")
-    propsFolder.Name = "Props"
-    propsFolder.Parent = chunkFolder
+    local propsFolder = chunkFolder:FindFirstChild("Props")
+    if not propsFolder then
+        propsFolder = Instance.new("Folder")
+        propsFolder.Name = "Props"
+        propsFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(propsFolder:GetChildren()) do
+            child:Destroy()
+        end
+    end
 
     if chunk.terrain and config.TerrainMode ~= "none" then
         local p = Profiler.begin("BuildTerrain")
@@ -158,7 +203,8 @@ function ImportService.ImportManifest(manifest, options)
     options = options or {}
     local config = options.config or DefaultWorldConfig
     Profiler.clear()
-    local profile = Profiler.begin("ImportManifest")
+    -- PERFORMANCE: Capture instance count for delta tracking
+    local profile = Profiler.begin("ImportManifest", true)
     local validated = ChunkSchema.validateManifest(manifest)
     local worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME
     local worldRoot = getWorldRoot(worldRootName)
@@ -193,7 +239,7 @@ function ImportService.ImportManifest(manifest, options)
         local chunkOptions = table.clone(options)
         chunkOptions.config = config
         ImportService.ImportChunk(chunk, chunkOptions)
-        
+
         stats.chunksImported += 1
         stats.roadsImported += #(chunk.roads or {})
         stats.railsImported += #(chunk.rails or {})
@@ -202,11 +248,15 @@ function ImportService.ImportManifest(manifest, options)
         stats.propsImported += #(chunk.props or {})
     end
 
+    local finalInstanceCount = #worldRoot:GetDescendants()
     Profiler.finish(profile, {
         worldRoot = worldRoot:GetFullName(),
         chunksImported = stats.chunksImported,
-        totalInstances = #worldRoot:GetDescendants()
+        totalInstances = finalInstanceCount,
     })
+
+    -- PERFORMANCE: Trim old sessions to prevent memory leak
+    Profiler.trim(500)
 
     Logger.info(
         "Imported manifest",
@@ -214,7 +264,8 @@ function ImportService.ImportManifest(manifest, options)
         "chunks=" .. stats.chunksImported,
         "roads=" .. stats.roadsImported,
         "rails=" .. stats.railsImported,
-        "buildings=" .. stats.buildingsImported
+        "buildings=" .. stats.buildingsImported,
+        "instances=" .. finalInstanceCount
     )
 
     if options.printReport then

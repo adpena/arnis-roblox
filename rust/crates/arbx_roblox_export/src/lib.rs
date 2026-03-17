@@ -144,6 +144,8 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                 height: bldg.height,
                 levels: bldg.levels,
                 roof_levels: bldg.roof_levels,
+                min_height: None,
+                usage: None,
                 roof: bldg.roof,
             }), &config.style, &elevation);
         }
@@ -258,6 +260,8 @@ mod tests {
             height: 10.0,
             levels: None,
             roof_levels: None,
+            min_height: None,
+            usage: None,
             roof: "flat".to_string(),
         })];
 

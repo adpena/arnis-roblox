@@ -1,12 +1,12 @@
 use std::collections::HashMap;
+use rayon::prelude::*;
 
 use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
     BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance,
-    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
-    Room,
+    RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature, Room,
 };
 use crate::materials::StyleMapper;
 
@@ -92,20 +92,19 @@ impl Chunker {
             let default_material = style.get_terrain_material("grass");
             let origin_y = origin.y;
 
-            let mut heights: Vec<f32> = Vec::with_capacity(total_cells);
-            heights.resize(total_cells, 0.0);
-
-            for cz in 0..grid_dim {
-                let lat = row_lats[cz];
-                let row_start = cz * grid_dim;
-
-                for cx in 0..grid_dim {
+            // PARALLEL terrain sampling
+            let heights: Vec<f32> = (0..total_cells)
+                .into_par_iter()
+                .map(|idx| {
+                    let cz = idx / grid_dim;
+                    let cx = idx % grid_dim;
+                    let lat = row_lats[cz];
                     let lon = col_lons[cx];
                     let h_meters = elevation.sample_height_at(LatLon::new(lat, lon));
                     let h_studs = (h_meters as f64 / meters_per_stud) as f32;
-                    heights[row_start + cx] = h_studs - origin_y;
-                }
-            }
+                    h_studs - origin_y
+                })
+                .collect();
 
             let cell_materials = vec![default_material.clone(); total_cells];
 

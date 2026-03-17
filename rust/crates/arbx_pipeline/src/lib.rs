@@ -31,6 +31,8 @@ pub struct BuildingFeature {
     pub height: f32,
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
+    pub min_height: Option<f32>,
+    pub usage: Option<String>,
     pub roof: String,
 }
 
@@ -240,6 +242,8 @@ impl SourceAdapter for SyntheticAustinAdapter {
             height: 50.0,
             levels: Some(3),
             roof_levels: Some(1),
+            min_height: None,
+            usage: Some("government".to_string()),
             roof: "dome".to_string(),
         }));
 
@@ -336,18 +340,28 @@ impl SourceAdapter for OverpassAdapter {
 
                 if points.len() < 2 { continue; }
 
-                if tags.contains_key("building") {
-                    let levels = tags.get("building:levels").and_then(|l| l.parse().ok());
-                    let roof_levels = tags.get("roof:levels").and_then(|l| l.parse().ok());
+                if tags.contains_key("building") || tags.contains_key("building:part") {
+                    let levels = tags.get("building:levels").and_then(|l| l.parse::<u32>().ok());
+                    let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
+                    let min_height: Option<f32> = tags.get("min_height").and_then(|h| h.parse().ok());
+                    let usage = tags.get("building").cloned();
                     
                     let height: f32 = tags.get("height")
-                        .and_then(|h| h.parse().ok())
+                        .and_then(|h| h.parse::<f32>().ok())
                         .unwrap_or_else(|| {
-                            // Est height from levels
+                            // Est height from levels (3.5m per floor + 2m roof/base)
                             let lvl = levels.unwrap_or(1);
                             (lvl as f32 * 3.5) + 2.0
                         });
                     
+                    let base_y: f32 = min_height
+                        .or_else(|| {
+                            tags.get("building:min_level")
+                                .and_then(|l| l.parse::<f32>().ok())
+                                .map(|l| l * 3.5)
+                        })
+                        .unwrap_or(0.0);
+
                     let footprint_points: Vec<Vec2> = points.iter()
                         .map(|p| Vec2::new(p.x, p.z))
                         .collect();
@@ -356,10 +370,12 @@ impl SourceAdapter for OverpassAdapter {
                         id: format!("osm_{}", el.id),
                         footprint: Footprint::new(footprint_points),
                         indices: None,
-                        base_y: 0.0,
-                        height,
+                        base_y,
+                        height: height - base_y,
                         levels,
                         roof_levels,
+                        min_height: Some(base_y),
+                        usage,
                         roof: tags.get("roof:shape").cloned().unwrap_or_else(|| "flat".to_string()),
                     }));
                 } else if let Some(highway) = tags.get("highway") {
@@ -467,6 +483,8 @@ mod tests {
                 height: 10.0,
                 levels: None,
                 roof_levels: None,
+                min_height: None,
+                usage: None,
                 roof: "flat".to_string(),
             })])
         }
