@@ -44,6 +44,45 @@ local function addFanTriangulation(editableMesh, vertexIndices)
 	end
 end
 
+-- Generates geometric detailing (cornices, ledges) along a facade segment
+local function addDetailing(editableMesh, p1, p2, baseY, height, levels)
+	if not levels or levels <= 0 then return end
+	
+	local floorHeight = height / levels
+	local normal = Vector3.new(p2.Z - p1.Z, 0, p1.X - p2.X).Unit
+	local extrusionDepth = 0.5
+	local ledgeThickness = 0.3
+	
+	for i = 1, levels do
+		local floorBottomY = baseY + (i - 1) * floorHeight
+		local corniceY = floorBottomY + floorHeight
+		
+		-- Simple floor divider (cornice) at the top of each level
+		if i < levels or height > 5 then
+			local c1 = p1 + Vector3.new(0, corniceY, 0)
+			local c2 = p2 + Vector3.new(0, corniceY, 0)
+			local e1 = c1 + normal * extrusionDepth
+			local e2 = c2 + normal * extrusionDepth
+			local b1 = e1 - Vector3.new(0, ledgeThickness, 0)
+			local b2 = e2 - Vector3.new(0, ledgeThickness, 0)
+			
+			local v1 = editableMesh:AddVertex(c1)
+			local v2 = editableMesh:AddVertex(c2)
+			local v3 = editableMesh:AddVertex(e1)
+			local v4 = editableMesh:AddVertex(e2)
+			local v5 = editableMesh:AddVertex(b1)
+			local v6 = editableMesh:AddVertex(b2)
+			
+			-- Cornice top face
+			editableMesh:AddTriangle(v1, v3, v2)
+			editableMesh:AddTriangle(v3, v4, v2)
+			-- Cornice front face
+			editableMesh:AddTriangle(v3, v5, v4)
+			editableMesh:AddTriangle(v5, v6, v4)
+		end
+	end
+end
+
 -- Generates building shell geometry into an existing EditableMesh
 local function addBuildingToMesh(editableMesh, points, baseY, height, indices, levels, _roofLevels)
 	local bottomIndices = {}
@@ -52,9 +91,8 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 	-- 1. Create vertices
 	local cumulativeDist = 0
 	for i, p in ipairs(points) do
-		if i > 1 then
-			cumulativeDist += (p - points[i-1]).Magnitude
-		end
+		local prevP = points[i > 1 and i-1 or #points]
+		cumulativeDist += (Vector3.new(p.X, 0, p.Z) - Vector3.new(prevP.X, 0, prevP.Z)).Magnitude
 		
 		local bottomPos = Vector3.new(p.x, p.y + baseY, p.z)
 		local topPos = Vector3.new(p.x, p.y + baseY + height, p.z)
@@ -62,12 +100,8 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 		local bIdx = editableMesh:AddVertex(bottomPos)
 		local tIdx = editableMesh:AddVertex(topPos)
 		
-		-- Facade UV mapping:
-		-- X: distance along the perimeter (repeating every 10 studs)
-		-- Y: height (repeating every 12 studs for floors)
+		-- Facade UV mapping
 		local uvX = cumulativeDist / 10.0
-		
-		-- Adjust UV Y based on levels if available
 		local floorHeight = 12.0
 		if levels and levels > 0 then
 			floorHeight = height / levels
@@ -83,7 +117,7 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 		table.insert(topIndices, tIdx)
 	end
 
-	-- 2. Create wall triangles (quads)
+	-- 2. Create wall triangles (quads) and detailing
 	local count = #points
 	for i = 1, count do
 		local nextI = i % count + 1
@@ -94,6 +128,9 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 
 		editableMesh:AddTriangle(b1, t1, b2)
 		editableMesh:AddTriangle(t1, t2, b2)
+		
+		-- Add procedural detailing geometry
+		addDetailing(editableMesh, points[i], points[nextI], baseY, height, levels)
 	end
 
 	-- 3. Create roof triangles
@@ -103,7 +140,6 @@ local function addBuildingToMesh(editableMesh, points, baseY, height, indices, l
 			local i2 = topIndices[indices[i + 1] + 1]
 			local i3 = topIndices[indices[i + 2] + 1]
 			if i1 and i2 and i3 then
-				-- Roof UVs: flat world-space projection
 				local p1 = editableMesh:GetVertexPosition(i1)
 				local p2 = editableMesh:GetVertexPosition(i2)
 				local p3 = editableMesh:GetVertexPosition(i3)
@@ -169,6 +205,13 @@ function BuildingBuilder.BuildAll(parent, buildings, originStuds)
 				end
 			end
 			editableMesh.Parent = meshPart
+			
+			-- SurfaceAppearance logic (PBR overrides)
+			-- Check if we have a template for this material/style
+			local template = ReplicatedStorage.Assets:FindFirstChild("Materials") and ReplicatedStorage.Assets.Materials:FindFirstChild(group.material.Name)
+			if template and template:IsA("SurfaceAppearance") then
+				template:Clone().Parent = meshPart
+			end
 		else
 			Logger.warn("Failed to create EditableMesh for merged buildings:", err or "unknown error")
 			meshPart:Destroy()

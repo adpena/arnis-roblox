@@ -71,6 +71,7 @@ pub struct BuildingShell {
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
     pub roof: String,
+    pub facade_style: Option<String>,
     pub rooms: Vec<Room>,
 }
 
@@ -426,11 +427,15 @@ impl BuildingShell {
             write!(out, "{}", rlvl).unwrap();
         }
 
+        if let Some(style) = &self.facade_style {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "facadeStyle");
+            write_string(out, style);
+        }
+
         out.push_str(",\n");
         write_key(out, indent + 2, "roof");
         write_string(out, &self.roof);
-        
-        // Rooms logic could go here if requested, but for shell-first we skip detailed room serialization unless needed.
         
         out.push('\n');
         write_indent(out, indent);

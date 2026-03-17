@@ -255,6 +255,15 @@ impl Chunker {
                 } else {
                     color
                 };
+                
+                // Assign a procedural facade style if it's a default building
+                let facade_style = if f.roof == "dome" {
+                    Some("facade_modern".to_string())
+                } else if f.id.contains("osm") {
+                    Some("facade_brick".to_string())
+                } else {
+                    None
+                };
 
                 chunk.buildings.push(BuildingShell {
                     id: f.id,
@@ -266,6 +275,7 @@ impl Chunker {
                     height: f.height,
                     levels: f.levels,
                     roof_levels: f.roof_levels,
+                    facade_style,
                     roof: f.roof,
                     rooms: Vec::new(),
                 });

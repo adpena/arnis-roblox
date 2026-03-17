@@ -32,6 +32,10 @@ impl Default for StyleMapper {
         buildings.insert("default".to_string(), StyleEntry { material: "Concrete".to_string(), color: "#aaaaaa".to_string() });
         buildings.insert("industrial".to_string(), StyleEntry { material: "Metal".to_string(), color: "#777777".to_string() });
         buildings.insert("residential".to_string(), StyleEntry { material: "Concrete".to_string(), color: "#ccaa88".to_string() });
+        
+        // Add specific facade styles that the builder will recognize
+        buildings.insert("facade_modern".to_string(), StyleEntry { material: "SmoothPlastic".to_string(), color: "#ffffff".to_string() });
+        buildings.insert("facade_brick".to_string(), StyleEntry { material: "Brick".to_string(), color: "#aa4444".to_string() });
 
         let mut props = HashMap::new();
         props.insert("tree".to_string(), StyleEntry { material: "Grass".to_string(), color: "#329632".to_string() });

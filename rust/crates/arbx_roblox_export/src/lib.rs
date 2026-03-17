@@ -106,6 +106,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                         levels: Some(3),
                         roof_levels: Some(1),
                         roof: "flat".to_string(),
+                        facade_style: None,
                         rooms: Vec::new(),
                     }]
                 } else {
