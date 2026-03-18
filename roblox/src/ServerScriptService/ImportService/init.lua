@@ -209,10 +209,10 @@ function ImportService.ImportChunk(chunk, options)
     if config.WaterMode ~= "none" then
         local pWater = Profiler.begin("BuildWater")
         if config.WaterMode == "mesh" then
-            WaterBuilder.BuildAll(waterFolder, chunk.water, chunk.originStuds)
+            WaterBuilder.BuildAll(waterFolder, chunk.water, chunk.originStuds, chunk)
         else
             for _, water in ipairs(chunk.water or {}) do
-                WaterBuilder.FallbackBuild(waterFolder, water, chunk.originStuds)
+                WaterBuilder.FallbackBuild(waterFolder, water, chunk.originStuds, chunk)
             end
         end
         Profiler.finish(pWater)
