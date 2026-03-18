@@ -47,6 +47,14 @@ local function getFloorMaterial(building)
 	return USAGE_FLOOR_MATERIAL[usage] or USAGE_FLOOR_MATERIAL.default
 end
 
+local function hashId(id)
+	local h = 5381
+	for i = 1, #id do
+		h = ((h * 33) + string.byte(id, i)) % 2147483647
+	end
+	return h
+end
+
 local USAGE_COLOR = {
 	residential = Color3.fromRGB(180, 120, 90),
 	apartments  = Color3.fromRGB(165, 110, 80),
@@ -58,25 +66,42 @@ local USAGE_COLOR = {
 	default     = Color3.fromRGB(160, 150, 140),
 }
 
+-- Realistic building color palette for deterministic variety when OSM lacks colour tags
+local BUILDING_PALETTE = {
+	Color3.fromRGB(180, 150, 120),  -- sandstone/tan
+	Color3.fromRGB(160, 130, 100),  -- warm brick
+	Color3.fromRGB(140, 155, 165),  -- cool grey concrete
+	Color3.fromRGB(195, 185, 170),  -- light limestone
+	Color3.fromRGB(120, 125, 130),  -- dark concrete
+	Color3.fromRGB(175, 165, 150),  -- warm concrete
+	Color3.fromRGB(200, 190, 175),  -- cream/white plaster
+	Color3.fromRGB(155, 140, 125),  -- medium brick
+	Color3.fromRGB(130, 140, 150),  -- steel grey
+	Color3.fromRGB(165, 155, 140),  -- buff limestone
+}
+
 local function getMaterial(building)
+	-- First try the manifest material string directly
+	if building.material then
+		local ok, mat = pcall(function() return Enum.Material[building.material] end)
+		if ok and mat then return mat end
+	end
+	-- Fall back to usage/kind lookup
 	local usage = building.usage or building.kind or "default"
 	return USAGE_MATERIAL[usage] or USAGE_MATERIAL.default
 end
 
 local function getColor(building)
 	if building.color and building.color.r then
-		return Color3.fromRGB(building.color.r, building.color.g, building.color.b)
+		local r, g, b = building.color.r, building.color.g, building.color.b
+		-- Use the explicit color unless it is the OSM default grey placeholder
+		if not (r == 170 and g == 170 and b == 170) then
+			return Color3.fromRGB(r, g, b)
+		end
 	end
-	local usage = building.usage or building.kind or "default"
-	return USAGE_COLOR[usage] or USAGE_COLOR.default
-end
-
-local function hashId(id)
-	local h = 5381
-	for i = 1, #id do
-		h = ((h * 33) + string.byte(id, i)) % 2147483647
-	end
-	return h
+	-- Deterministic palette variety based on building ID
+	local id = building.id or tostring(building)
+	return BUILDING_PALETTE[(hashId(id) % #BUILDING_PALETTE) + 1]
 end
 
 local function pointInPolygon(px, pz, poly)
@@ -397,6 +422,44 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		post.Color = color
 		post.CastShadow = false
 		post.Parent = model
+	end
+
+	-- Window bands for tall buildings (>= 3 floors, simple polygons only)
+	local buildingMat = building.material or "Concrete"
+	local isGlass = (buildingMat == "Glass" or buildingMat == "office")
+	local bandColor = Color3.new(
+		math.min(1, color.R + 0.15),
+		math.min(1, color.G + 0.18),
+		math.min(1, color.B + 0.25)  -- slightly blue-tinted lighter
+	)
+	local FLOOR_H = 5
+	local BAND_H  = 2.5
+	local numFloors = math.floor(height / FLOOR_H)
+	if numFloors >= 3 and #worldPts <= 8 and (#worldPts * numFloors * 2) <= 100 then
+		for floor = 1, math.min(numFloors - 1, 10) do
+			local bandY = baseY + floor * FLOOR_H + BAND_H * 0.5
+			for i = 1, n do
+				local p1w = worldPts[i]
+				local p2w = worldPts[(i % n) + 1]
+				local dx = p2w.X - p1w.X
+				local dz = p2w.Z - p1w.Z
+				local eLen = math.sqrt(dx*dx + dz*dz)
+				if eLen < MIN_EDGE then continue end
+				local band = Instance.new("Part")
+				band.Name = bldgName .. "_win" .. i .. "_" .. floor
+				band.Anchored = true
+				band.Size = Vector3.new(WALL_THICKNESS * 0.5, BAND_H, eLen)
+				band.CFrame = CFrame.lookAt(
+					Vector3.new((p1w.X+p2w.X)*0.5, bandY, (p1w.Z+p2w.Z)*0.5),
+					Vector3.new(p2w.X, bandY, p2w.Z)
+				)
+				band.Material = isGlass and Enum.Material.Glass or Enum.Material.SmoothPlastic
+				band.Color = bandColor
+				band.CastShadow = false
+				band.Transparency = isGlass and 0.3 or 0.0
+				band.Parent = model
+			end
+		end
 	end
 
 	-- Fill interior with terrain (uses terrain-safe floor materials only)
