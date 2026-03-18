@@ -68,6 +68,9 @@ local ROAD_SURFACE_LIFT = 0.15
 local PAVEMENT_SURFACE_LIFT = 0.25
 local CURB_SURFACE_LIFT = 0.45
 local BRIDGE_THRESHOLD = 3 -- studs above ground to consider a road elevated (bridge)
+local BRIDGE_PILLAR_SPACING = 24
+local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
+local BRIDGE_GUARDRAIL_OFFSET = 0.15
 
 local function getMaterial(road)
     -- 1. OSM surface tag takes priority (most specific physical description)
@@ -188,7 +191,7 @@ end
 
 -- Build an elevated bridge/tunnel segment as a Part slab (not terrain).
 -- Bridges use a concrete deck Part; tunnels are skipped (underground).
-local function paintBridgeSegment(parent, p1, p2, width, material)
+local function paintBridgeSegment(parent, p1, p2, width, material, chunk)
     local delta = p2 - p1
     local length = delta.Magnitude
     if length < 0.01 then
@@ -198,13 +201,16 @@ local function paintBridgeSegment(parent, p1, p2, width, material)
     local midX = (p1.X + p2.X) * 0.5
     local midZ = (p1.Z + p2.Z) * 0.5
     local midY = (p1.Y + p2.Y) * 0.5
+    local midPos = Vector3.new(midX, midY, midZ)
+    local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
+    local right = cf.RightVector
 
     local deck = Instance.new("Part")
     deck.Anchored = true
     deck.CastShadow = true -- bridge deck casts meaningful shadows
     deck.Size = Vector3.new(width, ROAD_THICKNESS, length + 0.1)
     deck.Material = material
-    deck.CFrame = CFrame.lookAt(Vector3.new(midX, midY, midZ), Vector3.new(p2.X, midY, p2.Z))
+    deck.CFrame = cf
     deck.Parent = parent
 
     -- Guardrail posts every 8 studs on each side
@@ -213,16 +219,46 @@ local function paintBridgeSegment(parent, p1, p2, width, material)
         local t = (numPosts > 0) and (k / numPosts) or 0
         local px = p1.X + (p2.X - p1.X) * t
         local pz = p1.Z + (p2.Z - p1.Z) * t
-        local railY = midY + 1.5
+        local py = p1.Y + (p2.Y - p1.Y) * t
+        local railY = py + 1.5
+        local centerPos = Vector3.new(px, railY, pz)
         for _, side in ipairs({ -1, 1 }) do
             local post = Instance.new("Part")
+            post.Name = "BridgeRailPost"
             post.Anchored = true
             post.CastShadow = false
             post.Size = Vector3.new(0.3, 3, 0.3)
             post.Material = Enum.Material.Concrete
             post.Color = Color3.fromRGB(180, 180, 190)
-            post.CFrame = CFrame.new(px + side * (width * 0.5 + 0.15), railY, pz)
+            post.CFrame =
+                CFrame.new(centerPos + right * (width * 0.5 + BRIDGE_GUARDRAIL_OFFSET) * side)
             post.Parent = parent
+        end
+    end
+
+    if not chunk then
+        return
+    end
+
+    local supportCount = math.max(0, math.floor(length / BRIDGE_PILLAR_SPACING))
+    for k = 1, supportCount do
+        local t = k / (supportCount + 1)
+        local sx = p1.X + (p2.X - p1.X) * t
+        local sz = p1.Z + (p2.Z - p1.Z) * t
+        local deckY = p1.Y + (p2.Y - p1.Y) * t
+        local groundY = GroundSampler.sampleWorldHeight(chunk, sx, sz)
+        local clearance = deckY - groundY - ROAD_THICKNESS * 0.5
+        if clearance > BRIDGE_MIN_PILLAR_CLEARANCE then
+            local support = Instance.new("Part")
+            support.Name = "BridgeSupport"
+            support.Anchored = true
+            support.CastShadow = true
+            support.Material = Enum.Material.Concrete
+            support.Color = Color3.fromRGB(150, 150, 160)
+            support.Size =
+                Vector3.new(math.max(1.2, width * 0.12), clearance, math.max(1.2, width * 0.12))
+            support.CFrame = CFrame.new(sx, groundY + clearance * 0.5, sz)
+            support.Parent = parent
         end
     end
 end
@@ -285,7 +321,7 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
 
         local segmentMode, resolvedP1, resolvedP2 = classifySegment(chunk, p1, p2)
         if segmentMode == "bridge" then
-            paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material)
+            paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material, chunk)
         elseif segmentMode == "ground" then
             paintSegment(terrain, resolvedP1, resolvedP2, road, width, material)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
