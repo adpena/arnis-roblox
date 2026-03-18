@@ -188,7 +188,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
         world_name: "SampleAustinLikeBlock".to_string(),
         generator: "arbx_cli sample".to_string(),
         source: "synthetic-scaffold".to_string(),
-        meters_per_stud: config.meters_per_stud as f32,
+        meters_per_stud: config.meters_per_stud,
         chunk_size_studs: config.chunk_size_studs,
         bbox: arbx_geo::BoundingBox::new(30.264, -97.750, 30.266, -97.748),
         total_features: 0,
@@ -208,7 +208,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
     manifest
 }
 
-fn collect_xz(feature: &Feature, pts: &mut Vec<(f32, f32)>) {
+fn collect_xz(feature: &Feature, pts: &mut Vec<(f64, f64)>) {
     match feature {
         Feature::Road(f) => pts.extend(f.points.iter().map(|p| (p.x, p.z))),
         Feature::Rail(f) => pts.extend(f.points.iter().map(|p| (p.x, p.z))),
@@ -224,7 +224,7 @@ fn collect_xz(feature: &Feature, pts: &mut Vec<(f32, f32)>) {
     }
 }
 
-fn shift_feature(feature: Feature, dx: f32, dz: f32) -> Feature {
+fn shift_feature(feature: Feature, dx: f64, dz: f64) -> Feature {
     match feature {
         Feature::Road(mut f) => {
             for p in &mut f.points {
@@ -295,12 +295,12 @@ pub fn export_to_chunks(
         collect_xz(f, &mut xz_pts);
     }
     let (cx, cz) = if xz_pts.is_empty() {
-        (0.0f32, 0.0f32)
+        (0.0f64, 0.0f64)
     } else {
         let n = xz_pts.len() as f64;
-        let sx: f64 = xz_pts.iter().map(|(x, _)| *x as f64).sum();
-        let sz: f64 = xz_pts.iter().map(|(_, z)| *z as f64).sum();
-        ((sx / n) as f32, (sz / n) as f32)
+        let sx: f64 = xz_pts.iter().map(|(x, _)| *x).sum();
+        let sz: f64 = xz_pts.iter().map(|(_, z)| *z).sum();
+        (sx / n, sz / n)
     };
     eprintln!(
         "World centroid: ({:.1}, {:.1}) studs — shifting to origin",
@@ -330,7 +330,7 @@ pub fn export_to_chunks(
         world_name: config.world_name.clone(),
         generator: "arbx_roblox_export".to_string(),
         source: "pipeline-export".to_string(),
-        meters_per_stud: config.meters_per_stud as f32,
+        meters_per_stud: config.meters_per_stud,
         chunk_size_studs: config.chunk_size_studs,
         bbox,
         total_features: 0,

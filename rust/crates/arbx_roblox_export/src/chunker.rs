@@ -11,7 +11,7 @@ use crate::manifest::{
 use crate::materials::StyleMapper;
 
 pub fn world_to_chunk(position: Vec3, chunk_size_studs: i32) -> ChunkId {
-    let size = chunk_size_studs as f32;
+    let size = chunk_size_studs as f64;
     let x = (position.x / size).floor() as i32;
     let z = (position.z / size).floor() as i32;
     ChunkId::new(x, z)
@@ -24,9 +24,9 @@ pub fn chunk_origin(
     meters_per_stud: f64,
     elevation: &dyn ElevationProvider,
 ) -> Vec3 {
-    let size = chunk_size_studs as f32;
-    let x = id.x as f32 * size;
-    let z = id.z as f32 * size;
+    let size = chunk_size_studs as f64;
+    let x = id.x as f64 * size;
+    let z = id.z as f64 * size;
 
     let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
     let lon_per_stud = 1.0 / (111_111.0 * center_latlon.lat.to_radians().cos() * meters_per_stud);
@@ -38,7 +38,7 @@ pub fn chunk_origin(
     let y_meters = elevation.sample_height_at(LatLon::new(lat, lon));
     let y_studs = y_meters as f64 / meters_per_stud;
 
-    Vec3::new(x, y_studs as f32, z)
+    Vec3::new(x, y_studs, z)
 }
 
 fn parse_css_color(s: &str) -> Option<crate::manifest::Color> {
@@ -146,7 +146,7 @@ impl Chunker {
             let origin_y = origin.y;
 
             // PARALLEL terrain sampling
-            let heights: Vec<f32> = (0..total_cells)
+            let heights: Vec<f64> = (0..total_cells)
                 .into_par_iter()
                 .map(|idx| {
                     let cz = idx / grid_dim;
@@ -154,7 +154,7 @@ impl Chunker {
                     let lat = row_lats[cz];
                     let lon = col_lons[cx];
                     let h_meters = elevation.sample_height_at(LatLon::new(lat, lon));
-                    let h_studs = (h_meters as f64 / meters_per_stud) as f32;
+                    let h_studs = h_meters as f64 / meters_per_stud;
                     h_studs - origin_y
                 })
                 .collect();
@@ -270,7 +270,7 @@ impl Chunker {
                         sum_x += pt.x;
                         sum_z += pt.y;
                     }
-                    let count = p.footprint.points.len() as f32;
+                    let count = p.footprint.points.len() as f64;
                     let centroid = Vec3::new(sum_x / count, 0.0, sum_z / count);
                     let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
                     let chunk = self.ensure_chunk(chunk_id, elevation, style);
@@ -316,7 +316,7 @@ impl Chunker {
                     sum_x += pt.x;
                     sum_z += pt.y;
                 }
-                let count = f.footprint.points.len() as f32;
+                let count = f.footprint.points.len() as f64;
                 let centroid = Vec3::new(sum_x / count, f.base_y, sum_z / count);
                 let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
                 let chunk = self.ensure_chunk(chunk_id, elevation, style);
@@ -374,14 +374,14 @@ impl Chunker {
                 // Generate rooms (one per level)
                 let mut rooms = Vec::new();
                 let levels = f.levels.unwrap_or(1);
-                let floor_height = f.height / levels as f32;
+                let floor_height = f.height / levels as f64;
 
                 for i in 0..levels {
                     rooms.push(Room {
                         id: format!("{}_floor_{}", f.id, i),
                         name: format!("Floor {}", i + 1),
                         footprint: relative_footprint.clone(),
-                        floor_y: (f.base_y - origin.y) + (i as f32 * floor_height),
+                        floor_y: (f.base_y - origin.y) + (i as f64 * floor_height),
                         height: 0.2, // slab thickness
                         wall_material: None,
                         floor_material: Some("WoodPlanks".to_string()),
@@ -427,10 +427,10 @@ impl Chunker {
                 if f.footprint.points.len() < 3 {
                     return;
                 }
-                let cx: f32 = f.footprint.points.iter().map(|p| p.x).sum::<f32>()
-                    / f.footprint.points.len() as f32;
-                let cz: f32 = f.footprint.points.iter().map(|p| p.y).sum::<f32>()
-                    / f.footprint.points.len() as f32;
+                let cx: f64 = f.footprint.points.iter().map(|p| p.x).sum::<f64>()
+                    / f.footprint.points.len() as f64;
+                let cz: f64 = f.footprint.points.iter().map(|p| p.y).sum::<f64>()
+                    / f.footprint.points.len() as f64;
                 let chunk_id = world_to_chunk(Vec3::new(cx, 0.0, cz), self.chunk_size_studs);
                 let chunk = self.ensure_chunk(chunk_id, elevation, style);
                 let origin = chunk.origin_studs;
@@ -466,7 +466,7 @@ impl Chunker {
             let mut split_ts = vec![0.0, 1.0];
             let dx = p2.x - p1.x;
             let dz = p2.z - p1.z;
-            let s = chunk_size as f32;
+            let s = chunk_size as f64;
 
             if dx.abs() > 0.001 {
                 let min_x = p1.x.min(p2.x);
@@ -474,7 +474,7 @@ impl Chunker {
                 let first_bound = (min_x / s).ceil() as i32;
                 let last_bound = (max_x / s).floor() as i32;
                 for b in first_bound..=last_bound {
-                    let bx = b as f32 * s;
+                    let bx = b as f64 * s;
                     let t = (bx - p1.x) / dx;
                     if t > 0.0 && t < 1.0 {
                         split_ts.push(t);
@@ -488,7 +488,7 @@ impl Chunker {
                 let first_bound = (min_z / s).ceil() as i32;
                 let last_bound = (max_z / s).floor() as i32;
                 for b in first_bound..=last_bound {
-                    let bz = b as f32 * s;
+                    let bz = b as f64 * s;
                     let t = (bz - p1.z) / dz;
                     if t > 0.0 && t < 1.0 {
                         split_ts.push(t);

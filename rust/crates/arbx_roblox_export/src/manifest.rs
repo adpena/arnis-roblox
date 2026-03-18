@@ -17,12 +17,12 @@ impl Color {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroundPoint {
-    pub x: f32,
-    pub z: f32,
+    pub x: f64,
+    pub z: f64,
 }
 
 impl GroundPoint {
-    pub const fn new(x: f32, z: f32) -> Self {
+    pub const fn new(x: f64, z: f64) -> Self {
         Self { x, z }
     }
 }
@@ -32,7 +32,7 @@ pub struct TerrainGrid {
     pub cell_size_studs: i32,
     pub width: usize,
     pub depth: usize,
-    pub heights: Vec<f32>,
+    pub heights: Vec<f64>,
     pub materials: Option<Vec<String>>,
     pub material: String,
 }
@@ -44,7 +44,7 @@ pub struct RoadSegment {
     pub material: String,
     pub color: Option<Color>,
     pub lanes: Option<u32>,
-    pub width_studs: f32,
+    pub width_studs: f64,
     pub has_sidewalk: bool,
     pub surface: Option<String>,
     pub points: Vec<Vec3>,
@@ -57,7 +57,7 @@ pub struct RailSegment {
     pub material: String,
     pub color: Option<Color>,
     pub lanes: Option<u32>,
-    pub width_studs: f32,
+    pub width_studs: f64,
     pub points: Vec<Vec3>,
 }
 
@@ -68,9 +68,9 @@ pub struct BuildingShell {
     pub indices: Option<Vec<usize>>,
     pub material: String,
     pub color: Option<Color>,
-    pub base_y: f32,
-    pub height: f32,
-    pub height_m: Option<f32>,
+    pub base_y: f64,
+    pub height: f64,
+    pub height_m: Option<f64>,
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
     pub roof: String,
@@ -83,8 +83,8 @@ pub struct Room {
     pub id: String,
     pub name: String,
     pub footprint: Vec<GroundPoint>,
-    pub floor_y: f32,
-    pub height: f32,
+    pub floor_y: f64,
+    pub height: f64,
     pub wall_material: Option<String>,
     pub floor_material: Option<String>,
     pub has_door: bool,
@@ -97,7 +97,7 @@ pub struct WaterFeature {
     pub kind: String,
     pub material: String,
     pub color: Option<Color>,
-    pub width_studs: Option<f32>,
+    pub width_studs: Option<f64>,
     pub points: Option<Vec<Vec3>>,
     pub footprint: Option<Vec<GroundPoint>>,
     pub holes: Vec<Vec<GroundPoint>>,
@@ -117,8 +117,8 @@ pub struct PropInstance {
     pub id: String,
     pub kind: String,
     pub position: Vec3,
-    pub yaw_degrees: f32,
-    pub scale: f32,
+    pub yaw_degrees: f64,
+    pub scale: f64,
     pub species: Option<String>,
 }
 
@@ -127,7 +127,7 @@ pub struct ManifestMeta {
     pub world_name: String,
     pub generator: String,
     pub source: String,
-    pub meters_per_stud: f32,
+    pub meters_per_stud: f64,
     pub chunk_size_studs: i32,
     pub bbox: BoundingBox,
     pub total_features: usize,
@@ -767,11 +767,11 @@ fn write_key_inline(out: &mut String, key: &str) {
     out.push_str(": ");
 }
 
-fn write_number(out: &mut String, value: f32) {
+fn write_number(out: &mut String, value: f64) {
     if value.fract() == 0.0 {
         write!(out, "{:.0}", value).unwrap();
     } else {
-        write!(out, "{:.3}", value).unwrap();
+        write!(out, "{:.4}", value).unwrap();
     }
 }
 

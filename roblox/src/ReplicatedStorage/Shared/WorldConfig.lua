@@ -8,7 +8,7 @@ local WorldConfig = {
     WaterMode = "mesh", -- Added for completeness
     LanduseMode = "fill", -- Options: "none", "fill"
 
-    StreamingEnabled = true,
+    StreamingEnabled = false, -- must be false; terrain FillBlock conflicts with streaming
     StreamingTargetRadius = 4096, -- Distance to keep ANY representation loaded
     HighDetailRadius = 2048, -- Distance to keep full buildings/water/props loaded
 

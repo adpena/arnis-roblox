@@ -80,10 +80,10 @@ pub fn load_overture_buildings(
         let height_m = props
             .get("height")
             .and_then(|h| h.as_f64())
-            .map(|h| h as f32);
-        let height: f32 = height_m.unwrap_or_else(|| {
+            .map(|h| h as f64);
+        let height: f64 = height_m.unwrap_or_else(|| {
             let lvl = levels.unwrap_or(1);
-            (lvl as f32 * 3.5) + 2.0
+            (lvl as f64 * 3.5) + 2.0
         });
 
         let class = props

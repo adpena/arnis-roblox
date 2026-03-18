@@ -14,7 +14,7 @@ pub struct RoadFeature {
     pub id: String,
     pub kind: String,
     pub lanes: Option<u32>,
-    pub width_studs: f32,
+    pub width_studs: f64,
     pub has_sidewalk: bool,
     pub surface: Option<String>,
     pub points: Vec<Vec3>,
@@ -25,7 +25,7 @@ pub struct RailFeature {
     pub id: String,
     pub kind: String,
     pub lanes: Option<u32>,
-    pub width_studs: f32,
+    pub width_studs: f64,
     pub points: Vec<Vec3>,
 }
 
@@ -34,12 +34,12 @@ pub struct BuildingFeature {
     pub id: String,
     pub footprint: Footprint,
     pub indices: Option<Vec<usize>>,
-    pub base_y: f32,
-    pub height: f32,
-    pub height_m: Option<f32>,
+    pub base_y: f64,
+    pub height: f64,
+    pub height_m: Option<f64>,
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
-    pub min_height: Option<f32>,
+    pub min_height: Option<f64>,
     pub usage: Option<String>,
     pub roof: String,
     pub colour: Option<String>,
@@ -50,7 +50,7 @@ pub struct BuildingFeature {
 pub struct WaterRibbonFeature {
     pub id: String,
     pub kind: String,
-    pub width_studs: f32,
+    pub width_studs: f64,
     pub points: Vec<Vec3>,
 }
 
@@ -75,8 +75,8 @@ pub struct PropFeature {
     pub id: String,
     pub kind: String,
     pub position: Vec3,
-    pub yaw_degrees: f32,
-    pub scale: f32,
+    pub yaw_degrees: f64,
+    pub scale: f64,
     pub species: Option<String>,
 }
 
@@ -222,7 +222,7 @@ impl SourceAdapter for SyntheticAustinAdapter {
         // Helper to project and sample height
         let project_with_y = |lat: f64, lon: f64| {
             let mut p = Mercator::project(LatLon::new(lat, lon), center, 1.0);
-            p.y = elevation.sample_height_at(LatLon::new(lat, lon));
+            p.y = elevation.sample_height_at(LatLon::new(lat, lon)) as f64;
             p
         };
 
@@ -252,7 +252,7 @@ impl SourceAdapter for SyntheticAustinAdapter {
                 Vec2::new(100.0, 200.0),
             ]),
             indices: None,
-            base_y: elevation.sample_height_at(capitol_ll),
+            base_y: elevation.sample_height_at(capitol_ll) as f64,
             height: 50.0,
             height_m: None,
             levels: Some(3),
@@ -430,10 +430,10 @@ impl SourceAdapter for OverpassAdapter {
                     continue;
                 }
                 // Centroid check: don't emit features whose footprint is entirely outside bbox
-                let cx: f32 = fp.iter().map(|p| p.x).sum::<f32>() / fp.len() as f32;
-                let cz: f32 = fp.iter().map(|p| p.y).sum::<f32>() / fp.len() as f32;
-                let world_half_x = ((bbox.max.lon - bbox.min.lon) as f32) * 111_320.0_f32 * 0.5 / mps as f32;
-                let world_half_z = ((bbox.max.lat - bbox.min.lat) as f32) * 111_320.0_f32 * 0.5 / mps as f32;
+                let cx: f64 = fp.iter().map(|p| p.x).sum::<f64>() / fp.len() as f64;
+                let cz: f64 = fp.iter().map(|p| p.y).sum::<f64>() / fp.len() as f64;
+                let world_half_x = (bbox.max.lon - bbox.min.lon) * 111_320.0_f64 * 0.5 / mps;
+                let world_half_z = (bbox.max.lat - bbox.min.lat) * 111_320.0_f64 * 0.5 / mps;
                 if cx.abs() > world_half_x * 1.2 || cz.abs() > world_half_z * 1.2 {
                     continue; // centroid far outside world extent
                 }
@@ -667,7 +667,7 @@ fn tracks_from_tags(tags: &HashMap<String, String>) -> Option<u32> {
     tags.get("railway:tracks").and_then(|l| l.parse().ok())
 }
 
-fn road_width_from_kind(kind: &str) -> f32 {
+fn road_width_from_kind(kind: &str) -> f64 {
     match kind {
         "motorway" | "motorway_link" => 28.0,
         "trunk" | "trunk_link" => 24.0,
@@ -689,12 +689,12 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Ve
     if tags.contains_key("building") || tags.contains_key("building:part") {
         let levels = tags.get("building:levels").and_then(|l| l.parse::<u32>().ok());
         let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
-        let min_height: Option<f32> = tags.get("min_height").and_then(|h| h.parse().ok());
+        let min_height: Option<f64> = tags.get("min_height").and_then(|h| h.parse().ok());
         let usage = tags.get("building").cloned();
-        let height: f32 = tags.get("height").and_then(|h| h.parse::<f32>().ok())
-            .unwrap_or_else(|| (levels.unwrap_or(1) as f32 * 3.5) + 2.0);
-        let base_y: f32 = min_height
-            .or_else(|| tags.get("building:min_level").and_then(|l| l.parse::<f32>().ok()).map(|l| l * 3.5))
+        let height: f64 = tags.get("height").and_then(|h| h.parse::<f64>().ok())
+            .unwrap_or_else(|| (levels.unwrap_or(1) as f64 * 3.5) + 2.0);
+        let base_y: f64 = min_height
+            .or_else(|| tags.get("building:min_level").and_then(|l| l.parse::<f64>().ok()).map(|l| l * 3.5))
             .unwrap_or(0.0);
         features.push(Feature::Building(BuildingFeature {
             id: format!("osm_{}", id),
@@ -702,7 +702,7 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Ve
             indices: None,
             base_y,
             height: height - base_y,
-            height_m: tags.get("height").and_then(|h| h.parse::<f32>().ok()),
+            height_m: tags.get("height").and_then(|h| h.parse::<f64>().ok()),
             levels,
             roof_levels,
             min_height: Some(base_y),
@@ -777,9 +777,9 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
     if let Some(highway) = tags.get("highway") {
         let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
         let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
-        let width_studs = tags.get("width").and_then(|w| w.parse::<f32>().ok())
+        let width_studs = tags.get("width").and_then(|w| w.parse::<f64>().ok())
             .unwrap_or_else(|| road_width_from_kind(highway));
-        let y_offset: f32 = if tags.get("bridge").map(|v| v != "no").unwrap_or(false) { 8.0 }
+        let y_offset: f64 = if tags.get("bridge").map(|v| v != "no").unwrap_or(false) { 8.0 }
             else if tags.get("tunnel").map(|v| v != "no").unwrap_or(false) { -8.0 }
             else { 0.0 };
         let pts = points.into_iter().map(|mut p| { p.y += y_offset; p }).collect();

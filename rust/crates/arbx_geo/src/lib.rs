@@ -17,20 +17,20 @@ impl LatLon {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Vec2 {
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl Vec2 {
-    pub const fn new(x: f32, y: f32) -> Self {
+    pub const fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
 
-    pub fn cross(self, other: Self) -> f32 {
+    pub fn cross(self, other: Self) -> f64 {
         self.x * other.y - self.y * other.x
     }
 
-    pub fn dot(self, other: Self) -> f32 {
+    pub fn dot(self, other: Self) -> f64 {
         self.x * other.x + self.y * other.y
     }
 
@@ -41,13 +41,13 @@ impl Vec2 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Vec3 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
 }
 
 impl Vec3 {
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Self { x, y, z }
     }
 }
@@ -126,7 +126,7 @@ impl Mercator {
         // Negate: Mercator Y increases northward, but Roblox Z+ = south.
         let dz = (cy - py) / meters_per_stud;
 
-        Vec3::new(dx as f32, 0.0, dz as f32)
+        Vec3::new(dx, 0.0, dz)
     }
 }
 
