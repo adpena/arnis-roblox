@@ -376,8 +376,8 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		local wall = Instance.new("Part")
 		wall.Name = bldgName .. "_wall" .. i
 		wall.Anchored = true
-		-- Extend wall by WALL_THICKNESS on each end so it overlaps corner posts
-		wall.Size = Vector3.new(edgeLen + WALL_THICKNESS, height, WALL_THICKNESS)
+		-- lookAt makes -Z face toward p2 (along wall), so Z=length, X=thickness
+		wall.Size = Vector3.new(WALL_THICKNESS, height, edgeLen + WALL_THICKNESS)
 		wall.CFrame = CFrame.lookAt(
 			Vector3.new(midX, midY, midZ),
 			Vector3.new(p2.X, midY, p2.Z)
