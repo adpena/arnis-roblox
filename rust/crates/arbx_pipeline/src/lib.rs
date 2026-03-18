@@ -309,6 +309,16 @@ pub struct OverpassAdapter {
 }
 
 #[derive(Deserialize)]
+struct OverpassMember {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(rename = "ref")]
+    ref_id: u64,
+    #[serde(default)]
+    role: String,
+}
+
+#[derive(Deserialize)]
 struct OverpassElement {
     #[serde(rename = "type")]
     kind: String,
@@ -316,6 +326,8 @@ struct OverpassElement {
     lat: Option<f64>,
     lon: Option<f64>,
     nodes: Option<Vec<u64>>,
+    #[serde(default)]
+    members: Vec<OverpassMember>,
     tags: Option<HashMap<String, String>>,
 }
 
@@ -337,212 +349,132 @@ impl SourceAdapter for OverpassAdapter {
             PipelineError::Serialization(format!("failed to parse overpass json: {}", e))
         })?;
 
-        let mut nodes = HashMap::new();
+        let center = bbox.center();
+        let mps = self.meters_per_stud;
+        let lat_margin = bbox.height_degrees() * 0.1;
+        let lon_margin = bbox.width_degrees() * 0.1;
+        let clip_bbox = bbox.expanded(lat_margin.max(lon_margin));
+
+        // ── Phase 1: build node-id → LatLon map ──────────────────────────────
+        let mut node_coords: HashMap<u64, arbx_geo::LatLon> = HashMap::new();
         for el in &data.elements {
             if el.kind == "node" {
                 if let (Some(lat), Some(lon)) = (el.lat, el.lon) {
-                    nodes.insert(el.id, arbx_geo::LatLon::new(lat, lon));
+                    node_coords.insert(el.id, arbx_geo::LatLon::new(lat, lon));
                 }
             }
         }
 
-        let center = bbox.center();
-        let mps = self.meters_per_stud;
-        // Allow a 10% buffer beyond the fetch bbox before clipping.
-        let lat_margin = bbox.height_degrees() * 0.1;
-        let lon_margin = bbox.width_degrees() * 0.1;
-        let clip_bbox = bbox.expanded(lat_margin.max(lon_margin));
-        let mut features = Vec::new();
-
+        // ── Phase 2: build way-id → projected Vec2 points map ────────────────
+        // For LINEAR ways (roads, waterways) we clip individual nodes to bbox.
+        // For POLYGON ways (closed ring: first node == last node) we keep ALL
+        // nodes so the polygon shape is preserved when it crosses the bbox edge.
+        // We then use centroid-in-bbox to decide whether to emit the feature.
+        let mut way_points: HashMap<u64, Vec<Vec2>> = HashMap::new();
         for el in &data.elements {
-            if el.kind == "way" {
-                let Some(tags) = &el.tags else { continue };
-                let Some(way_nodes) = &el.nodes else { continue };
+            if el.kind != "way" { continue; }
+            let Some(way_nodes) = &el.nodes else { continue };
+            if way_nodes.is_empty() { continue; }
 
-                // Only project nodes that lie within (or just outside) the fetch bbox.
-                // This prevents OSM ways that extend far beyond the bbox from creating
-                // chunks tens of km from the world origin.
-                let points: Vec<Vec3> = way_nodes
-                    .iter()
-                    .filter_map(|id| nodes.get(id))
+            let is_closed_ring = way_nodes.first() == way_nodes.last() && way_nodes.len() > 1;
+
+            let pts: Vec<Vec2> = if is_closed_ring {
+                // Polygon way — keep all resolved nodes regardless of bbox position
+                way_nodes.iter()
+                    .filter_map(|id| node_coords.get(id))
+                    .map(|&ll| {
+                        let p = Mercator::project(ll, center, mps);
+                        Vec2::new(p.x, p.z)
+                    })
+                    .collect()
+            } else {
+                // Linear way — clip each node to bbox (avoids far-away chunk creation)
+                way_nodes.iter()
+                    .filter_map(|id| node_coords.get(id))
+                    .filter(|&&ll| clip_bbox.contains(ll))
+                    .map(|&ll| {
+                        let p = Mercator::project(ll, center, mps);
+                        Vec2::new(p.x, p.z)
+                    })
+                    .collect()
+            };
+
+            if !pts.is_empty() {
+                way_points.insert(el.id, pts);
+            }
+        }
+
+        let mut features: Vec<Feature> = Vec::new();
+
+        // ── Phase 3a: Process way elements using pre-resolved geometry ────────
+        for el in &data.elements {
+            if el.kind != "way" { continue; }
+            let Some(tags) = &el.tags else { continue };
+
+            // For roads/rails/waterways use clipped Vec3 (with y for bridge/tunnel).
+            // For polygon area features use Vec2 from way_points (unclipped polygon ring).
+            let is_area = tags.contains_key("building")
+                || tags.contains_key("building:part")
+                || tags.contains_key("landuse")
+                || tags.contains_key("leisure")
+                || tags.contains_key("amenity")
+                || tags.get("natural").map(|v| v != "tree").unwrap_or(false)
+                || tags.get("natural") == Some(&"water".to_string());
+
+            if is_area {
+                // Use unclipped polygon points; check centroid is within clip_bbox
+                let Some(fp) = way_points.get(&el.id) else { continue };
+                if fp.len() < 3 {
+                    eprintln!("WARN: way osm_{} — {} point(s) after projection, skipping", el.id, fp.len());
+                    continue;
+                }
+                // Centroid check: don't emit features whose footprint is entirely outside bbox
+                let cx: f32 = fp.iter().map(|p| p.x).sum::<f32>() / fp.len() as f32;
+                let cz: f32 = fp.iter().map(|p| p.y).sum::<f32>() / fp.len() as f32;
+                let world_half_x = ((bbox.max.lon - bbox.min.lon) as f32) * 111_320.0_f32 * 0.5 / mps as f32;
+                let world_half_z = ((bbox.max.lat - bbox.min.lat) as f32) * 111_320.0_f32 * 0.5 / mps as f32;
+                if cx.abs() > world_half_x * 1.2 || cz.abs() > world_half_z * 1.2 {
+                    continue; // centroid far outside world extent
+                }
+                emit_area_way(el.id, tags, fp, &mut features);
+            } else {
+                // Linear feature — use clipped Vec3 points
+                let Some(way_nodes) = &el.nodes else { continue };
+                let lin_pts: Vec<Vec3> = way_nodes.iter()
+                    .filter_map(|id| node_coords.get(id))
                     .filter(|&&ll| clip_bbox.contains(ll))
                     .map(|&ll| Mercator::project(ll, center, mps))
                     .collect();
-
-                if points.len() < 2 {
-                    continue;
-                }
-
-                if tags.contains_key("building") || tags.contains_key("building:part") {
-                    let levels = tags
-                        .get("building:levels")
-                        .and_then(|l| l.parse::<u32>().ok());
-                    let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
-                    let min_height: Option<f32> =
-                        tags.get("min_height").and_then(|h| h.parse().ok());
-                    let usage = tags.get("building").cloned();
-
-                    let height: f32 = tags
-                        .get("height")
-                        .and_then(|h| h.parse::<f32>().ok())
-                        .unwrap_or_else(|| {
-                            // Est height from levels (3.5m per floor + 2m roof/base)
-                            let lvl = levels.unwrap_or(1);
-                            (lvl as f32 * 3.5) + 2.0
-                        });
-
-                    let base_y: f32 = min_height
-                        .or_else(|| {
-                            tags.get("building:min_level")
-                                .and_then(|l| l.parse::<f32>().ok())
-                                .map(|l| l * 3.5)
-                        })
-                        .unwrap_or(0.0);
-
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-
-                    features.push(Feature::Building(BuildingFeature {
-                        id: format!("osm_{}", el.id),
-                        footprint: Footprint::new(footprint_points),
-                        indices: None,
-                        base_y,
-                        height: height - base_y,
-                        height_m: tags.get("height").and_then(|h| h.parse::<f32>().ok()),
-                        levels,
-                        roof_levels,
-                        min_height: Some(base_y),
-                        usage,
-                        roof: tags
-                            .get("roof:shape")
-                            .cloned()
-                            .unwrap_or_else(|| "flat".to_string()),
-                        colour: tags
-                            .get("building:colour")
-                            .or_else(|| tags.get("building:color"))
-                            .map(|s| s.trim().to_lowercase()),
-                        material_tag: tags
-                            .get("building:material")
-                            .map(|s| s.to_lowercase()),
-                    }));
-                } else if let Some(highway) = tags.get("highway") {
-                    let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
-                    let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
-                    let width_studs = tags
-                        .get("width")
-                        .and_then(|w| w.parse::<f32>().ok())
-                        .unwrap_or_else(|| road_width_from_kind(highway));
-
-                    let is_bridge = tags.get("bridge").map(|v| v != "no").unwrap_or(false);
-                    let is_tunnel = tags.get("tunnel").map(|v| v != "no").unwrap_or(false);
-                    let y_offset: f32 = if is_bridge {
-                        8.0
-                    } else if is_tunnel {
-                        -8.0
-                    } else {
-                        0.0
-                    };
-                    let points: Vec<Vec3> = points
-                        .into_iter()
-                        .map(|mut p| {
-                            p.y += y_offset;
-                            p
-                        })
-                        .collect();
-
-                    features.push(Feature::Road(RoadFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: highway.clone(),
-                        lanes,
-                        width_studs,
-                        has_sidewalk,
-                        surface: tags.get("surface").cloned(),
-                        points,
-                    }));
-                } else if let Some(railway) = tags.get("railway") {
-                    let tracks = tracks_from_tags(tags);
-                    features.push(Feature::Rail(RailFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: railway.clone(),
-                        lanes: tracks,
-                        width_studs: 4.0, // default rail width
-                        points,
-                    }));
-                } else if let Some(waterway) = tags.get("waterway") {
-                    features.push(Feature::Water(WaterFeature::Ribbon(WaterRibbonFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: waterway.clone(),
-                        width_studs: 8.0,
-                        points,
-                    })));
-                } else if tags.get("natural") == Some(&"water".to_string()) {
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-                    features.push(Feature::Water(WaterFeature::Polygon(WaterPolygonFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: "lake".to_string(),
-                        footprint: Footprint::new(footprint_points),
-                        indices: None,
-                    })));
-                } else if let Some(landuse) = tags.get("landuse") {
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-                    features.push(Feature::Landuse(LanduseFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: landuse.clone(),
-                        footprint: Footprint::new(footprint_points),
-                    }));
-                } else if let Some(leisure) = tags.get("leisure") {
-                    let kind = match leisure.as_str() {
-                        "park" | "garden" | "playground" => "park",
-                        "pitch" | "sports_centre" | "stadium" => "pitch",
-                        "golf_course" => "golf_course",
-                        "swimming_pool" => "water",
-                        "nature_reserve" | "dog_park" => "park",
-                        _ => "park",
-                    };
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-                    features.push(Feature::Landuse(LanduseFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: kind.to_string(),
-                        footprint: Footprint::new(footprint_points),
-                    }));
-                } else if let Some(amenity) = tags.get("amenity") {
-                    let kind = match amenity.as_str() {
-                        "parking" | "parking_space" => "parking",
-                        "school" | "university" | "college" => "school",
-                        "hospital" | "clinic" => "hospital",
-                        "place_of_worship" => "religious",
-                        "marketplace" => "retail",
-                        _ => continue,
-                    };
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-                    features.push(Feature::Landuse(LanduseFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: kind.to_string(),
-                        footprint: Footprint::new(footprint_points),
-                    }));
-                } else if let Some(natural) = tags.get("natural") {
-                    let kind = match natural.as_str() {
-                        "wood" | "tree_row" => "forest",
-                        "scrub" | "heath" => "scrub",
-                        "grassland" | "meadow" => "grass",
-                        "sand" | "beach" => "beach",
-                        "wetland" => "wetland",
-                        "water" => "water",
-                        _ => continue,
-                    };
-                    let footprint_points: Vec<Vec2> =
-                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-                    features.push(Feature::Landuse(LanduseFeature {
-                        id: format!("osm_{}", el.id),
-                        kind: kind.to_string(),
-                        footprint: Footprint::new(footprint_points),
-                    }));
-                }
+                if lin_pts.len() < 2 { continue; }
+                emit_linear_way(el.id, tags, lin_pts, &mut features);
             }
+        }
+
+        // ── Phase 3b: Assemble multipolygon relations ─────────────────────────
+        // Tags live on the relation, not the member ways. We merge outer-role
+        // member ways into a single ring following the Arnis ring-merge approach.
+        for el in &data.elements {
+            if el.kind != "relation" { continue; }
+            let Some(tags) = &el.tags else { continue };
+            let rel_type = tags.get("type").map(|s| s.as_str());
+            if rel_type != Some("multipolygon") && rel_type != Some("boundary") { continue; }
+
+            // Collect outer member way point sequences
+            let mut outer_rings: Vec<Vec<Vec2>> = el.members.iter()
+                .filter(|m| m.kind == "way" && (m.role == "outer" || m.role == ""))
+                .filter_map(|m| way_points.get(&m.ref_id).cloned())
+                .collect();
+
+            if outer_rings.is_empty() { continue; }
+
+            // Merge split rings (multipolygon boundaries are often split across ways)
+            merge_rings(&mut outer_rings);
+
+            // Use the largest outer ring as the footprint
+            let Some(footprint) = outer_rings.into_iter().max_by_key(|r| r.len()) else { continue };
+            if footprint.len() < 3 { continue; }
+
+            emit_area_way(el.id, tags, &footprint, &mut features);
         }
 
         // Parse node elements for trees and similar point features
@@ -622,6 +554,178 @@ fn road_width_from_kind(kind: &str) -> f32 {
     }
 }
 
+/// Emit a polygon area feature (building, landuse, water, leisure, amenity, natural).
+/// Footprint points must already be >= 3; caller is responsible for that invariant.
+fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], features: &mut Vec<Feature>) {
+    if tags.contains_key("building") || tags.contains_key("building:part") {
+        let levels = tags.get("building:levels").and_then(|l| l.parse::<u32>().ok());
+        let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
+        let min_height: Option<f32> = tags.get("min_height").and_then(|h| h.parse().ok());
+        let usage = tags.get("building").cloned();
+        let height: f32 = tags.get("height").and_then(|h| h.parse::<f32>().ok())
+            .unwrap_or_else(|| (levels.unwrap_or(1) as f32 * 3.5) + 2.0);
+        let base_y: f32 = min_height
+            .or_else(|| tags.get("building:min_level").and_then(|l| l.parse::<f32>().ok()).map(|l| l * 3.5))
+            .unwrap_or(0.0);
+        features.push(Feature::Building(BuildingFeature {
+            id: format!("osm_{}", id),
+            footprint: Footprint::new(fp.to_vec()),
+            indices: None,
+            base_y,
+            height: height - base_y,
+            height_m: tags.get("height").and_then(|h| h.parse::<f32>().ok()),
+            levels,
+            roof_levels,
+            min_height: Some(base_y),
+            usage,
+            roof: tags.get("roof:shape").cloned().unwrap_or_else(|| "flat".to_string()),
+            colour: tags.get("building:colour").or_else(|| tags.get("building:color"))
+                .map(|s| s.trim().to_lowercase()),
+            material_tag: tags.get("building:material").map(|s| s.to_lowercase()),
+        }));
+    } else if tags.get("natural") == Some(&"water".to_string()) {
+        features.push(Feature::Water(WaterFeature::Polygon(WaterPolygonFeature {
+            id: format!("osm_{}", id),
+            kind: "lake".to_string(),
+            footprint: Footprint::new(fp.to_vec()),
+            indices: None,
+        })));
+    } else if let Some(landuse) = tags.get("landuse") {
+        features.push(Feature::Landuse(LanduseFeature {
+            id: format!("osm_{}", id),
+            kind: landuse.clone(),
+            footprint: Footprint::new(fp.to_vec()),
+        }));
+    } else if let Some(leisure) = tags.get("leisure") {
+        let kind = match leisure.as_str() {
+            "park" | "garden" | "playground" => "park",
+            "pitch" | "sports_centre" | "stadium" => "pitch",
+            "golf_course" => "golf_course",
+            "swimming_pool" => "water",
+            "nature_reserve" | "dog_park" => "park",
+            _ => "park",
+        };
+        features.push(Feature::Landuse(LanduseFeature {
+            id: format!("osm_{}", id),
+            kind: kind.to_string(),
+            footprint: Footprint::new(fp.to_vec()),
+        }));
+    } else if let Some(amenity) = tags.get("amenity") {
+        let kind = match amenity.as_str() {
+            "parking" | "parking_space" => "parking",
+            "school" | "university" | "college" => "school",
+            "hospital" | "clinic" => "hospital",
+            "place_of_worship" => "religious",
+            "marketplace" => "retail",
+            _ => return,
+        };
+        features.push(Feature::Landuse(LanduseFeature {
+            id: format!("osm_{}", id),
+            kind: kind.to_string(),
+            footprint: Footprint::new(fp.to_vec()),
+        }));
+    } else if let Some(natural) = tags.get("natural") {
+        let kind = match natural.as_str() {
+            "wood" | "tree_row" => "forest",
+            "scrub" | "heath" => "scrub",
+            "grassland" | "meadow" => "grass",
+            "sand" | "beach" => "beach",
+            "wetland" => "wetland",
+            "water" => "water",
+            _ => return,
+        };
+        features.push(Feature::Landuse(LanduseFeature {
+            id: format!("osm_{}", id),
+            kind: kind.to_string(),
+            footprint: Footprint::new(fp.to_vec()),
+        }));
+    }
+}
+
+/// Emit a linear feature (road, rail, waterway ribbon).
+fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, features: &mut Vec<Feature>) {
+    if let Some(highway) = tags.get("highway") {
+        let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
+        let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
+        let width_studs = tags.get("width").and_then(|w| w.parse::<f32>().ok())
+            .unwrap_or_else(|| road_width_from_kind(highway));
+        let y_offset: f32 = if tags.get("bridge").map(|v| v != "no").unwrap_or(false) { 8.0 }
+            else if tags.get("tunnel").map(|v| v != "no").unwrap_or(false) { -8.0 }
+            else { 0.0 };
+        let pts = points.into_iter().map(|mut p| { p.y += y_offset; p }).collect();
+        features.push(Feature::Road(RoadFeature {
+            id: format!("osm_{}", id),
+            kind: highway.clone(),
+            lanes,
+            width_studs,
+            has_sidewalk,
+            surface: tags.get("surface").cloned(),
+            points: pts,
+        }));
+    } else if let Some(railway) = tags.get("railway") {
+        features.push(Feature::Rail(RailFeature {
+            id: format!("osm_{}", id),
+            kind: railway.clone(),
+            lanes: tracks_from_tags(tags),
+            width_studs: 4.0,
+            points,
+        }));
+    } else if let Some(waterway) = tags.get("waterway") {
+        features.push(Feature::Water(WaterFeature::Ribbon(WaterRibbonFeature {
+            id: format!("osm_{}", id),
+            kind: waterway.clone(),
+            width_studs: 8.0,
+            points,
+        })));
+    }
+}
+
+/// Merge open ring segments end-to-end (Arnis ring-merge algorithm).
+/// Multipolygon relation boundaries are split across multiple ways;
+/// this stitches them back into closed rings.
+fn merge_rings(rings: &mut Vec<Vec<Vec2>>) {
+    let matches = |a: Vec2, b: Vec2| (a.x - b.x).abs() < 2.0 && (a.y - b.y).abs() < 2.0;
+    let mut merged = true;
+    while merged {
+        merged = false;
+        let mut i = 0;
+        while i < rings.len() {
+            let mut j = i + 1;
+            while j < rings.len() {
+                let (a_first, a_last) = (*rings[i].first().unwrap(), *rings[i].last().unwrap());
+                let (b_first, b_last) = (*rings[j].first().unwrap(), *rings[j].last().unwrap());
+                if matches(a_last, b_first) {
+                    // a → b: append b (skip b[0] to avoid dup)
+                    let b = rings.remove(j);
+                    rings[i].extend_from_slice(&b[1..]);
+                    merged = true;
+                } else if matches(b_last, a_first) {
+                    // b → a: prepend b to a
+                    let mut b = rings.remove(j);
+                    b.extend_from_slice(&rings[i][1..]);
+                    rings[i] = b;
+                    merged = true;
+                } else if matches(a_last, b_last) {
+                    // a → reverse(b)
+                    let mut b = rings.remove(j);
+                    b.reverse();
+                    rings[i].extend_from_slice(&b[1..]);
+                    merged = true;
+                } else if matches(a_first, b_first) {
+                    // reverse(a) → b
+                    rings[i].reverse();
+                    let b = rings.remove(j);
+                    rings[i].extend_from_slice(&b[1..]);
+                    merged = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+}
+
 pub fn run_pipeline(
     adapter: &dyn SourceAdapter,
     bbox: BoundingBox,
@@ -682,5 +786,59 @@ mod tests {
         assert_eq!(ctx.stats.source_feature_count, 1);
         assert_eq!(ctx.stats.normalized_feature_count, 1);
         assert_eq!(ctx.notes.len(), 2);
+    }
+
+    /// Degenerate Overpass JSON (2-node way with landuse tag) must be silently
+    /// dropped by the pipeline — never emitted as a LanduseFeature.
+    #[test]
+    fn overpass_degenerate_landuse_dropped() {
+        use std::io::Write;
+
+        // Build a minimal Overpass response with:
+        //  - two nodes
+        //  - one way referencing both (only 2 nodes → degenerate polygon)
+        let json = serde_json::json!({
+            "elements": [
+                {"type": "node", "id": 1, "lat": 30.27, "lon": -97.74},
+                {"type": "node", "id": 2, "lat": 30.28, "lon": -97.73},
+                {
+                    "type": "way",
+                    "id": 999,
+                    "nodes": [1, 2],
+                    "tags": {"landuse": "grass"}
+                }
+            ]
+        });
+
+        let tmp_path = std::env::temp_dir().join("arbx_test_degenerate_landuse.json");
+        let mut f = std::fs::File::create(&tmp_path).unwrap();
+        f.write_all(json.to_string().as_bytes()).unwrap();
+
+        let bbox = arbx_geo::BoundingBox::new(30.245, -97.765, 30.305, -97.715);
+        let adapter = OverpassAdapter {
+            path: tmp_path.clone(),
+            meters_per_stud: 1.0,
+        };
+
+        let features = adapter.load(bbox).expect("load should succeed");
+
+        let _ = std::fs::remove_file(&tmp_path);
+
+        for f in &features {
+            if let Feature::Landuse(lu) = f {
+                assert!(
+                    lu.footprint.points.len() >= 3,
+                    "emitted LanduseFeature with {} points (id={})",
+                    lu.footprint.points.len(),
+                    lu.id
+                );
+            }
+        }
+        // The degenerate way must have been dropped entirely.
+        let landuse_count = features
+            .iter()
+            .filter(|f| matches!(f, Feature::Landuse(_)))
+            .count();
+        assert_eq!(landuse_count, 0, "expected degenerate way to be dropped");
     }
 }
