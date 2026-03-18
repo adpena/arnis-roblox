@@ -218,13 +218,15 @@ impl HgtElevationProvider {
     }
 
     fn get_hgt_file_path(&self, latlon: LatLon) -> PathBuf {
-        let lat_prefix = if latlon.lat >= 0.0 { "N" } else { "S" };
-        let lon_prefix = if latlon.lon >= 0.0 { "E" } else { "W" };
-        let lat_val = latlon.lat.abs().floor() as i32;
-        let lon_val = latlon.lon.abs().floor() as i32;
+        let lat_val = latlon.lat.floor() as i32;
+        let lon_val = latlon.lon.floor() as i32;
+        let lat_prefix = if lat_val >= 0 { "N" } else { "S" };
+        let lon_prefix = if lon_val >= 0 { "E" } else { "W" };
+        let lat_abs = lat_val.unsigned_abs();
+        let lon_abs = lon_val.unsigned_abs();
         self.data_dir.join(format!(
             "{}{:02}{}{:03}.hgt",
-            lat_prefix, lat_val, lon_prefix, lon_val
+            lat_prefix, lat_abs, lon_prefix, lon_abs
         ))
     }
 
@@ -272,6 +274,25 @@ impl ElevationProvider for HgtElevationProvider {
     }
 }
 
+/// Wraps any ElevationProvider and subtracts a fixed offset from all samples.
+/// Use this to normalize terrain heights so that a reference point (e.g. bbox center) maps to Y=0.
+pub struct OffsetElevationProvider {
+    inner: Box<dyn ElevationProvider>,
+    offset: f32,
+}
+
+impl OffsetElevationProvider {
+    pub fn new(inner: Box<dyn ElevationProvider>, offset: f32) -> Self {
+        Self { inner, offset }
+    }
+}
+
+impl ElevationProvider for OffsetElevationProvider {
+    fn sample_height_at(&self, latlon: LatLon) -> f32 {
+        self.inner.sample_height_at(latlon) - self.offset
+    }
+}
+
 /// Layered elevation provider that falls back if primary fails.
 pub struct MultiElevationProvider {
     pub providers: Vec<Box<dyn ElevationProvider>>,
@@ -288,6 +309,117 @@ impl ElevationProvider for MultiElevationProvider {
         0.0
     }
 }
+
+// ---------------------------------------------------------------------------
+// Terrarium tile helpers (Web Mercator / Slippy Map)
+// ---------------------------------------------------------------------------
+
+fn lat_lon_to_tile(lat: f64, lon: f64, zoom: u32) -> (u32, u32) {
+    let n = 2_u32.pow(zoom) as f64;
+    let x = ((lon + 180.0) / 360.0 * n) as u32;
+    let lat_rad = lat.to_radians();
+    let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n)
+        as u32;
+    (x, y)
+}
+
+fn lat_lon_to_pixel(lat: f64, lon: f64, zoom: u32) -> (u32, u32, f64, f64) {
+    let n = 2_u32.pow(zoom) as f64;
+    let tile_x_f = (lon + 180.0) / 360.0 * n;
+    let lat_rad = lat.to_radians();
+    let tile_y_f =
+        (1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n;
+    let tx = tile_x_f as u32;
+    let ty = tile_y_f as u32;
+    let px = (tile_x_f - tx as f64) * 256.0;
+    let py = (tile_y_f - ty as f64) * 256.0;
+    (tx, ty, px, py)
+}
+
+fn download_terrarium_tile(
+    z: u32,
+    x: u32,
+    y: u32,
+    cache_dir: &str,
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(cache_dir)?;
+    let path = format!("{}/{}_{}_{}.png", cache_dir, z, x, y);
+    if !std::path::Path::new(&path).exists() {
+        let url = format!(
+            "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{}/{}/{}.png",
+            z, x, y
+        );
+        let output = std::process::Command::new("curl")
+            .args(["-sL", "--fail", "-o", &path, &url])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "tile download failed for {z}/{x}/{y}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+    }
+    let img = image::open(&path)?.to_rgb8();
+    let (w, h) = img.dimensions();
+    // grid[px][py] where px is column (x) and py is row (y)
+    let mut grid = vec![vec![0f32; h as usize]; w as usize];
+    for py in 0..h {
+        for px in 0..w {
+            let pixel = img.get_pixel(px, py);
+            let elev =
+                pixel[0] as f32 * 256.0 + pixel[1] as f32 + pixel[2] as f32 / 256.0 - 32768.0;
+            grid[px as usize][py as usize] = elev;
+        }
+    }
+    Ok(grid)
+}
+
+/// Elevation provider backed by AWS Terrarium PNG tiles.
+///
+/// On construction it downloads all tiles covering the given `bbox` at the
+/// requested `zoom` level (default 13) and caches them under
+/// `rust/data/terrarium/`.  Subsequent lookups are purely in-memory.
+pub struct TerrariumElevationProvider {
+    zoom: u32,
+    tiles: std::collections::HashMap<(u32, u32), Vec<Vec<f32>>>,
+}
+
+impl TerrariumElevationProvider {
+    pub const DEFAULT_ZOOM: u32 = 13;
+    pub const CACHE_DIR: &'static str = "data/terrarium";
+
+    /// Download all tiles required to cover `bbox` at `zoom` and return a
+    /// provider ready for use.  Returns an error if any tile download fails.
+    pub fn new(bbox: &BoundingBox, zoom: u32) -> Result<Self, Box<dyn std::error::Error>> {
+        let (x0, y0) = lat_lon_to_tile(bbox.max.lat, bbox.min.lon, zoom);
+        let (x1, y1) = lat_lon_to_tile(bbox.min.lat, bbox.max.lon, zoom);
+
+        let mut tiles = std::collections::HashMap::new();
+        for tx in x0..=x1 {
+            for ty in y0..=y1 {
+                let grid = download_terrarium_tile(zoom, tx, ty, Self::CACHE_DIR)?;
+                tiles.insert((tx, ty), grid);
+            }
+        }
+        Ok(Self { zoom, tiles })
+    }
+}
+
+impl ElevationProvider for TerrariumElevationProvider {
+    fn sample_height_at(&self, latlon: LatLon) -> f32 {
+        let (tx, ty, px, py) = lat_lon_to_pixel(latlon.lat, latlon.lon, self.zoom);
+        let px = (px as usize).min(255);
+        let py = (py as usize).min(255);
+        if let Some(grid) = self.tiles.get(&(tx, ty)) {
+            grid[px][py]
+        } else {
+            0.0
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChunkId {
@@ -456,12 +588,8 @@ mod tests {
         let provider = HgtElevationProvider::new(PathBuf::from("/data"));
         let ll = LatLon::new(30.2, -97.7);
         let path = provider.get_hgt_file_path(ll);
-        // 30.2 -> N30, -97.7 -> W098 (abs floor is 97, but W is 97.7 which is in tile W098 if we follow standard HGT naming)
-        // Wait, SRTM HGT tile N30W098 covers 30N to 31N and 98W to 97W.
-        // Lat 30.2 is in N30. Lon -97.7 is in W098 tile?
-        // Standard SRTM naming: N30W098.hgt covers 30 to 31 N, 98 to 97 W.
-        // My current logic: lat.abs().floor() = 30 -> N30. lon.abs().floor() = 97 -> W097.
-        // Let's adjust to match SRTM tile conventions if needed, but for now I'll just verify consistency.
-        assert!(path.to_str().unwrap().contains("N30W097.hgt"));
+        // 30.2 -> N30 (floor(30.2)=30). -97.7 -> W098 (floor(-97.7)=-98, abs=98).
+        // SRTM tile N30W098.hgt covers 30-31N and 97-98W.
+        assert!(path.to_str().unwrap().contains("N30W098.hgt"));
     }
 }

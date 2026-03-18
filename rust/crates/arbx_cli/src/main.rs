@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use arbx_geo::{BoundingBox, FlatElevationProvider};
+use arbx_geo::{BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevationProvider, OffsetElevationProvider, TerrariumElevationProvider};
 use arbx_pipeline::{run_pipeline, NormalizeStage, TriangulateStage, ValidateStage};
 use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig};
 
@@ -159,8 +159,54 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         meters_per_stud,
         ..ExportConfig::default()
     };
-    let elevation = FlatElevationProvider { height: 0.0 };
-    let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation).to_json_pretty();
+
+    // Try to download SRTM tile for the bbox if not already present
+    let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
+    if !hgt_path.exists() {
+        eprintln!("Attempting to download SRTM elevation tile N30W098.hgt...");
+        let gz_path = std::path::PathBuf::from("data/N30W098.hgt.gz");
+        let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/N30/N30W098.hgt.gz";
+        let status = std::process::Command::new("curl")
+            .args(["-L", "-o", gz_path.to_str().unwrap(), url, "--silent", "--fail"])
+            .status();
+        if status.map(|s| s.success()).unwrap_or(false) {
+            let _ = std::process::Command::new("gunzip")
+                .arg(gz_path.to_str().unwrap())
+                .status();
+            if hgt_path.exists() {
+                eprintln!("Downloaded N30W098.hgt successfully.");
+            }
+        } else {
+            eprintln!("Could not download SRTM tile, using flat elevation.");
+        }
+    }
+
+    let elevation: Box<dyn arbx_geo::ElevationProvider> = {
+        // Try Terrarium tiles first (no API key required, auto-cached).
+        match TerrariumElevationProvider::new(&ctx.bbox, TerrariumElevationProvider::DEFAULT_ZOOM) {
+            Ok(terrarium) => {
+                let center = ctx.bbox.center();
+                let base = terrarium.sample_height_at(center);
+                eprintln!("Using Terrarium elevation, base offset = {:.1}m at bbox center", base);
+                Box::new(OffsetElevationProvider::new(Box::new(terrarium), base))
+            }
+            Err(e) => {
+                eprintln!("Terrarium tiles unavailable ({e}), falling back to SRTM/flat.");
+                let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
+                if hgt_path.exists() {
+                    let hgt = HgtElevationProvider::new(std::path::PathBuf::from("data"));
+                    let base = hgt.sample_height_at(ctx.bbox.center());
+                    eprintln!("Using SRTM elevation, base offset = {:.1}m at bbox center", base);
+                    Box::new(OffsetElevationProvider::new(Box::new(hgt), base))
+                } else {
+                    eprintln!("No SRTM tile found, using flat elevation.");
+                    Box::new(FlatElevationProvider { height: 0.0 })
+                }
+            }
+        }
+    };
+
+    let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, elevation.as_ref()).to_json_pretty();
     let duration = start.elapsed();
 
     if let Some(path) = out_path {
