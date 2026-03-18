@@ -385,7 +385,6 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		wall.Material = mat
 		wall.Color = color
 		wall.CastShadow = false
-		wall.CollisionFidelity = Enum.CollisionFidelity.Box
 		wall.Parent = model
 
 		-- Corner post at p1 vertex to seal the joint between this wall and the previous
@@ -397,7 +396,6 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		post.Material = mat
 		post.Color = color
 		post.CastShadow = false
-		post.CollisionFidelity = Enum.CollisionFidelity.Box
 		post.Parent = model
 	end
 

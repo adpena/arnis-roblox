@@ -161,7 +161,6 @@ local function paintBridgeSegment(parent, p1, p2, width, material)
 		Vector3.new(midX, midY, midZ),
 		Vector3.new(p2.X, midY, p2.Z)
 	)
-	deck.CollisionFidelity = Enum.CollisionFidelity.Box
 	deck.Parent = parent
 
 	-- Guardrail posts every 8 studs on each side
