@@ -46,6 +46,7 @@ pub struct RoadSegment {
     pub lanes: Option<u32>,
     pub width_studs: f32,
     pub has_sidewalk: bool,
+    pub surface: Option<String>,
     pub points: Vec<Vec3>,
 }
 
@@ -69,6 +70,7 @@ pub struct BuildingShell {
     pub color: Option<Color>,
     pub base_y: f32,
     pub height: f32,
+    pub height_m: Option<f32>,
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
     pub roof: String,
@@ -102,12 +104,21 @@ pub struct WaterFeature {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct LanduseShell {
+    pub id: String,
+    pub kind: String,
+    pub material: String,
+    pub footprint: Vec<GroundPoint>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropInstance {
     pub id: String,
     pub kind: String,
     pub position: Vec3,
     pub yaw_degrees: f32,
     pub scale: f32,
+    pub species: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +143,7 @@ pub struct Chunk {
     pub buildings: Vec<BuildingShell>,
     pub water: Vec<WaterFeature>,
     pub props: Vec<PropInstance>,
+    pub landuse: Vec<LanduseShell>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -275,6 +287,12 @@ impl Chunk {
             item.write_json(out, indent)
         });
 
+        out.push_str(",\n");
+        write_key(out, indent + 2, "landuse");
+        write_array(out, indent + 2, &self.landuse, |item, out, indent| {
+            item.write_json(out, indent)
+        });
+
         out.push('\n');
         write_indent(out, indent);
         out.push('}');
@@ -357,6 +375,11 @@ impl RoadSegment {
         out.push_str(",\n");
         write_key(out, indent + 2, "hasSidewalk");
         out.push_str(if self.has_sidewalk { "true" } else { "false" });
+        if let Some(ref s) = self.surface {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "surface");
+            write_string(out, s);
+        }
         out.push_str(",\n");
         write_key(out, indent + 2, "points");
         write_vec3_array(out, &self.points, indent + 2);
@@ -428,6 +451,12 @@ impl BuildingShell {
         out.push_str(",\n");
         write_key(out, indent + 2, "height");
         write_number(out, self.height);
+
+        if let Some(h) = self.height_m {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "heightM");
+            write_number(out, h);
+        }
 
         if let Some(lvl) = self.levels {
             out.push_str(",\n");
@@ -574,6 +603,32 @@ impl PropInstance {
         out.push_str(",\n");
         write_key(out, indent + 2, "scale");
         write_number(out, self.scale);
+        if let Some(ref s) = self.species {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "species");
+            write_string(out, s);
+        }
+        out.push('\n');
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl LanduseShell {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+        write_key(out, indent + 2, "id");
+        write_string(out, &self.id);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "kind");
+        write_string(out, &self.kind);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "material");
+        write_string(out, &self.material);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "footprint");
+        write_ground_points(out, &self.footprint, indent + 2);
         out.push('\n');
         write_indent(out, indent);
         out.push('}');

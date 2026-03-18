@@ -22,6 +22,9 @@ LUA_MODULE="$ROOT_DIR/roblox/src/ServerStorage/SampleData/AustinManifest.lua"
 
 mkdir -p "$DATA_DIR" "$OUT_DIR" "$(dirname "$LUA_MODULE")"
 
+echo "=== Fetching Overture building footprints ==="
+python3 "$ROOT_DIR/scripts/fetch_overture_buildings.py" || echo "Warning: Overture fetch failed, continuing with OSM only"
+
 echo "[export_austin_to_lua] Fetching OSM + exporting manifest..."
 bash "$ROOT_DIR/scripts/export_austin_from_osm.sh"
 

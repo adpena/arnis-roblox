@@ -5,34 +5,77 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 
 local RoadBuilder = {}
 
--- Maps road kind → Roblox terrain material and a darkening color overlay (optional).
+-- Maps OSM surface tag → Roblox terrain material (checked before kind fallback)
+local SURFACE_MATERIAL = {
+	asphalt             = Enum.Material.Asphalt,
+	concrete            = Enum.Material.Concrete,
+	["concrete:plates"] = Enum.Material.Concrete,
+	cobblestone         = Enum.Material.Cobblestone,
+	paving_stones       = Enum.Material.Pavement,
+	bricks              = Enum.Material.Cobblestone,
+	sett                = Enum.Material.Cobblestone,
+	gravel              = Enum.Material.Ground,
+	fine_gravel         = Enum.Material.Ground,
+	compacted           = Enum.Material.Ground,
+	pebblestone         = Enum.Material.Ground,
+	rock                = Enum.Material.Rock,
+	unpaved             = Enum.Material.Mud,
+	dirt                = Enum.Material.Mud,
+	earth               = Enum.Material.Mud,
+	grass               = Enum.Material.Grass,
+	wood                = Enum.Material.SmoothPlastic,
+	stepping_stones     = Enum.Material.Pavement,
+	paved               = Enum.Material.Concrete,
+	sand                = Enum.Material.Sand,
+}
+
+-- Maps road kind → Roblox terrain material for Terrain:FillBlock
 local ROAD_MATERIAL = {
-	motorway     = Enum.Material.ConcretePlank,
-	trunk        = Enum.Material.ConcretePlank,
-	primary      = Enum.Material.ConcretePlank,
-	secondary    = Enum.Material.Asphalt,
-	tertiary     = Enum.Material.Asphalt,
-	residential  = Enum.Material.Asphalt,
-	service      = Enum.Material.Asphalt,
-	living_street= Enum.Material.Asphalt,
-	footway      = Enum.Material.Pavement,
-	path         = Enum.Material.Pavement,
-	pedestrian   = Enum.Material.Pavement,
-	cycleway     = Enum.Material.Pavement,
-	steps        = Enum.Material.Pavement,
-	track        = Enum.Material.Ground,
-	unclassified = Enum.Material.Asphalt,
-	default      = Enum.Material.Asphalt,
+	-- Highways: smooth concrete
+	motorway      = Enum.Material.Concrete,
+	motorway_link = Enum.Material.Concrete,
+	trunk         = Enum.Material.Concrete,
+	trunk_link    = Enum.Material.Concrete,
+	-- Primary/secondary: asphalt
+	primary       = Enum.Material.Asphalt,
+	primary_link  = Enum.Material.Asphalt,
+	secondary     = Enum.Material.Asphalt,
+	secondary_link= Enum.Material.Asphalt,
+	-- Local streets: asphalt (slightly different feel via paint order)
+	tertiary      = Enum.Material.Asphalt,
+	tertiary_link = Enum.Material.Asphalt,
+	residential   = Enum.Material.Asphalt,
+	living_street = Enum.Material.Pavement,
+	service       = Enum.Material.Limestone,
+	-- Pedestrian / cycling
+	footway       = Enum.Material.Pavement,
+	path          = Enum.Material.Cobblestone,
+	pedestrian    = Enum.Material.SmoothPlastic,
+	cycleway      = Enum.Material.Sandstone,
+	steps         = Enum.Material.Slate,
+	bridleway     = Enum.Material.Ground,
+	-- Unpaved
+	track         = Enum.Material.Mud,
+	unclassified  = Enum.Material.Ground,
+	road          = Enum.Material.Ground,
+	default       = Enum.Material.Asphalt,
 }
 
 local ROAD_THICKNESS = 1  -- studs; road fills 0.5 studs into terrain + 0.5 above
 
-local function getMaterial(materialName, kind)
-	if materialName then
-		local ok, m = pcall(function() return Enum.Material[materialName] end)
+local function getMaterial(road)
+	-- 1. OSM surface tag takes priority (most specific physical description)
+	if road.surface then
+		local m = SURFACE_MATERIAL[road.surface]
+		if m then return m end
+	end
+	-- 2. Legacy manifest material name (Enum.Material string)
+	if road.material then
+		local ok, m = pcall(function() return Enum.Material[road.material] end)
 		if ok and m then return m end
 	end
-	return ROAD_MATERIAL[kind] or ROAD_MATERIAL.default
+	-- 3. Road kind fallback
+	return ROAD_MATERIAL[road.kind] or ROAD_MATERIAL.default
 end
 
 local function offsetPoint(point, origin)
@@ -77,7 +120,7 @@ end
 
 function RoadBuilder.FallbackBuild(_parent, road, originStuds)
 	local terrain  = Workspace.Terrain
-	local material = getMaterial(road.material, road.kind)
+	local material = getMaterial(road)
 	local width    = road.widthStuds or 10
 
 	for i = 1, #road.points - 1 do

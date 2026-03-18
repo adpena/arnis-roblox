@@ -85,6 +85,9 @@ function ChunkSchema.validateManifest(manifest)
             assertType(road.hasSidewalk, "boolean", prefix .. ".roads[].hasSidewalk must be a boolean")
             assertType(road.points, "table", prefix .. ".roads[].points must be a table")
             assert(#road.points >= 2, prefix .. ".roads[].points must contain at least two points")
+            if road.surface ~= nil then
+                assertType(road.surface, "string", prefix .. ".roads[].surface must be a string")
+            end
             for pointIndex, point in ipairs(road.points) do
                 validatePoint3(point, ("%s.roads[].points[%d]"):format(prefix, pointIndex))
             end
@@ -110,6 +113,12 @@ function ChunkSchema.validateManifest(manifest)
             assertType(building.baseY, "number", prefix .. ".buildings[].baseY must be a number")
             assertType(building.height, "number", prefix .. ".buildings[].height must be a number")
             assertType(building.roof, "string", prefix .. ".buildings[].roof must be a string")
+            if building.height_m ~= nil then
+                assertType(building.height_m, "number", prefix .. ".buildings[].height_m must be a number")
+            end
+            if building.levels ~= nil then
+                assertType(building.levels, "number", prefix .. ".buildings[].levels must be a number")
+            end
 
             for pointIndex, point in ipairs(building.footprint) do
                 validatePoint2(point, ("%s.buildings[].footprint[%d]"):format(prefix, pointIndex))
@@ -160,6 +169,18 @@ function ChunkSchema.validateManifest(manifest)
             validatePoint3(prop.position, prefix .. ".props[].position")
             assertType(prop.yawDegrees, "number", prefix .. ".props[].yawDegrees must be a number")
             assertType(prop.scale, "number", prefix .. ".props[].scale must be a number")
+        end
+
+        -- Normalize landuse to an empty table if absent; validate present entries
+        chunk.landuse = chunk.landuse or {}
+        for _, lu in ipairs(chunk.landuse) do
+            assertType(lu.id, "string", prefix .. ".landuse[].id must be a string")
+            assertType(lu.kind, "string", prefix .. ".landuse[].kind must be a string")
+            assertType(lu.footprint, "table", prefix .. ".landuse[].footprint must be a table")
+            assert(#lu.footprint >= 3, prefix .. ".landuse[].footprint must contain at least three points")
+            for pointIndex, point in ipairs(lu.footprint) do
+                validatePoint2(point, ("%s.landuse[].footprint[%d]"):format(prefix, pointIndex))
+            end
         end
     end
 

@@ -6,6 +6,7 @@ local WorldConfig = {
     RoadMode = "mesh", -- Options: "none", "parts", "mesh", "hybrid"
     BuildingMode = "shellMesh", -- Options: "none", "shellParts", "shellMesh", "prefab"
     WaterMode = "mesh", -- Added for completeness
+    LanduseMode = "fill", -- Options: "none", "fill"
 
     StreamingEnabled = true,
     StreamingTargetRadius = 4096, -- Distance to keep ANY representation loaded

@@ -14,6 +14,7 @@ local BuildingBuilder = require(script.Builders.BuildingBuilder)
 local WaterBuilder = require(script.Builders.WaterBuilder)
 local PropBuilder = require(script.Builders.PropBuilder)
 local RoomBuilder = require(script.Builders.RoomBuilder)
+local LanduseBuilder = require(script.Builders.LanduseBuilder)
 
 local ImportService = {}
 
@@ -130,10 +131,26 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
+    local landuseFolder = chunkFolder:FindFirstChild("Landuse")
+    if not landuseFolder then
+        landuseFolder = Instance.new("Folder")
+        landuseFolder.Name = "Landuse"
+        landuseFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(landuseFolder:GetChildren()) do child:Destroy() end
+    end
+
     if chunk.terrain and config.TerrainMode ~= "none" then
         local p = Profiler.begin("BuildTerrain")
         TerrainBuilder.Build(terrainFolder, chunk)
         Profiler.finish(p)
+    end
+
+    -- Landuse fills go BEFORE roads so roads paint over them
+    if chunk.landuse and #chunk.landuse > 0 then
+        local pLanduse = Profiler.begin("BuildLanduse")
+        LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds)
+        Profiler.finish(pLanduse)
     end
 
     if config.RoadMode ~= "none" then
@@ -233,6 +250,7 @@ function ImportService.ImportManifest(manifest, options)
         buildingsImported = 0,
         waterImported = 0,
         propsImported = 0,
+        landuseImported = 0,
     }
 
     for _, chunk in ipairs(validated.chunks) do
@@ -246,6 +264,7 @@ function ImportService.ImportManifest(manifest, options)
         stats.buildingsImported += #(chunk.buildings or {})
         stats.waterImported += #(chunk.water or {})
         stats.propsImported += #(chunk.props or {})
+        stats.landuseImported += #(chunk.landuse or {})
     end
 
     local finalInstanceCount = #worldRoot:GetDescendants()
@@ -265,6 +284,7 @@ function ImportService.ImportManifest(manifest, options)
         "roads=" .. stats.roadsImported,
         "rails=" .. stats.railsImported,
         "buildings=" .. stats.buildingsImported,
+        "landuse=" .. stats.landuseImported,
         "instances=" .. finalInstanceCount
     )
 

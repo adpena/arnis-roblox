@@ -167,7 +167,13 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         let gz_path = std::path::PathBuf::from("data/N30W098.hgt.gz");
         let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/N30/N30W098.hgt.gz";
         let status = std::process::Command::new("curl")
-            .args(["-L", "-o", gz_path.to_str().unwrap(), url, "--silent", "--fail"])
+            .args([
+                "-L", "-o", gz_path.to_str().unwrap(), url,
+                "--silent", "--fail",
+                "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
+                "--retry", "3",
+                "--retry-delay", "5",
+            ])
             .status();
         if status.map(|s| s.success()).unwrap_or(false) {
             let _ = std::process::Command::new("gunzip")

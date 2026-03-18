@@ -1,209 +1,247 @@
-local BuildingBuilder = {}
-
+local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local AssetService = game:GetService("AssetService")
 
 local Logger = require(ReplicatedStorage.Shared.Logger)
 
--- Material mapping (fallback)
-local FALLBACK_MATERIAL_PALETTE = {
-	default = Enum.Material.Concrete,
-	industrial = Enum.Material.Metal,
+local BuildingBuilder = {}
+
+local WALL_THICKNESS = 0.6  -- studs
+local MIN_EDGE = 0.5        -- ignore edges shorter than this
+
+-- Material palette keyed by OSM building usage
+local USAGE_MATERIAL = {
+	residential    = Enum.Material.Brick,
+	apartments     = Enum.Material.Brick,
+	house          = Enum.Material.Brick,
+	commercial     = Enum.Material.Concrete,
+	retail         = Enum.Material.Concrete,
+	office         = Enum.Material.Glass,
+	industrial     = Enum.Material.Metal,
+	warehouse      = Enum.Material.Metal,
+	church         = Enum.Material.SmoothPlastic,
+	school         = Enum.Material.SmoothPlastic,
+	hospital       = Enum.Material.SmoothPlastic,
+	yes            = Enum.Material.Concrete,
+	default        = Enum.Material.Concrete,
 }
 
-local function getMaterial(materialName, kind)
-	if materialName then
-		local success, material = pcall(function()
-			return Enum.Material[materialName]
-		end)
-		if success and material then
-			return material
+local USAGE_COLOR = {
+	residential = Color3.fromRGB(180, 120, 90),
+	apartments  = Color3.fromRGB(165, 110, 80),
+	commercial  = Color3.fromRGB(150, 150, 160),
+	retail      = Color3.fromRGB(160, 140, 130),
+	office      = Color3.fromRGB(140, 160, 180),
+	industrial  = Color3.fromRGB(120, 120, 120),
+	warehouse   = Color3.fromRGB(110, 110, 110),
+	default     = Color3.fromRGB(160, 150, 140),
+}
+
+local function getMaterial(building)
+	local usage = building.usage or building.kind or "default"
+	return USAGE_MATERIAL[usage] or USAGE_MATERIAL.default
+end
+
+local function getColor(building)
+	if building.color and building.color.r then
+		return Color3.fromRGB(building.color.r, building.color.g, building.color.b)
+	end
+	local usage = building.usage or building.kind or "default"
+	return USAGE_COLOR[usage] or USAGE_COLOR.default
+end
+
+local function hashId(id)
+	local h = 5381
+	for i = 1, #id do
+		h = ((h * 33) + string.byte(id, i)) % 2147483647
+	end
+	return h
+end
+
+local function pointInPolygon(px, pz, poly)
+	local inside = false
+	local j = #poly
+	for i = 1, #poly do
+		local xi, zi = poly[i][1], poly[i][2]
+		local xj, zj = poly[j][1], poly[j][2]
+		if ((zi > pz) ~= (zj > pz)) and (px < (xj - xi) * (pz - zi) / (zj - zi) + xi) then
+			inside = not inside
 		end
+		j = i
 	end
-	return FALLBACK_MATERIAL_PALETTE[kind] or FALLBACK_MATERIAL_PALETTE.default
+	return inside
 end
 
-local function getColor3(colorTable)
-	if colorTable and colorTable.r then
-		return Color3.fromRGB(colorTable.r, colorTable.g, colorTable.b)
-	end
-	return nil
-end
-
-local function offsetPoint(point, origin)
-	return Vector3.new(point.x + origin.x, origin.y, point.z + origin.z)
-end
-
--- Triangulate a simple convex polygon for the roof (fallback)
-local function addFanTriangulation(editableMesh, vertexIndices)
-	if #vertexIndices < 3 then
-		return
-	end
-	for i = 2, #vertexIndices - 1 do
-		editableMesh:AddTriangle(vertexIndices[1], vertexIndices[i], vertexIndices[i + 1])
-	end
-end
-
--- Generates geometric detailing (cornices, ledges) along a facade segment
-local function addDetailing(editableMesh, p1, p2, baseY, height, levels)
-	if not levels or levels <= 0 then return end
-	
-	local floorHeight = height / levels
-	local normal = Vector3.new(p2.Z - p1.Z, 0, p1.X - p2.X).Unit
-	local extrusionDepth = 0.5
-	local ledgeThickness = 0.3
-	
-	for i = 1, levels do
-		local floorBottomY = baseY + (i - 1) * floorHeight
-		local corniceY = floorBottomY + floorHeight
-		
-		-- Simple floor divider (cornice) at the top of each level
-		if i < levels or height > 5 then
-			local c1 = p1 + Vector3.new(0, corniceY, 0)
-			local c2 = p2 + Vector3.new(0, corniceY, 0)
-			local e1 = c1 + normal * extrusionDepth
-			local e2 = c2 + normal * extrusionDepth
-			local b1 = e1 - Vector3.new(0, ledgeThickness, 0)
-			local b2 = e2 - Vector3.new(0, ledgeThickness, 0)
-			
-			local v1 = editableMesh:AddVertex(c1)
-			local v2 = editableMesh:AddVertex(c2)
-			local v3 = editableMesh:AddVertex(e1)
-			local v4 = editableMesh:AddVertex(e2)
-			local v5 = editableMesh:AddVertex(b1)
-			local v6 = editableMesh:AddVertex(b2)
-			
-			-- Cornice top face
-			editableMesh:AddTriangle(v1, v3, v2)
-			editableMesh:AddTriangle(v3, v4, v2)
-			-- Cornice front face
-			editableMesh:AddTriangle(v3, v5, v4)
-			editableMesh:AddTriangle(v5, v6, v4)
-		end
-	end
-end
-
--- Generates building shell geometry into an existing EditableMesh
-local function addBuildingToMesh(editableMesh, points, baseY, height, indices, levels, _roofLevels)
-	local bottomIndices = {}
-	local topIndices = {}
-
-	-- 1. Create vertices
-	local cumulativeDist = 0
-	for i, p in ipairs(points) do
-		local prevP = points[i > 1 and i-1 or #points]
-		cumulativeDist += (Vector3.new(p.X, 0, p.Z) - Vector3.new(prevP.X, 0, prevP.Z)).Magnitude
-		
-		local bottomPos = Vector3.new(p.x, p.y + baseY, p.z)
-		local topPos = Vector3.new(p.x, p.y + baseY + height, p.z)
-		
-		local bIdx = editableMesh:AddVertex(bottomPos)
-		local tIdx = editableMesh:AddVertex(topPos)
-		
-		-- Facade UV mapping
-		local uvX = cumulativeDist / 10.0
-		local floorHeight = 12.0
-		if levels and levels > 0 then
-			floorHeight = height / levels
-		end
-		
-		local uvYBottom = (p.y + baseY) / floorHeight
-		local uvYTop = (p.y + baseY + height) / floorHeight
-		
-		editableMesh:SetVertexUV(bIdx, Vector2.new(uvX, uvYBottom))
-		editableMesh:SetVertexUV(tIdx, Vector2.new(uvX, uvYTop))
-		
-		table.insert(bottomIndices, bIdx)
-		table.insert(topIndices, tIdx)
+local function fillInterior(footprint, baseY, material, parent)
+	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+	for _, p in ipairs(footprint) do
+		if p.x < minX then minX = p.x end
+		if p.z < minZ then minZ = p.z end
+		if p.x > maxX then maxX = p.x end
+		if p.z > maxZ then maxZ = p.z end
 	end
 
-	-- 2. Create wall triangles (quads) and detailing
-	local count = #points
-	for i = 1, count do
-		local nextI = i % count + 1
-		local b1 = bottomIndices[i]
-		local b2 = bottomIndices[nextI]
-		local t1 = topIndices[i]
-		local t2 = topIndices[nextI]
-
-		editableMesh:AddTriangle(b1, t1, b2)
-		editableMesh:AddTriangle(t1, t2, b2)
-		
-		-- Add procedural detailing geometry
-		addDetailing(editableMesh, points[i], points[nextI], baseY, height, levels)
-	end
-
-	-- 3. Create roof triangles
-	if indices and #indices >= 3 then
-		for i = 1, #indices, 3 do
-			local i1 = topIndices[indices[i] + 1]
-			local i2 = topIndices[indices[i + 1] + 1]
-			local i3 = topIndices[indices[i + 2] + 1]
-			if i1 and i2 and i3 then
-				local p1 = editableMesh:GetVertexPosition(i1)
-				local p2 = editableMesh:GetVertexPosition(i2)
-				local p3 = editableMesh:GetVertexPosition(i3)
-				
-				editableMesh:SetVertexUV(i1, Vector2.new(p1.X / 20, p1.Z / 20))
-				editableMesh:SetVertexUV(i2, Vector2.new(p2.X / 20, p2.Z / 20))
-				editableMesh:SetVertexUV(i3, Vector2.new(p3.X / 20, p3.Z / 20))
-				
-				editableMesh:AddTriangle(i1, i2, i3)
+	local GRID_SIZE = 4  -- 4-stud grid matching voxel resolution
+	local x = minX + GRID_SIZE * 0.5
+	while x < maxX do
+		local z = minZ + GRID_SIZE * 0.5
+		while z < maxZ do
+			if pointInPolygon(x, z, footprint) then
+				workspace.Terrain:FillBlock(
+					CFrame.new(x, baseY, z),
+					Vector3.new(GRID_SIZE, GRID_SIZE, GRID_SIZE),
+					material
+				)
 			end
+			z = z + GRID_SIZE
 		end
-	else
-		addFanTriangulation(editableMesh, topIndices)
+		x = x + GRID_SIZE
 	end
 end
 
--- Build ALL buildings in a chunk using Part-based geometry.
-function BuildingBuilder.BuildAll(parent, buildings, originStuds)
-	if not buildings or #buildings == 0 then
-		return
+local function getBuildingHeight(building)
+	local METERS_PER_STUD = 0.3  -- 1 stud ≈ 0.3 meters (Roblox convention for real-world scale)
+	if building.height_m and building.height_m > 0 then
+		return math.max(4, building.height_m / METERS_PER_STUD)
+	elseif building.levels and building.levels > 0 then
+		return math.max(4, building.levels * 14)  -- ~14 studs per floor (4.2m)
+	else
+		local USAGE_HEIGHT_M = {
+			-- residential
+			apartments = 15,  house = 6,  detached = 6,  terrace = 6,
+			residential = 9,  dormitory = 12,  bungalow = 4,
+			-- commercial/civic
+			commercial = 12,  retail = 6,  office = 20,  bank = 10,
+			supermarket = 8,  mall = 12,  hotel = 20,
+			-- civic/public
+			hospital = 23,  school = 8,  university = 12,
+			civic = 10,  government = 12,  courthouse = 12,
+			-- industrial
+			industrial = 10,  warehouse = 8,  factory = 10,
+			-- religious
+			religious = 12,  church = 15,  cathedral = 25,  mosque = 12,  temple = 10,
+			-- utility/misc
+			garage = 3,  shed = 2.5,  barn = 6,  greenhouse = 3,
+			-- defaults by general category
+			building = 10,  yes = 10,
+		}
+		local heightM = USAGE_HEIGHT_M[building.usage] or 10
+		return math.max(4, heightM / METERS_PER_STUD)
+	end
+end
+
+-- Build a single building as polygon wall Parts + flat roof
+function BuildingBuilder.FallbackBuild(parent, building, originStuds)
+	local fp = building.footprint
+	if not fp or #fp < 2 then return end
+
+	-- Seed RNG for deterministic output
+	math.randomseed(hashId(building.id or tostring(building)))
+
+	local baseY = originStuds.y + (building.baseY or 0)
+	local height = getBuildingHeight(building)
+	local mat = getMaterial(building)
+	local color = getColor(building)
+	local bldgName = building.id or "Building"
+
+	local model = Instance.new("Model")
+	model.Name = bldgName
+	model.Parent = parent
+
+	-- World coordinates of footprint vertices
+	local worldPts = {}
+	for _, p in ipairs(fp) do
+		table.insert(worldPts, Vector3.new(
+			p.x + originStuds.x,
+			baseY,
+			p.z + originStuds.z
+		))
 	end
 
+	-- One wall Part per edge
+	local n = #worldPts
+	for i = 1, n do
+		local p1 = worldPts[i]
+		local p2 = worldPts[(i % n) + 1]
+		local dx = p2.X - p1.X
+		local dz = p2.Z - p1.Z
+		local edgeLen = math.sqrt(dx*dx + dz*dz)
+		if edgeLen < MIN_EDGE then continue end
+
+		local midX = (p1.X + p2.X) * 0.5
+		local midZ = (p1.Z + p2.Z) * 0.5
+		local midY = baseY + height * 0.5
+
+		local wall = Instance.new("Part")
+		wall.Name = bldgName .. "_wall" .. i
+		wall.Anchored = true
+		wall.Size = Vector3.new(edgeLen, height, WALL_THICKNESS)
+		wall.CFrame = CFrame.lookAt(
+			Vector3.new(midX, midY, midZ),
+			Vector3.new(p2.X, midY, p2.Z)
+		)
+		wall.Material = mat
+		wall.Color = color
+		wall.CastShadow = true
+		wall.Parent = model
+	end
+
+	-- Fill interior with terrain
+	local footprintRelative = {}
+	for _, p in ipairs(fp) do
+		table.insert(footprintRelative, {p.x + originStuds.x, p.z + originStuds.z})
+	end
+	local interiorMaterial = Enum.Material.Concrete
+	if building.usage == "residential" or building.usage == "house" or
+	   building.usage == "apartments" or building.usage == "detached" or
+	   building.usage == "terrace" or building.usage == "dormitory" or
+	   building.usage == "bungalow" then
+		interiorMaterial = Enum.Material.SmoothPlastic
+	elseif building.usage == "commercial" or building.usage == "office" or
+	       building.usage == "civic" or building.usage == "hospital" then
+		interiorMaterial = Enum.Material.Concrete
+	else
+		interiorMaterial = Enum.Material.Ground
+	end
+	fillInterior(footprintRelative, baseY, interiorMaterial, model)
+
+	-- Flat roof Part (bounding box, top of building)
+	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+	for _, p in ipairs(worldPts) do
+		if p.X < minX then minX = p.X end
+		if p.Z < minZ then minZ = p.Z end
+		if p.X > maxX then maxX = p.X end
+		if p.Z > maxZ then maxZ = p.Z end
+	end
+	local roofSX = math.max(1, maxX - minX)
+	local roofSZ = math.max(1, maxZ - minZ)
+	local roof = Instance.new("Part")
+	roof.Name = bldgName .. "_roof"
+	roof.Anchored = true
+	roof.Size = Vector3.new(roofSX, 0.4, roofSZ)
+	roof.CFrame = CFrame.new(
+		(minX + maxX) * 0.5,
+		baseY + height + 0.2,
+		(minZ + maxZ) * 0.5
+	)
+	roof.Material = mat
+	roof.Color = color
+	roof.CastShadow = true
+	roof.Parent = model
+end
+
+-- PartBuild is the same as FallbackBuild (polygon walls)
+BuildingBuilder.PartBuild = BuildingBuilder.FallbackBuild
+
+function BuildingBuilder.BuildAll(parent, buildings, originStuds)
+	if not buildings or #buildings == 0 then return end
 	for _, bldg in ipairs(buildings) do
 		BuildingBuilder.FallbackBuild(parent, bldg, originStuds)
 	end
 end
 
 function BuildingBuilder.Build(parent, building, originStuds)
-	return BuildingBuilder.BuildAll(parent, { building }, originStuds)
-end
-
-function BuildingBuilder.FallbackBuild(parent, building, originStuds)
-	local material = getMaterial(building.material, building.kind)
-	local color = getColor3(building.color)
-	local minX, minZ, maxX, maxZ
-	for _, p in ipairs(building.footprint) do
-		local x = p.x + originStuds.x
-		local z = p.z + originStuds.z
-		if not minX then
-			minX, minZ, maxX, maxZ = x, z, x, z
-		else
-			minX = math.min(minX, x)
-			minZ = math.min(minZ, z)
-			maxX = math.max(maxX, x)
-			maxZ = math.max(maxZ, z)
-		end
-	end
-
-	if not minX then return end
-
-	local sizeX = math.max(1, maxX - minX)
-	local sizeZ = math.max(1, maxZ - minZ)
-	local sizeY = math.max(1, building.height)
-
-	local part = Instance.new("Part")
-	part.Name = (building.id or "Building") .. "_Box"
-	part.Anchored = true
-	part.Size = Vector3.new(sizeX, sizeY, sizeZ)
-	part.CFrame = CFrame.new(minX + sizeX * 0.5, originStuds.y + building.baseY + sizeY * 0.5, minZ + sizeZ * 0.5)
-	part.Material = material
-	if color then
-		part.Color = color
-	end
-	part.Parent = parent
+	BuildingBuilder.FallbackBuild(parent, building, originStuds)
 end
 
 return BuildingBuilder
+

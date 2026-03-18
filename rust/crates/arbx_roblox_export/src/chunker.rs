@@ -5,8 +5,8 @@ use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
-    BuildingShell, Chunk, ChunkManifest, GroundPoint, ManifestMeta, PropInstance, RailSegment,
-    RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    BuildingShell, Chunk, ChunkManifest, GroundPoint, LanduseShell, ManifestMeta, PropInstance,
+    RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
 
@@ -39,6 +39,25 @@ pub fn chunk_origin(
     let y_studs = y_meters as f64 / meters_per_stud;
 
     Vec3::new(x, y_studs as f32, z)
+}
+
+fn landuse_material(kind: &str) -> String {
+    match kind {
+        "park" | "garden" | "recreation_ground" | "village_green" | "leisure" => "Grass",
+        "forest" | "wood" => "LeafyGrass",
+        "farmland" | "orchard" | "vineyard" | "allotments" => "Mud",
+        "beach" | "sand" => "Sand",
+        "bare_rock" | "cliff" => "Rock",
+        "residential" | "cemetery" => "Ground",
+        "commercial" | "retail" | "civic" => "Concrete",
+        "industrial" | "railway" => "SmoothPlastic",
+        "parking" | "road" => "Asphalt",
+        "grass" | "meadow" | "heath" => "Grass",
+        "scrub" | "greenfield" => "LeafyGrass",
+        "water" | "wetland" => "Mud",
+        _ => "Ground",
+    }
+    .to_string()
 }
 
 pub struct Chunker {
@@ -131,6 +150,7 @@ impl Chunker {
                 buildings: Vec::new(),
                 water: Vec::new(),
                 props: Vec::new(),
+                landuse: Vec::new(),
             }
         })
     }
@@ -162,6 +182,7 @@ impl Chunker {
                         lanes: f.lanes,
                         width_studs: f.width_studs,
                         has_sidewalk: f.has_sidewalk,
+                        surface: f.surface.clone(),
                         points: relative_points,
                     });
                 }
@@ -317,6 +338,7 @@ impl Chunker {
                     color,
                     base_y: f.base_y - origin.y,
                     height: f.height,
+                    height_m: f.height_m,
                     levels: f.levels,
                     roof_levels: f.roof_levels,
                     facade_style,
@@ -338,43 +360,33 @@ impl Chunker {
                     ),
                     yaw_degrees: f.yaw_degrees,
                     scale: f.scale,
+                    species: f.species,
                 });
             }
             Feature::Landuse(f) => {
-                // For simplicity, paint only the chunk containing the centroid
-                let mut sum_x = 0.0;
-                let mut sum_z = 0.0;
-                for pt in &f.footprint.points {
-                    sum_x += pt.x;
-                    sum_z += pt.y;
+                if f.footprint.points.is_empty() {
+                    return;
                 }
-                let count = f.footprint.points.len() as f32;
-                let centroid = Vec3::new(sum_x / count, 0.0, sum_z / count);
-                let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
-
-                let chunk_size = self.chunk_size_studs;
+                let cx: f32 = f.footprint.points.iter().map(|p| p.x).sum::<f32>()
+                    / f.footprint.points.len() as f32;
+                let cz: f32 = f.footprint.points.iter().map(|p| p.y).sum::<f32>()
+                    / f.footprint.points.len() as f32;
+                let chunk_id = world_to_chunk(Vec3::new(cx, 0.0, cz), self.chunk_size_studs);
                 let chunk = self.ensure_chunk(chunk_id, elevation, style);
-                let material = style.get_terrain_material(&f.kind);
-
-                if let Some(terrain) = &mut chunk.terrain {
-                    if let Some(materials) = &mut terrain.materials {
-                        let cell_size = terrain.cell_size_studs as f32;
-                        let grid_dim = terrain.width;
-
-                        for cz in 0..grid_dim {
-                            for cx in 0..grid_dim {
-                                let lx = (chunk_id.x as f32 * chunk_size as f32)
-                                    + (cx as f32 * cell_size);
-                                let lz = (chunk_id.z as f32 * chunk_size as f32)
-                                    + (cz as f32 * cell_size);
-
-                                if point_in_poly(Vec2::new(lx, lz), &f.footprint.points) {
-                                    materials[cz * grid_dim + cx] = material.clone();
-                                }
-                            }
-                        }
-                    }
-                }
+                let origin = chunk.origin_studs;
+                let material = landuse_material(&f.kind);
+                let footprint: Vec<GroundPoint> = f
+                    .footprint
+                    .points
+                    .iter()
+                    .map(|p| GroundPoint::new(p.x - origin.x, p.y - origin.z))
+                    .collect();
+                chunk.landuse.push(LanduseShell {
+                    id: f.id.clone(),
+                    kind: f.kind.clone(),
+                    material,
+                    footprint,
+                });
             }
         }
     }
@@ -491,6 +503,7 @@ impl Chunker {
             chunk.buildings.sort_by(|a, b| a.id.cmp(&b.id));
             chunk.water.sort_by(|a, b| a.id.cmp(&b.id));
             chunk.props.sort_by(|a, b| a.id.cmp(&b.id));
+            chunk.landuse.sort_by(|a, b| a.id.cmp(&b.id));
         }
 
         chunks.sort_by_key(|c| (c.id.z, c.id.x));

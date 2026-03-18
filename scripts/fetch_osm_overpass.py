@@ -14,15 +14,28 @@ Usage:
 
 import argparse
 import json
+import random
 import sys
 import time
 from typing import Tuple
 
 import urllib.parse
 import urllib.request
+import urllib.error
 
 
-OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter"
+# Rotate across public mirrors — same strategy as Arnis upstream
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+]
+
+USER_AGENT = "arnis-roblox/1.0 (open-source educational project; github.com/arnis-roblox)"
+
+# Seconds to wait between retries (exponential: 5, 10, 20)
+RETRY_BASE_DELAY = 5
+MAX_RETRIES = 3
 
 
 def parse_bbox(arg: str) -> Tuple[float, float, float, float]:
@@ -37,7 +50,7 @@ def parse_bbox(arg: str) -> Tuple[float, float, float, float]:
 
 def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
     min_lat, min_lon, max_lat, max_lon = bbox
-    # Simple extract: highways, buildings, water, landuse
+    # Extract: highways, buildings, water, landuse, and POI-like features
     # You can tune this later without changing the Rust side.
     return f"""
     [out:json][timeout:120];
@@ -47,6 +60,12 @@ def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
       way["building:part"]({min_lat},{min_lon},{max_lat},{max_lon});
       way["waterway"]({min_lat},{min_lon},{max_lat},{max_lon});
       way["landuse"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["tourism"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["historic"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["man_made"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["barrier"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["power"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["aeroway"]({min_lat},{min_lon},{max_lat},{max_lon});
     );
     (._;>;);
     out body;
@@ -54,14 +73,46 @@ def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
 
 
 def fetch_overpass(query: str) -> dict:
-    data = urllib.parse.urlencode({"data": query}).encode("utf-8")
-    req = urllib.request.Request(OVERPASS_ENDPOINT, data=data, method="POST")
+    """POST query to a randomly selected Overpass mirror with retry/backoff."""
+    encoded = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    endpoints = OVERPASS_ENDPOINTS[:]
+    random.shuffle(endpoints)
 
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"Overpass error: HTTP {resp.status}")
-        text = resp.read().decode("utf-8")
-        return json.loads(text)
+    last_err: Exception = RuntimeError("no endpoints tried")
+    for attempt in range(MAX_RETRIES):
+        endpoint = endpoints[attempt % len(endpoints)]
+        req = urllib.request.Request(endpoint, data=encoded, method="POST")
+        req.add_header("User-Agent", USER_AGENT)
+        try:
+            with urllib.request.urlopen(req, timeout=150) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Overpass error: HTTP {resp.status}")
+                text = resp.read().decode("utf-8")
+                return json.loads(text)
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 503):
+                # Rate-limited or server busy — back off
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(
+                    f"[fetch_osm_overpass] HTTP {e.code} from {endpoint}, "
+                    f"retrying in {delay}s (attempt {attempt+1}/{MAX_RETRIES})...",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            last_err = e
+            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            print(
+                f"[fetch_osm_overpass] Error ({e}), retrying in {delay}s "
+                f"(attempt {attempt+1}/{MAX_RETRIES})...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    raise last_err
 
 
 def main(argv=None) -> int:
@@ -78,10 +129,28 @@ def main(argv=None) -> int:
         help="Output JSON file path (e.g. rust/data/austin_overpass.json)",
     )
 
+    parser.add_argument(
+        "--max-cache-hours",
+        type=float,
+        default=24.0,
+        help="Skip fetch if output file is younger than this many hours (default: 24)",
+    )
     args = parser.parse_args(argv)
 
     bbox = args.bbox
     out_path = args.out
+
+    # Skip re-fetching if cache is fresh enough — avoids hammering Overpass
+    import os
+    if os.path.exists(out_path):
+        age_hours = (time.time() - os.path.getmtime(out_path)) / 3600
+        if age_hours < args.max_cache_hours:
+            print(
+                f"[fetch_osm_overpass] Using cached data ({age_hours:.1f}h old, "
+                f"max {args.max_cache_hours}h) — skipping fetch.",
+                file=sys.stderr,
+            )
+            return 0
 
     print(f"[fetch_osm_overpass] Fetching OSM data for bbox={bbox} ...", file=sys.stderr)
     query = build_overpass_query(bbox)

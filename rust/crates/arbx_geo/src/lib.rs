@@ -336,6 +336,73 @@ fn lat_lon_to_pixel(lat: f64, lon: f64, zoom: u32) -> (u32, u32, f64, f64) {
     (tx, ty, px, py)
 }
 
+fn fill_gaps(grid: &mut Vec<Vec<f32>>) {
+    let w = grid.len();
+    let h = if w > 0 { grid[0].len() } else { 0 };
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for x in 0..w {
+            for y in 0..h {
+                if grid[x][y] == 0.0 || grid[x][y] < -1000.0 {
+                    let mut neighbors: Vec<f32> = Vec::new();
+                    
+                    if x > 0 && grid[x - 1][y] != 0.0 && grid[x - 1][y] > -1000.0 {
+                        neighbors.push(grid[x - 1][y]);
+                    }
+                    if x + 1 < w && grid[x + 1][y] != 0.0 && grid[x + 1][y] > -1000.0 {
+                        neighbors.push(grid[x + 1][y]);
+                    }
+                    if y > 0 && grid[x][y - 1] != 0.0 && grid[x][y - 1] > -1000.0 {
+                        neighbors.push(grid[x][y - 1]);
+                    }
+                    if y + 1 < h && grid[x][y + 1] != 0.0 && grid[x][y + 1] > -1000.0 {
+                        neighbors.push(grid[x][y + 1]);
+                    }
+                    
+                    if !neighbors.is_empty() {
+                        grid[x][y] = neighbors.iter().sum::<f32>() / neighbors.len() as f32;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn gaussian_blur(grid: &Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+    let kernel = [
+        [1.0f32, 2.0, 1.0],
+        [2.0, 4.0, 2.0],
+        [1.0, 2.0, 1.0],
+    ];
+    let weight_sum = 16.0f32;
+    let w = grid.len();
+    let h = if w > 0 { grid[0].len() } else { 0 };
+    let mut out = grid.clone();
+    
+    if w < 3 || h < 3 {
+        return out;
+    }
+    
+    for x in 1..w - 1 {
+        for y in 1..h - 1 {
+            let mut sum = 0.0f32;
+            for kx in 0..3usize {
+                for ky in 0..3usize {
+                    sum += grid[x + kx - 1][y + ky - 1] * kernel[kx][ky];
+                }
+            }
+            out[x][y] = sum / weight_sum;
+        }
+    }
+    out
+}
+
 fn download_terrarium_tile(
     z: u32,
     x: u32,
@@ -349,8 +416,16 @@ fn download_terrarium_tile(
             "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{}/{}/{}.png",
             z, x, y
         );
+        // Be respectful: 150 ms between tile downloads, identify ourselves
+        std::thread::sleep(std::time::Duration::from_millis(150));
         let output = std::process::Command::new("curl")
-            .args(["-sL", "--fail", "-o", &path, &url])
+            .args([
+                "-sL", "--fail",
+                "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
+                "--retry", "3",
+                "--retry-delay", "2",
+                "-o", &path, &url,
+            ])
             .output()?;
         if !output.status.success() {
             return Err(format!(
@@ -372,6 +447,10 @@ fn download_terrarium_tile(
             grid[px as usize][py as usize] = elev;
         }
     }
+    
+    fill_gaps(&mut grid);
+    let grid = gaussian_blur(&grid);
+    
     Ok(grid)
 }
 
@@ -406,13 +485,39 @@ impl TerrariumElevationProvider {
     }
 }
 
+fn bilinear(grid: &Vec<Vec<f32>>, px: f64, py: f64) -> f32 {
+    let w = grid.len();
+    let h = if w > 0 { grid[0].len() } else { 0 };
+    
+    if w == 0 || h == 0 {
+        return 0.0;
+    }
+    
+    let px = px.max(0.0).min((w - 1) as f64);
+    let py = py.max(0.0).min((h - 1) as f64);
+    
+    let x0 = px.floor() as usize;
+    let y0 = py.floor() as usize;
+    let x1 = (x0 + 1).min(w - 1);
+    let y1 = (y0 + 1).min(h - 1);
+    
+    let fx = (px - px.floor()) as f32;
+    let fy = (py - py.floor()) as f32;
+    
+    let v00 = grid[x0][y0];
+    let v10 = grid[x1][y0];
+    let v01 = grid[x0][y1];
+    let v11 = grid[x1][y1];
+    
+    v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy)
+        + v01 * (1.0 - fx) * fy + v11 * fx * fy
+}
+
 impl ElevationProvider for TerrariumElevationProvider {
     fn sample_height_at(&self, latlon: LatLon) -> f32 {
         let (tx, ty, px, py) = lat_lon_to_pixel(latlon.lat, latlon.lon, self.zoom);
-        let px = (px as usize).min(255);
-        let py = (py as usize).min(255);
         if let Some(grid) = self.tiles.get(&(tx, ty)) {
-            grid[px][py]
+            bilinear(&grid, px as f64, py as f64)
         } else {
             0.0
         }

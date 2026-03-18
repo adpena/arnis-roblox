@@ -1,3 +1,5 @@
+pub mod overture;
+
 use arbx_geo::{
     BoundingBox, ElevationProvider, Footprint, LatLon, Mercator, PerlinElevationProvider, Vec2,
     Vec3,
@@ -14,6 +16,7 @@ pub struct RoadFeature {
     pub lanes: Option<u32>,
     pub width_studs: f32,
     pub has_sidewalk: bool,
+    pub surface: Option<String>,
     pub points: Vec<Vec3>,
 }
 
@@ -33,6 +36,7 @@ pub struct BuildingFeature {
     pub indices: Option<Vec<usize>>,
     pub base_y: f32,
     pub height: f32,
+    pub height_m: Option<f32>,
     pub levels: Option<u32>,
     pub roof_levels: Option<u32>,
     pub min_height: Option<f32>,
@@ -70,6 +74,7 @@ pub struct PropFeature {
     pub position: Vec3,
     pub yaw_degrees: f32,
     pub scale: f32,
+    pub species: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,6 +230,7 @@ impl SourceAdapter for SyntheticAustinAdapter {
             lanes: Some(4),
             width_studs: 40.0,
             has_sidewalk: true,
+            surface: None,
             points: vec![
                 project_with_y(center.lat - 0.005, center.lon),
                 project_with_y(center.lat, center.lon),
@@ -245,6 +251,7 @@ impl SourceAdapter for SyntheticAustinAdapter {
             indices: None,
             base_y: elevation.sample_height_at(capitol_ll),
             height: 50.0,
+            height_m: None,
             levels: Some(3),
             roof_levels: Some(1),
             min_height: None,
@@ -397,6 +404,7 @@ impl SourceAdapter for OverpassAdapter {
                         indices: None,
                         base_y,
                         height: height - base_y,
+                        height_m: tags.get("height").and_then(|h| h.parse::<f32>().ok()),
                         levels,
                         roof_levels,
                         min_height: Some(base_y),
@@ -414,12 +422,30 @@ impl SourceAdapter for OverpassAdapter {
                         .and_then(|w| w.parse::<f32>().ok())
                         .unwrap_or_else(|| road_width_from_kind(highway));
 
+                    let is_bridge = tags.get("bridge").map(|v| v != "no").unwrap_or(false);
+                    let is_tunnel = tags.get("tunnel").map(|v| v != "no").unwrap_or(false);
+                    let y_offset: f32 = if is_bridge {
+                        8.0
+                    } else if is_tunnel {
+                        -8.0
+                    } else {
+                        0.0
+                    };
+                    let points: Vec<Vec3> = points
+                        .into_iter()
+                        .map(|mut p| {
+                            p.y += y_offset;
+                            p
+                        })
+                        .collect();
+
                     features.push(Feature::Road(RoadFeature {
                         id: format!("osm_{}", el.id),
                         kind: highway.clone(),
                         lanes,
                         width_studs,
                         has_sidewalk,
+                        surface: tags.get("surface").cloned(),
                         points,
                     }));
                 } else if let Some(railway) = tags.get("railway") {
@@ -466,6 +492,59 @@ impl SourceAdapter for OverpassAdapter {
                 }
             }
         }
+
+        // Parse node elements for trees and similar point features
+        for el in &data.elements {
+            if el.kind == "node" {
+                let Some(tags) = &el.tags else { continue };
+                let Some(lat) = el.lat else { continue };
+                let Some(lon) = el.lon else { continue };
+                let ll = LatLon::new(lat, lon);
+                if !clip_bbox.contains(ll) {
+                    continue;
+                }
+                let pos = Mercator::project(ll, center, mps);
+                if tags.get("natural") == Some(&"tree".to_string())
+                    || tags.get("amenity") == Some(&"tree".to_string())
+                {
+                    let species = tags
+                        .get("species")
+                        .or_else(|| tags.get("genus"))
+                        .or_else(|| tags.get("taxon"))
+                        .map(|s| s.to_lowercase())
+                        .or_else(|| {
+                            // Infer from leaf type
+                            match (
+                                tags.get("leaf_type").map(|s| s.as_str()),
+                                tags.get("leaf_cycle").map(|s| s.as_str()),
+                            ) {
+                                (Some("needleleaved"), _) => Some("conifer".to_string()),
+                                (Some("broadleaved"), Some("evergreen")) => {
+                                    Some("broadleaved_evergreen".to_string())
+                                }
+                                (Some("broadleaved"), _) => Some("broadleaved_deciduous".to_string()),
+                                _ => None,
+                            }
+                        });
+
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("tree_{}", el.id),
+                        kind: "tree".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species,
+                    }));
+                }
+            }
+        }
+
+        // Append Overture buildings as gap-fill. OSM features were loaded first,
+        // so if the chunker overwrites by position the more-detailed OSM entry wins.
+        let overture_path = "rust/data/overture_buildings.geojson";
+        let overture_features =
+            overture::load_overture_buildings(overture_path, bbox, self.meters_per_stud);
+        features.extend(overture_features);
 
         Ok(features)
     }
@@ -529,6 +608,7 @@ mod tests {
                 indices: None,
                 base_y: 0.0,
                 height: 10.0,
+                height_m: None,
                 levels: None,
                 roof_levels: None,
                 min_height: None,
