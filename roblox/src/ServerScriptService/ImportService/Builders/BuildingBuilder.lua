@@ -83,8 +83,8 @@ local function pointInPolygon(px, pz, poly)
 	local inside = false
 	local j = #poly
 	for i = 1, #poly do
-		local xi, zi = poly[i][1], poly[i][2]
-		local xj, zj = poly[j][1], poly[j][2]
+		local xi, zi = poly[i].x, poly[i].z
+		local xj, zj = poly[j].x, poly[j].z
 		if ((zi > pz) ~= (zj > pz)) and (px < (xj - xi) * (pz - zi) / (zj - zi) + xi) then
 			inside = not inside
 		end
@@ -312,7 +312,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 	-- Fill interior with terrain (uses terrain-safe floor materials only)
 	local footprintRelative = {}
 	for _, p in ipairs(fp) do
-		table.insert(footprintRelative, {p.x + originStuds.x, p.z + originStuds.z})
+		table.insert(footprintRelative, {x = p.x + originStuds.x, z = p.z + originStuds.z})
 	end
 	fillInterior(footprintRelative, baseY, getFloorMaterial(building), model)
 
