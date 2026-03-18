@@ -10,7 +10,7 @@ local FILL_DEPTH = 2  -- studs deep (thin overlay on terrain surface)
 -- Maps landuse/natural kind → Roblox terrain material
 -- Full palette: Grass, LeafyGrass, Sand, Rock, Mud, Ground, Concrete, Asphalt,
 --   Pavement, Cobblestone, Slate, Sandstone, Brick, Granite, Limestone, Basalt,
---   SmoothPlastic, Snow, Ice, Glacier, SaltFlat, CrackedLava, Water
+--   SmoothPlastic, Snow, Ice, Glacier, CrackedLava, Water
 local KIND_MATERIAL = {
 	-- Green spaces
 	park              = Enum.Material.Grass,
@@ -82,7 +82,7 @@ local KIND_MATERIAL = {
 	quarry            = Enum.Material.Sandstone,
 	construction      = Enum.Material.Ground,
 	-- Salt flats / mineral
-	salt_pond         = Enum.Material.SaltFlat,
+	salt_pond         = Enum.Material.Sand,
 	plateau           = Enum.Material.Sandstone,
 }
 

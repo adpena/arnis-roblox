@@ -15,10 +15,10 @@ local BARRIER_HEIGHT = {
 
 local BARRIER_MATERIAL = {
 	wall           = Enum.Material.Brick,
-	fence          = Enum.Material.Metal,
+	fence          = Enum.Material.Slate,
 	hedge          = Enum.Material.Grass,
 	retaining_wall = Enum.Material.Concrete,
-	guard_rail     = Enum.Material.Metal,
+	guard_rail     = Enum.Material.Concrete,
 	kerb           = Enum.Material.Concrete,
 	city_wall      = Enum.Material.Brick,
 	default        = Enum.Material.SmoothPlastic,
