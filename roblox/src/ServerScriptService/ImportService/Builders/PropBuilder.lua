@@ -209,6 +209,108 @@ function PropBuilder.Build(parent, prop, originStuds)
 		return buildStreetLamp(wx, wy, wz, parent)
 	end
 
+	if prop.kind == "bench" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		local bench = Instance.new("Part")
+		bench.Name = "Bench"
+		bench.Anchored = true
+		bench.CanCollide = false
+		bench.CastShadow = false
+		bench.Size = Vector3.new(2, 0.25, 0.6)
+		bench.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, math.rad(prop.yawDegrees or 0), 0)
+		bench.Material = Enum.Material.WoodPlanks
+		bench.Color = Color3.fromRGB(139, 90, 43)
+		bench.Parent = parent
+		return bench
+	end
+
+	if prop.kind == "bus_stop" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		local model = Instance.new("Model")
+		model.Name = "BusStop"
+		local pole = Instance.new("Part")
+		pole.Anchored = true; pole.CastShadow = false; pole.CanCollide = false
+		pole.Size = Vector3.new(0.2, 5, 0.2)
+		pole.CFrame = CFrame.new(wx, wy + 2.5, wz)
+		pole.Material = Enum.Material.Metal
+		pole.Color = Color3.fromRGB(180, 180, 190)
+		pole.Parent = model
+		local sign = Instance.new("Part")
+		sign.Anchored = true; sign.CastShadow = false; sign.CanCollide = false
+		sign.Size = Vector3.new(0.8, 0.5, 0.1)
+		sign.CFrame = CFrame.new(wx, wy + 5.2, wz)
+		sign.Material = Enum.Material.SmoothPlastic
+		sign.Color = Color3.fromRGB(0, 80, 180)
+		sign.Parent = model
+		model.Parent = parent
+		return model
+	end
+
+	if prop.kind == "traffic_signal" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		local model = Instance.new("Model")
+		model.Name = "TrafficSignal"
+		local pole = Instance.new("Part")
+		pole.Anchored = true; pole.CastShadow = false; pole.CanCollide = false
+		pole.Size = Vector3.new(0.25, 9, 0.25)
+		pole.CFrame = CFrame.new(wx, wy + 4.5, wz)
+		pole.Material = Enum.Material.Metal
+		pole.Color = Color3.fromRGB(60, 60, 60)
+		pole.Parent = model
+		local head = Instance.new("Part")
+		head.Anchored = true; head.CastShadow = false; head.CanCollide = false
+		head.Size = Vector3.new(1, 2.5, 0.6)
+		head.CFrame = CFrame.new(wx, wy + 9.5, wz)
+		head.Material = Enum.Material.SmoothPlastic
+		head.Color = Color3.fromRGB(30, 30, 30)
+		head.Parent = model
+		local light = Instance.new("Part")
+		light.Anchored = true; light.CastShadow = false; light.CanCollide = false
+		light.Size = Vector3.new(0.6, 0.6, 0.2)
+		light.CFrame = CFrame.new(wx, wy + 9.0, wz + 0.3)
+		light.Material = Enum.Material.Neon
+		light.Color = Color3.fromRGB(0, 210, 80)
+		light.Parent = model
+		model.Parent = parent
+		return model
+	end
+
+	if prop.kind == "waste_basket" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		local bin = Instance.new("Part")
+		bin.Name = "WasteBasket"
+		bin.Anchored = true; bin.CastShadow = false; bin.CanCollide = false
+		bin.Size = Vector3.new(0.8, 1.2, 0.8)
+		bin.CFrame = CFrame.new(wx, wy + 0.6, wz)
+		bin.Material = Enum.Material.Metal
+		bin.Color = Color3.fromRGB(70, 70, 70)
+		bin.Parent = parent
+		return bin
+	end
+
+	if prop.kind == "fire_hydrant" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		local hydrant = Instance.new("Part")
+		hydrant.Name = "FireHydrant"
+		hydrant.Anchored = true; hydrant.CastShadow = false; hydrant.CanCollide = false
+		hydrant.Size = Vector3.new(0.6, 1.0, 0.6)
+		hydrant.CFrame = CFrame.new(wx, wy + 0.5, wz)
+		hydrant.Material = Enum.Material.SmoothPlastic
+		hydrant.Color = Color3.fromRGB(220, 30, 30)
+		hydrant.Parent = parent
+		return hydrant
+	end
+
 	local pool = getOrCreatePool(prop.kind)
 	local instance = pool:Get()
 

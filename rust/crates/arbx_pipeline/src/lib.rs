@@ -439,13 +439,27 @@ impl SourceAdapter for OverpassAdapter {
                 }
                 emit_area_way(el.id, tags, fp, vec![], &mut features);
             } else {
-                // Linear feature — use clipped Vec3 points
+                // Linear feature — segment-level clip interpolates bbox entry/exit
                 let Some(way_nodes) = &el.nodes else { continue };
-                let lin_pts: Vec<Vec3> = way_nodes.iter()
-                    .filter_map(|id| node_coords.get(id))
-                    .filter(|&&ll| clip_bbox.contains(ll))
-                    .map(|&ll| Mercator::project(ll, center, mps))
+                let node_lls: Vec<LatLon> = way_nodes.iter()
+                    .filter_map(|id| node_coords.get(id).copied())
                     .collect();
+                let mut lin_pts: Vec<Vec3> = Vec::new();
+                for i in 0..node_lls.len().saturating_sub(1) {
+                    let (a, b) = (node_lls[i], node_lls[i + 1]);
+                    let Some((t0, t1)) = liang_barsky(a, b, &clip_bbox) else { continue };
+                    let lerp = |p1: LatLon, p2: LatLon, t: f64| LatLon::new(
+                        p1.lat + t * (p2.lat - p1.lat),
+                        p1.lon + t * (p2.lon - p1.lon),
+                    );
+                    let c1 = lerp(a, b, t0);
+                    let c2 = lerp(a, b, t1);
+                    let proj1 = Mercator::project(c1, center, mps);
+                    if lin_pts.last().map(|p: &Vec3| (p.x - proj1.x).abs() > 0.05 || (p.z - proj1.z).abs() > 0.05).unwrap_or(true) {
+                        lin_pts.push(proj1);
+                    }
+                    lin_pts.push(Mercator::project(c2, center, mps));
+                }
                 if lin_pts.len() < 2 { continue; }
                 emit_linear_way(el.id, tags, lin_pts, &mut features);
             }
@@ -505,6 +519,76 @@ impl SourceAdapter for OverpassAdapter {
                     continue;
                 }
                 let pos = Mercator::project(ll, center, mps);
+                if tags.get("highway") == Some(&"street_lamp".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("lamp_{}", el.id),
+                        kind: "street_lamp".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
+                if tags.get("amenity") == Some(&"bench".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("bench_{}", el.id),
+                        kind: "bench".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
+                if tags.get("highway") == Some(&"bus_stop".to_string())
+                    || tags.get("amenity") == Some(&"bus_shelter".to_string())
+                {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("busstop_{}", el.id),
+                        kind: "bus_stop".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
+                if tags.get("highway") == Some(&"traffic_signals".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("signal_{}", el.id),
+                        kind: "traffic_signal".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
+                if tags.get("amenity") == Some(&"waste_basket".to_string())
+                    || tags.get("amenity") == Some(&"recycling".to_string())
+                {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("bin_{}", el.id),
+                        kind: "waste_basket".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
+                if tags.get("emergency") == Some(&"fire_hydrant".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("hydrant_{}", el.id),
+                        kind: "fire_hydrant".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                    }));
+                    continue;
+                }
                 if tags.get("natural") == Some(&"tree".to_string())
                     || tags.get("amenity") == Some(&"tree".to_string())
                 {
@@ -549,6 +633,34 @@ impl SourceAdapter for OverpassAdapter {
 
         Ok(features)
     }
+}
+
+/// Liang-Barsky line clip. Returns (t0, t1) parametric parameters if segment
+/// [p1→p2] intersects `bbox`, else None. t∈[0,1] maps to p1→p2.
+fn liang_barsky(p1: LatLon, p2: LatLon, bbox: &BoundingBox) -> Option<(f64, f64)> {
+    let dx = p2.lon - p1.lon;
+    let dy = p2.lat - p1.lat;
+    let mut t0: f64 = 0.0;
+    let mut t1: f64 = 1.0;
+    for (p, q) in [
+        (-dx, p1.lon - bbox.min.lon),
+        ( dx, bbox.max.lon - p1.lon),
+        (-dy, p1.lat - bbox.min.lat),
+        ( dy, bbox.max.lat - p1.lat),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 { return None; }
+        } else if p < 0.0 {
+            let r = q / p;
+            if r > t1 { return None; }
+            if r > t0 { t0 = r; }
+        } else {
+            let r = q / p;
+            if r < t0 { return None; }
+            if r < t1 { t1 = r; }
+        }
+    }
+    Some((t0, t1))
 }
 
 fn tracks_from_tags(tags: &HashMap<String, String>) -> Option<u32> {
