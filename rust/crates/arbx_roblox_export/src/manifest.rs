@@ -574,6 +574,14 @@ impl WaterFeature {
             write_ground_points(out, fp, indent + 2);
         }
 
+        if !self.holes.is_empty() {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "holes");
+            write_array(out, indent + 2, &self.holes, |hole, out, indent| {
+                write_ground_points(out, hole, indent);
+            });
+        }
+
         if let Some(idx) = &self.indices {
             out.push_str(",\n");
             write_key(out, indent + 2, "indices");

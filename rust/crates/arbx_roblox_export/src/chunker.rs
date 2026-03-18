@@ -258,6 +258,7 @@ impl Chunker {
                             width_studs: Some(r.width_studs),
                             points: Some(relative_points),
                             footprint: None,
+                            holes: vec![],
                             indices: None,
                         });
                     }
@@ -282,6 +283,17 @@ impl Chunker {
                         .map(|pt| GroundPoint::new(pt.x - origin.x, pt.y - origin.z))
                         .collect();
 
+                    let relative_holes: Vec<Vec<GroundPoint>> = p
+                        .holes
+                        .iter()
+                        .map(|hole| {
+                            hole.points
+                                .iter()
+                                .map(|pt| GroundPoint::new(pt.x - origin.x, pt.y - origin.z))
+                                .collect()
+                        })
+                        .collect();
+
                     let material = style.get_terrain_material(&p.kind);
                     let color = style.get_terrain_color(&p.kind);
                     chunk.water.push(ManifestWaterFeature {
@@ -292,6 +304,7 @@ impl Chunker {
                         width_studs: None,
                         points: None,
                         footprint: Some(relative_footprint),
+                        holes: relative_holes,
                         indices: p.indices,
                     });
                 }

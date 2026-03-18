@@ -158,6 +158,19 @@ function ChunkSchema.validateManifest(manifest)
                 for pointIndex, point in ipairs(water.footprint) do
                     validatePoint2(point, ("%s.water[].footprint[%d]"):format(prefix, pointIndex))
                 end
+                -- Validate optional inner rings (islands)
+                if water.holes ~= nil then
+                    assertType(water.holes, "table", prefix .. ".water[].holes must be a table")
+                    for holeIndex, hole in ipairs(water.holes) do
+                        if type(hole) == "table" and #hole >= 3 then
+                            for pointIndex, point in ipairs(hole) do
+                                validatePoint2(point, ("%s.water[].holes[%d][%d]"):format(prefix, holeIndex, pointIndex))
+                            end
+                        else
+                            warn(prefix .. (".water[].holes[%d]: skipping malformed hole"):format(holeIndex))
+                        end
+                    end
+                end
             else
                 error(prefix .. ".water[] must have either points or footprint")
             end

@@ -260,6 +260,12 @@ fn shift_feature(feature: Feature, dx: f32, dz: f32) -> Feature {
                 p.x += dx;
                 p.y += dz;
             }
+            for hole in &mut r.holes {
+                for p in &mut hole.points {
+                    p.x += dx;
+                    p.y += dz;
+                }
+            }
             Feature::Water(PipelineWaterFeature::Polygon(r))
         }
         Feature::Prop(mut f) => {
