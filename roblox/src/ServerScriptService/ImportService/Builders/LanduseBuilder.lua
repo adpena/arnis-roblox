@@ -107,11 +107,78 @@ local function placeParkFurniture(cx, cz, sizeX, sizeZ, parent)
 		local bench = Instance.new("Part", parent)
 		bench.Name = "ParkBench"
 		bench.Anchored = true
+		bench.CanCollide = false
 		bench.Size = Vector3.new(3, 0.3, 0.6)
 		bench.CFrame = CFrame.new(bx, 0.15, bz) * CFrame.Angles(0, math.random() * math.pi, 0)
 		bench.Material = Enum.Material.WoodPlanks
 		bench.Color = Color3.fromRGB(139, 90, 43)
-		bench.CastShadow = true
+		bench.CastShadow = false
+	end
+end
+
+-- Tree density per square stud by kind
+local TREE_DENSITY = {
+	forest = 1/80,   -- ~1 tree per 80 sq studs (dense canopy)
+	wood   = 1/80,
+	scrub  = 1/160,  -- sparse scrub
+	heath  = 1/200,
+	park   = 1/250,  -- scattered park trees
+	garden = 1/300,
+}
+
+-- Canopy colors by terrain type
+local FOREST_CANOPY = {
+	forest = BrickColor.new("Bright green"),
+	wood   = BrickColor.new("Dark green"),
+	scrub  = BrickColor.new("Olive"),
+	heath  = BrickColor.new("Sand green"),
+	park   = BrickColor.new("Bright green"),
+	garden = BrickColor.new("Bright green"),
+}
+
+-- Scatter procedural trees across a vegetation area.
+local function placeVegetation(kind, cx, cz, sizeX, sizeZ, baseY, parent)
+	local density = TREE_DENSITY[kind]
+	if not density then return end
+	local area = sizeX * sizeZ
+	local count = math.min(60, math.floor(area * density))
+	if count <= 0 then return end
+	local canopyColor = FOREST_CANOPY[kind] or BrickColor.new("Bright green")
+
+	math.randomseed(math.floor(cx * 997 + cz * 1009 + kind:byte(1, 1)))
+	for _ = 1, count do
+		local tx = cx + (math.random() - 0.5) * sizeX * 0.92
+		local tz = cz + (math.random() - 0.5) * sizeZ * 0.92
+		local scale = 0.7 + math.random() * 0.6
+		local trunkH = 6 * scale
+		local canopyR = (3.5 + math.random() * 2.5) * scale
+
+		local model = Instance.new("Model")
+		model.Name = kind .. "_tree"
+
+		local trunk = Instance.new("Part")
+		trunk.Anchored  = true
+		trunk.CanCollide = false
+		trunk.CastShadow = false
+		trunk.Size = Vector3.new(0.8 * scale, trunkH, 0.8 * scale)
+		trunk.Shape = Enum.PartType.Cylinder
+		trunk.CFrame = CFrame.new(tx, baseY + trunkH * 0.5, tz) * CFrame.Angles(0, 0, math.pi * 0.5)
+		trunk.Material = Enum.Material.Wood
+		trunk.Color = Color3.fromRGB(90, 65, 40)
+		trunk.Parent = model
+
+		local canopy = Instance.new("Part")
+		canopy.Anchored  = true
+		canopy.CanCollide = false
+		canopy.CastShadow = false
+		canopy.Shape = Enum.PartType.Ball
+		canopy.Size = Vector3.new(canopyR * 2, canopyR * 2, canopyR * 2)
+		canopy.CFrame = CFrame.new(tx, baseY + trunkH + canopyR * 0.6, tz)
+		canopy.Material = Enum.Material.LeafyGrass
+		canopy.BrickColor = canopyColor
+		canopy.Parent = model
+
+		model.Parent = parent
 	end
 end
 
@@ -145,12 +212,17 @@ function LanduseBuilder.BuildOne(landuse, originStuds, parent)
 	)
 	terrain:FillBlock(cf, Vector3.new(sizeX, FILL_DEPTH, sizeZ), mat)
 
-	-- Scatter benches in park zones
-	if landuse.kind == "park" then
-		local cx = (minX + maxX) * 0.5
-		local cz = (minZ + maxZ) * 0.5
+	local cx = (minX + maxX) * 0.5
+	local cz = (minZ + maxZ) * 0.5
+	local baseY = originStuds.y
+
+	-- Scatter benches in parks
+	if landuse.kind == "park" or landuse.kind == "garden" then
 		placeParkFurniture(cx, cz, sizeX, sizeZ, parent or Workspace)
 	end
+
+	-- Scatter trees in vegetation areas
+	placeVegetation(landuse.kind, cx, cz, sizeX, sizeZ, baseY, parent or Workspace)
 end
 
 function LanduseBuilder.BuildAll(landuseList, originStuds, parent)

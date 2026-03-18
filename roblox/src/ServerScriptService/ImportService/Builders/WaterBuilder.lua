@@ -25,28 +25,58 @@ local function paintRibbonSegment(terrain, p1, p2, width)
 end
 
 -- Paint an axis-aligned water polygon (lake/pond) into terrain.
-local function paintPolygon(terrain, footprint, originStuds)
-	local minX, minZ, maxX, maxZ
-	for _, p in ipairs(footprint) do
-		local x = p.x + originStuds.x
-		local z = p.z + originStuds.z
-		if not minX then
-			minX, minZ, maxX, maxZ = x, z, x, z
-		else
-			minX = math.min(minX, x)
-			minZ = math.min(minZ, z)
-			maxX = math.max(maxX, x)
-			maxZ = math.max(maxZ, z)
-		end
+-- Kept as AABB fallback when footprint has too few points.
+local function paintPolygonAABB(terrain, worldPts, cy)
+	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+	for _, p in ipairs(worldPts) do
+		minX = math.min(minX, p.X); minZ = math.min(minZ, p.Z)
+		maxX = math.max(maxX, p.X); maxZ = math.max(maxZ, p.Z)
 	end
-	if not minX then return end
-
 	local sizeX = math.max(1, maxX - minX)
 	local sizeZ = math.max(1, maxZ - minZ)
-	local cx = (minX + maxX) * 0.5
-	local cz = (minZ + maxZ) * 0.5
-	local cy = originStuds.y - WATER_DEPTH * 0.5
-	terrain:FillBlock(CFrame.new(cx, cy, cz), Vector3.new(sizeX, WATER_DEPTH, sizeZ), Enum.Material.Water)
+	terrain:FillBlock(CFrame.new((minX+maxX)*0.5, cy, (minZ+maxZ)*0.5),
+		Vector3.new(sizeX, WATER_DEPTH, sizeZ), Enum.Material.Water)
+end
+
+-- Scanline polygon rasterisation: fills the actual polygon shape row by row.
+-- material defaults to Water; pass Enum.Material.LeafyGrass etc. to cut islands.
+local SCAN_STEP = 4  -- studs resolution per scanline row
+local function paintPolygonScanline(terrain, worldPts, cy, material)
+	material = material or Enum.Material.Water
+	if #worldPts < 3 then return end
+	local n = #worldPts
+	local minZ, maxZ = math.huge, -math.huge
+	for _, p in ipairs(worldPts) do
+		minZ = math.min(minZ, p.Z); maxZ = math.max(maxZ, p.Z)
+	end
+	local z = minZ + SCAN_STEP * 0.5
+	while z <= maxZ do
+		-- Find X intersections with all edges at this Z
+		local xs = {}
+		for i = 1, n do
+			local p1 = worldPts[i]
+			local p2 = worldPts[(i % n) + 1]
+			local z1, z2 = p1.Z, p2.Z
+			if (z1 <= z and z < z2) or (z2 <= z and z < z1) then
+				local t = (z - z1) / (z2 - z1)
+				table.insert(xs, p1.X + t * (p2.X - p1.X))
+			end
+		end
+		table.sort(xs)
+		local i = 1
+		while i + 1 <= #xs do
+			local x0, x1 = xs[i], xs[i + 1]
+			if x1 - x0 > 0.1 then
+				terrain:FillBlock(
+					CFrame.new((x0 + x1) * 0.5, cy, z),
+					Vector3.new(x1 - x0, WATER_DEPTH, SCAN_STEP),
+					material
+				)
+			end
+			i = i + 2
+		end
+		z = z + SCAN_STEP
+	end
 end
 
 function WaterBuilder.BuildAll(parent, waters, originStuds)
@@ -69,8 +99,27 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds)
 			local p2 = offsetPoint(water.points[i + 1], originStuds)
 			paintRibbonSegment(terrain, p1, p2, width)
 		end
-	elseif water.footprint then
-		paintPolygon(terrain, water.footprint, originStuds)
+	elseif water.footprint and #water.footprint >= 3 then
+		-- Build world-space point array
+		local cy = originStuds.y - WATER_DEPTH * 0.5
+		local worldPts = {}
+		for _, p in ipairs(water.footprint) do
+			table.insert(worldPts, Vector3.new(p.x + originStuds.x, cy, p.z + originStuds.z))
+		end
+		-- Scanline fill for accurate polygon shape
+		paintPolygonScanline(terrain, worldPts, cy, Enum.Material.Water)
+		-- Restore islands: fill inner rings (holes) with terrain
+		if water.holes then
+			for _, hole in ipairs(water.holes) do
+				if #hole >= 3 then
+					local holePts = {}
+					for _, p in ipairs(hole) do
+						table.insert(holePts, Vector3.new(p.x + originStuds.x, cy, p.z + originStuds.z))
+					end
+					paintPolygonScanline(terrain, holePts, cy, Enum.Material.LeafyGrass)
+				end
+			end
+		end
 	end
 end
 

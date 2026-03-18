@@ -170,8 +170,9 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 	local centerX = (minX + maxX) * 0.5
 	local centerZ = (minZ + maxZ) * 0.5
 
-	if roofShape == "gabled" then
+	if roofShape == "gabled" or roofShape == "gambrel" then
 		-- Ridge runs along the longer axis; panels tilt inward from both shorter edges.
+		-- gambrel approximated as gabled (two panels, similar silhouette)
 		local ridgeAxisIsZ = footprintL >= footprintW
 		local shortExtent  = ridgeAxisIsZ and footprintW or footprintL
 		local longExtent   = ridgeAxisIsZ and footprintL or footprintW
@@ -227,21 +228,98 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 		apex.Parent   = parent
 		return
 
-	elseif roofShape == "dome" then
+	elseif roofShape == "dome" or roofShape == "onion" then
+		local radius = math.min(footprintW, footprintL) * 0.5
 		local dome = Instance.new("Part")
 		dome.Name     = bldgName .. "_roof"
 		dome.Anchored = true
 		dome.Shape    = Enum.PartType.Ball
-		dome.Size     = Vector3.new(footprintW, footprintW * 0.5, footprintL)
-		dome.CFrame   = CFrame.new(centerX, baseY + height + footprintW * 0.25, centerZ)
+		dome.Size     = Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
+		dome.CFrame   = CFrame.new(centerX, baseY + height + radius * 0.5, centerZ)
 		dome.Material = mat
 		dome.Color    = color
 		dome.CastShadow = false
 		dome.Parent   = parent
 		return
+
+	elseif roofShape == "skillion" then
+		-- Single-slope wedge across the short axis
+		local rise = math.min(footprintW, footprintL) * 0.35
+		local ridgeAxisIsZ = footprintL >= footprintW
+		local wedge = Instance.new("WedgePart")
+		wedge.Name     = bldgName .. "_roof"
+		wedge.Anchored = true
+		wedge.CastShadow = false
+		wedge.Material = mat
+		wedge.Color    = color
+		if ridgeAxisIsZ then
+			wedge.Size = Vector3.new(footprintW, rise, footprintL)
+		else
+			wedge.Size = Vector3.new(footprintL, rise, footprintW)
+		end
+		wedge.CFrame = CFrame.new(centerX, baseY + height + rise * 0.5, centerZ)
+		wedge.Parent = parent
+		return
+
+	elseif roofShape == "mansard" then
+		-- Flat deck (Slate) + four parapet/slope strips along the perimeter
+		local slopeH = math.min(3.5, height * 0.35)
+		local insetX = math.max(1, footprintW * 0.65)
+		local insetZ = math.max(1, footprintL * 0.65)
+		-- Flat central deck
+		local deck = Instance.new("Part")
+		deck.Name     = bldgName .. "_roof"
+		deck.Anchored = true
+		deck.Size     = Vector3.new(insetX, 0.5, insetZ)
+		deck.CFrame   = CFrame.new(centerX, baseY + height + slopeH + 0.25, centerZ)
+		deck.Material = Enum.Material.Slate
+		deck.Color    = Color3.fromRGB(90, 90, 100)
+		deck.CastShadow = false
+		deck.Parent   = parent
+		-- Four sloped side strips
+		local strips = {
+			{ Vector3.new(footprintW, slopeH, (footprintL - insetZ) * 0.5), centerX, minZ + (footprintL - insetZ) * 0.25 },
+			{ Vector3.new(footprintW, slopeH, (footprintL - insetZ) * 0.5), centerX, maxZ - (footprintL - insetZ) * 0.25 },
+			{ Vector3.new((footprintW - insetX) * 0.5, slopeH, insetZ),     minX + (footprintW - insetX) * 0.25, centerZ },
+			{ Vector3.new((footprintW - insetX) * 0.5, slopeH, insetZ),     maxX - (footprintW - insetX) * 0.25, centerZ },
+		}
+		for k, s in ipairs(strips) do
+			if s[1].X > 0.1 and s[1].Z > 0.1 then
+				local strip = Instance.new("Part")
+				strip.Name = bldgName .. "_slope" .. k
+				strip.Anchored = true
+				strip.Size = s[1]
+				strip.CFrame = CFrame.new(s[2], baseY + height + slopeH * 0.5, s[3])
+				strip.Material = mat
+				strip.Color = color
+				strip.CastShadow = false
+				strip.Parent = parent
+			end
+		end
+		return
+
+	elseif roofShape == "cone" then
+		-- Conical roof: cylinder with cone SpecialMesh
+		local rise = math.min(footprintW, footprintL) * 0.6
+		local radius = math.min(footprintW, footprintL) * 0.5
+		local cone = Instance.new("Part")
+		cone.Name     = bldgName .. "_roof"
+		cone.Anchored = true
+		cone.Size     = Vector3.new(radius * 2, rise, radius * 2)
+		cone.CFrame   = CFrame.new(centerX, baseY + height + rise * 0.5, centerZ)
+		cone.Material = mat
+		cone.Color    = color
+		cone.CastShadow = false
+		local mesh = Instance.new("SpecialMesh", cone)
+		mesh.MeshType = Enum.MeshType.FileMesh
+		mesh.MeshId   = "rbxassetid://1078075"  -- Roblox cone mesh
+		mesh.Scale    = Vector3.new(radius * 0.2, rise * 0.1, radius * 0.2)
+		cone.Parent   = parent
+		return
+
 	end
 
-	-- Default / flat / skillion / mansard / gambrel → flat slab (thickness 0.8)
+	-- Default / flat → flat slab
 	local roof = Instance.new("Part")
 	roof.Name     = bldgName .. "_roof"
 	roof.Anchored = true

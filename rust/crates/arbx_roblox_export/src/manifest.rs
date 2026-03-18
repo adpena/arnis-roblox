@@ -100,6 +100,7 @@ pub struct WaterFeature {
     pub width_studs: Option<f32>,
     pub points: Option<Vec<Vec3>>,
     pub footprint: Option<Vec<GroundPoint>>,
+    pub holes: Vec<Vec<GroundPoint>>,
     pub indices: Option<Vec<usize>>,
 }
 

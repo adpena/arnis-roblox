@@ -59,6 +59,7 @@ pub struct WaterPolygonFeature {
     pub id: String,
     pub kind: String,
     pub footprint: Footprint,
+    pub holes: Vec<Footprint>,
     pub indices: Option<Vec<usize>>,
 }
 
@@ -436,7 +437,7 @@ impl SourceAdapter for OverpassAdapter {
                 if cx.abs() > world_half_x * 1.2 || cz.abs() > world_half_z * 1.2 {
                     continue; // centroid far outside world extent
                 }
-                emit_area_way(el.id, tags, fp, &mut features);
+                emit_area_way(el.id, tags, fp, vec![], &mut features);
             } else {
                 // Linear feature — use clipped Vec3 points
                 let Some(way_nodes) = &el.nodes else { continue };
@@ -474,7 +475,23 @@ impl SourceAdapter for OverpassAdapter {
             let Some(footprint) = outer_rings.into_iter().max_by_key(|r| r.len()) else { continue };
             if footprint.len() < 3 { continue; }
 
-            emit_area_way(el.id, tags, &footprint, &mut features);
+            // Collect inner member way point sequences (islands/holes)
+            let mut inner_rings: Vec<Vec<Vec2>> = el.members.iter()
+                .filter(|m| m.kind == "way" && m.role == "inner")
+                .filter_map(|m| way_points.get(&m.ref_id).cloned())
+                .collect();
+
+            if !inner_rings.is_empty() {
+                merge_rings(&mut inner_rings);
+            }
+
+            let holes: Vec<Footprint> = inner_rings
+                .into_iter()
+                .filter(|r| r.len() >= 3)
+                .map(|r| Footprint::new(r))
+                .collect();
+
+            emit_area_way(el.id, tags, &footprint, holes, &mut features);
         }
 
         // Parse node elements for trees and similar point features
@@ -556,7 +573,7 @@ fn road_width_from_kind(kind: &str) -> f32 {
 
 /// Emit a polygon area feature (building, landuse, water, leisure, amenity, natural).
 /// Footprint points must already be >= 3; caller is responsible for that invariant.
-fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], features: &mut Vec<Feature>) {
+fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Vec<Footprint>, features: &mut Vec<Feature>) {
     if tags.contains_key("building") || tags.contains_key("building:part") {
         let levels = tags.get("building:levels").and_then(|l| l.parse::<u32>().ok());
         let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
@@ -588,6 +605,7 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], features:
             id: format!("osm_{}", id),
             kind: "lake".to_string(),
             footprint: Footprint::new(fp.to_vec()),
+            holes,
             indices: None,
         })));
     } else if let Some(landuse) = tags.get("landuse") {
