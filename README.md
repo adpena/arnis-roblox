@@ -70,6 +70,35 @@ python scripts/run_all_checks.py
 - enable the bootstrap script after reviewing it, or
 - use Studio MCP to require `ImportService` and call `ImportManifest()` directly.
 
+## Austin quickstart
+
+If you want the easiest current path to open Austin in Studio:
+
+1. Regenerate the Austin manifest so it includes the latest exporter/runtime fixes:
+
+```bash
+bash scripts/export_austin_to_lua.sh
+```
+
+2. Start Rojo from the Roblox project directory:
+
+```bash
+cd roblox
+rojo serve
+```
+
+3. In Roblox Studio:
+   - create a new empty place
+   - connect the Rojo plugin to `roblox/default.project.json`
+   - make sure **Game Settings → Streaming** is disabled
+
+4. Press Play. `BootstrapAustin.server.lua` imports the checked-in Austin manifest automatically.
+
+Notes:
+
+- The Austin world currently loads from `roblox/src/ServerStorage/SampleData/AustinManifest.lua`.
+- Streaming should stay off for now because roads are painted into `Workspace.Terrain` and can disappear when Roblox streaming is enabled.
+
 ## Hard guardrails
 
 - Do **not** fetch live OSM/Overpass/elevation data from Roblox runtime scripts.
