@@ -303,8 +303,7 @@ function ImportService.ImportManifest(manifest, options)
         totalInstances = finalInstanceCount,
     })
 
-    -- PERFORMANCE: Trim old sessions to prevent memory leak
-    Profiler.trim(500)
+    -- sessions are auto-trimmed inside Profiler (MAX_SESSIONS cap)
 
     Logger.info(
         "Imported manifest",
