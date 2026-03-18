@@ -182,6 +182,18 @@ function ChunkSchema.validateManifest(manifest)
                 validatePoint2(point, ("%s.landuse[].footprint[%d]"):format(prefix, pointIndex))
             end
         end
+
+        -- barriers is optional; validate present entries
+        chunk.barriers = chunk.barriers or {}
+        for _, barrier in ipairs(chunk.barriers) do
+            assertType(barrier.id, "string", prefix .. ".barriers[].id must be a string")
+            assertType(barrier.kind, "string", prefix .. ".barriers[].kind must be a string")
+            assertType(barrier.points, "table", prefix .. ".barriers[].points must be a table")
+            assert(#barrier.points >= 2, prefix .. ".barriers[].points must contain at least two points")
+            for pointIndex, point in ipairs(barrier.points) do
+                validatePoint3(point, ("%s.barriers[].points[%d]"):format(prefix, pointIndex))
+            end
+        end
     end
 
     return manifest

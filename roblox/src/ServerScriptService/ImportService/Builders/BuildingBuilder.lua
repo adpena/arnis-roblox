@@ -129,7 +129,109 @@ local function getBuildingHeight(building)
 	end
 end
 
--- Build a single building as polygon wall Parts + flat roof
+-- Build roof geometry based on building.roof shape.
+-- footprint: array of world-space Vector3 points (worldPts)
+local function buildRoof(building, footprint, baseY, height, color, mat, parent)
+	local bldgName = building.id or "Building"
+	local roofShape = (building.roof or "flat"):lower()
+
+	-- Compute bounding box
+	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+	for _, p in ipairs(footprint) do
+		if p.X < minX then minX = p.X end
+		if p.Z < minZ then minZ = p.Z end
+		if p.X > maxX then maxX = p.X end
+		if p.Z > maxZ then maxZ = p.Z end
+	end
+	local footprintW = math.max(1, maxX - minX)
+	local footprintL = math.max(1, maxZ - minZ)
+	local centerX = (minX + maxX) * 0.5
+	local centerZ = (minZ + maxZ) * 0.5
+
+	if roofShape == "gabled" then
+		-- Ridge runs along the longer axis; panels tilt inward from both shorter edges.
+		local ridgeAxisIsZ = footprintL >= footprintW
+		local shortExtent  = ridgeAxisIsZ and footprintW or footprintL
+		local longExtent   = ridgeAxisIsZ and footprintL or footprintW
+		local halfWidth    = shortExtent * 0.5
+		local rise         = shortExtent * 0.3
+		local angle        = math.atan(rise / halfWidth)
+		local panelW       = halfWidth / math.cos(angle)
+		local cy           = baseY + height + rise * 0.5
+
+		local p1 = Instance.new("Part")
+		p1.Name     = bldgName .. "_roof_p1"
+		p1.Anchored = true
+		p1.CastShadow = true
+		p1.Material = mat
+		p1.Color    = color
+
+		local p2 = Instance.new("Part")
+		p2.Name     = bldgName .. "_roof_p2"
+		p2.Anchored = true
+		p2.CastShadow = true
+		p2.Material = mat
+		p2.Color    = color
+
+		if ridgeAxisIsZ then
+			-- Panels tilt around Z axis: left half (+angle), right half (-angle)
+			p1.Size   = Vector3.new(panelW, 0.8, longExtent)
+			p1.CFrame = CFrame.new(centerX - halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, angle)
+			p2.Size   = Vector3.new(panelW, 0.8, longExtent)
+			p2.CFrame = CFrame.new(centerX + halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, -angle)
+		else
+			-- Panels tilt around X axis: front half (-angle), back half (+angle)
+			p1.Size   = Vector3.new(longExtent, 0.8, panelW)
+			p1.CFrame = CFrame.new(centerX, cy, centerZ - halfWidth * 0.5) * CFrame.Angles(-angle, 0, 0)
+			p2.Size   = Vector3.new(longExtent, 0.8, panelW)
+			p2.CFrame = CFrame.new(centerX, cy, centerZ + halfWidth * 0.5) * CFrame.Angles(angle, 0, 0)
+		end
+		p1.Parent = parent
+		p2.Parent = parent
+		return
+
+	elseif roofShape == "pyramidal" or roofShape == "hipped" then
+		local rise = math.min(footprintW, footprintL) * 0.3
+		local apex = Instance.new("Part")
+		apex.Name     = bldgName .. "_roof"
+		apex.Anchored = true
+		apex.Size     = Vector3.new(footprintW, rise * 2, footprintL)
+		local mesh = Instance.new("SpecialMesh", apex)
+		mesh.MeshType = Enum.MeshType.Wedge
+		apex.CFrame   = CFrame.new(centerX, baseY + height + rise, centerZ)
+		apex.Material = mat
+		apex.Color    = color
+		apex.CastShadow = true
+		apex.Parent   = parent
+		return
+
+	elseif roofShape == "dome" then
+		local dome = Instance.new("Part")
+		dome.Name     = bldgName .. "_roof"
+		dome.Anchored = true
+		dome.Shape    = Enum.PartType.Ball
+		dome.Size     = Vector3.new(footprintW, footprintW * 0.5, footprintL)
+		dome.CFrame   = CFrame.new(centerX, baseY + height + footprintW * 0.25, centerZ)
+		dome.Material = mat
+		dome.Color    = color
+		dome.CastShadow = true
+		dome.Parent   = parent
+		return
+	end
+
+	-- Default / flat / skillion / mansard / gambrel → flat slab (thickness 0.8)
+	local roof = Instance.new("Part")
+	roof.Name     = bldgName .. "_roof"
+	roof.Anchored = true
+	roof.Size     = Vector3.new(footprintW, 0.8, footprintL)
+	roof.CFrame   = CFrame.new(centerX, baseY + height + 0.4, centerZ)
+	roof.Material = mat
+	roof.Color    = color
+	roof.CastShadow = true
+	roof.Parent   = parent
+end
+
+-- Build a single building as polygon wall Parts + roof
 function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 	local fp = building.footprint
 	if not fp or #fp < 2 then return end
@@ -204,29 +306,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 	end
 	fillInterior(footprintRelative, baseY, interiorMaterial, model)
 
-	-- Flat roof Part (bounding box, top of building)
-	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
-	for _, p in ipairs(worldPts) do
-		if p.X < minX then minX = p.X end
-		if p.Z < minZ then minZ = p.Z end
-		if p.X > maxX then maxX = p.X end
-		if p.Z > maxZ then maxZ = p.Z end
-	end
-	local roofSX = math.max(1, maxX - minX)
-	local roofSZ = math.max(1, maxZ - minZ)
-	local roof = Instance.new("Part")
-	roof.Name = bldgName .. "_roof"
-	roof.Anchored = true
-	roof.Size = Vector3.new(roofSX, 0.4, roofSZ)
-	roof.CFrame = CFrame.new(
-		(minX + maxX) * 0.5,
-		baseY + height + 0.2,
-		(minZ + maxZ) * 0.5
-	)
-	roof.Material = mat
-	roof.Color = color
-	roof.CastShadow = true
-	roof.Parent = model
+	buildRoof(building, worldPts, baseY, height, color, mat, model)
 end
 
 -- PartBuild is the same as FallbackBuild (polygon walls)

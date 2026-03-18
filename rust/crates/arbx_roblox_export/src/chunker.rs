@@ -41,6 +41,33 @@ pub fn chunk_origin(
     Vec3::new(x, y_studs as f32, z)
 }
 
+fn parse_css_color(s: &str) -> Option<crate::manifest::Color> {
+    use crate::manifest::Color;
+    if s.starts_with('#') && s.len() == 7 {
+        let r = u8::from_str_radix(&s[1..3], 16).ok()?;
+        let g = u8::from_str_radix(&s[3..5], 16).ok()?;
+        let b = u8::from_str_radix(&s[5..7], 16).ok()?;
+        return Some(Color { r, g, b });
+    }
+    match s {
+        "white"       => Some(Color { r: 255, g: 255, b: 255 }),
+        "black"       => Some(Color { r: 30,  g: 30,  b: 30  }),
+        "gray"|"grey" => Some(Color { r: 128, g: 128, b: 128 }),
+        "red"         => Some(Color { r: 180, g: 50,  b: 50  }),
+        "brown"       => Some(Color { r: 139, g: 90,  b: 43  }),
+        "beige"       => Some(Color { r: 245, g: 245, b: 220 }),
+        "yellow"      => Some(Color { r: 255, g: 220, b: 50  }),
+        "blue"        => Some(Color { r: 50,  g: 100, b: 200 }),
+        "green"       => Some(Color { r: 50,  g: 140, b: 50  }),
+        "orange"      => Some(Color { r: 230, g: 120, b: 30  }),
+        "pink"        => Some(Color { r: 255, g: 180, b: 180 }),
+        "tan"         => Some(Color { r: 210, g: 180, b: 140 }),
+        "silver"      => Some(Color { r: 192, g: 192, b: 192 }),
+        "gold"        => Some(Color { r: 212, g: 175, b: 55  }),
+        _             => None,
+    }
+}
+
 fn landuse_material(kind: &str) -> String {
     match kind {
         "park" | "garden" | "recreation_ground" | "village_green" | "leisure" => "Grass",
@@ -295,11 +322,31 @@ impl Chunker {
                 } else {
                     material
                 };
-                let color = style.get_building_color(&f.roof);
-                let color = if color.is_none() {
-                    style.get_building_color("default")
+                let color = if let Some(css) = f.colour.as_deref().and_then(parse_css_color) {
+                    Some(css)
                 } else {
-                    color
+                    let c = style.get_building_color(&f.roof);
+                    if c.is_none() {
+                        style.get_building_color("default")
+                    } else {
+                        c
+                    }
+                };
+                let material_override = f.material_tag.as_deref().map(|m| match m {
+                    "brick"                               => "Brick",
+                    "concrete"                            => "Concrete",
+                    "glass"                               => "Glass",
+                    "metal" | "steel"                     => "Metal",
+                    "wood"                                => "WoodPlanks",
+                    "stone" | "granite" | "limestone"     => "Limestone",
+                    "sandstone"                           => "Sandstone",
+                    "marble"                              => "Marble",
+                    _                                     => "Concrete",
+                });
+                let material = if color.is_none() {
+                    material_override.map(|s| s.to_string()).unwrap_or(material)
+                } else {
+                    material
                 };
 
                 // Assign a procedural facade style if it's a default building

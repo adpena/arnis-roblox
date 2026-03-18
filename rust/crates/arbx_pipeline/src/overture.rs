@@ -114,6 +114,8 @@ pub fn load_overture_buildings(
             min_height: None,
             usage: Some(usage.to_string()),
             roof: "flat".to_string(),
+            colour: None,
+            material_tag: None,
         }));
     }
 

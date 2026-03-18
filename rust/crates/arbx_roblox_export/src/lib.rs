@@ -175,6 +175,8 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                     min_height: None,
                     usage: None,
                     roof: bldg.roof,
+                    colour: None,
+                    material_tag: None,
                 }),
                 &config.style,
                 &elevation,
@@ -390,6 +392,8 @@ mod tests {
             min_height: None,
             usage: None,
             roof: "flat".to_string(),
+            colour: None,
+            material_tag: None,
         })];
 
         let elevation = PerlinElevationProvider::default();

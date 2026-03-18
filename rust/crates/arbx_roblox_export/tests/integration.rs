@@ -91,6 +91,8 @@ fn multi_chunk_export_correct() {
             roof_levels: Some(1),
             min_height: None,
             usage: None,
+            colour: None,
+            material_tag: None,
         }),
         Feature::Building(arbx_pipeline::BuildingFeature {
             id: "b2".to_string(),
@@ -109,6 +111,8 @@ fn multi_chunk_export_correct() {
             roof_levels: Some(1),
             min_height: None,
             usage: None,
+            colour: None,
+            material_tag: None,
         }),
     ];
 

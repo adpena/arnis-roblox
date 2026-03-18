@@ -53,19 +53,22 @@ def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
     # Extract: highways, buildings, water, landuse, and POI-like features
     # You can tune this later without changing the Rust side.
     return f"""
-    [out:json][timeout:120];
+    [out:json][timeout:180];
     (
       way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["building:part"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["waterway"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["landuse"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["tourism"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["historic"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["man_made"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["barrier"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["power"]({min_lat},{min_lon},{max_lat},{max_lon});
-      way["aeroway"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["building"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["building:part"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["waterway"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["landuse"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["leisure"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["natural"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["amenity"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["tourism"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["historic"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["man_made"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["barrier"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["power"]({min_lat},{min_lon},{max_lat},{max_lon});
+      nwr["aeroway"]({min_lat},{min_lon},{max_lat},{max_lon});
     );
     (._;>;);
     out body;

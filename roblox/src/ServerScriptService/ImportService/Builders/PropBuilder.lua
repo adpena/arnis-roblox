@@ -107,6 +107,48 @@ local function getOrCreatePool(kind)
 	return pools[kind]
 end
 
+local function buildStreetLamp(x, y, z, parent)
+	local model = Instance.new("Model", parent)
+	model.Name = "StreetLamp"
+
+	-- Pole
+	local pole = Instance.new("Part", model)
+	pole.Name = "Pole"
+	pole.Anchored = true
+	pole.Size = Vector3.new(0.3, 10, 0.3)
+	pole.CFrame = CFrame.new(x, y + 5, z)
+	pole.Material = Enum.Material.Metal
+	pole.Color = Color3.fromRGB(80, 80, 80)
+	pole.CastShadow = false
+
+	-- Arm
+	local arm = Instance.new("Part", model)
+	arm.Name = "Arm"
+	arm.Anchored = true
+	arm.Size = Vector3.new(1.5, 0.2, 0.2)
+	arm.CFrame = CFrame.new(x + 0.75, y + 9.8, z)
+	arm.Material = Enum.Material.Metal
+	arm.Color = Color3.fromRGB(80, 80, 80)
+	arm.CastShadow = false
+
+	-- Light head
+	local head = Instance.new("Part", model)
+	head.Name = "LightHead"
+	head.Anchored = true
+	head.Size = Vector3.new(0.8, 0.4, 0.8)
+	head.CFrame = CFrame.new(x + 1.5, y + 9.6, z)
+	head.Material = Enum.Material.Neon
+	head.Color = Color3.fromRGB(255, 240, 200)
+	head.CastShadow = false
+
+	-- Point light
+	local light = Instance.new("PointLight", head)
+	light.Brightness = 3
+	light.Range = 30
+	light.Color = Color3.fromRGB(255, 240, 200)
+	light.Shadows = true
+end
+
 -- Builds a simple procedural tree model (trunk + canopy)
 local function buildTree(parent, prop, originStuds)
 	-- Seed RNG for deterministic output
@@ -158,6 +200,13 @@ end
 function PropBuilder.Build(parent, prop, originStuds)
 	if prop.kind == "tree" then
 		return buildTree(parent, prop, originStuds)
+	end
+
+	if prop.kind == "street_lamp" or prop.kind == "amenity_street_lamp" then
+		local wx = prop.position.x + originStuds.x
+		local wy = prop.position.y + originStuds.y
+		local wz = prop.position.z + originStuds.z
+		return buildStreetLamp(wx, wy, wz, parent)
 	end
 
 	local pool = getOrCreatePool(prop.kind)

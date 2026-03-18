@@ -63,6 +63,31 @@ local ROAD_MATERIAL = {
 
 local ROAD_THICKNESS = 1  -- studs; road fills 0.5 studs into terrain + 0.5 above
 
+-- Returns road width in studs: lanes take priority, then explicit widthStuds, then kind defaults.
+local function getRoadWidth(road)
+	if road.lanes and road.lanes > 0 then
+		return road.lanes * 4 + 4
+	end
+	if road.widthStuds and road.widthStuds > 0 then
+		return road.widthStuds
+	end
+	local KIND_WIDTH = {
+		motorway = 24, trunk = 20, primary = 16, secondary = 12,
+		tertiary = 10, residential = 8, service = 6,
+		footway = 3, cycleway = 3, path = 2, track = 4,
+		living_street = 7, unclassified = 8,
+	}
+	return KIND_WIDTH[road.kind] or 8
+end
+
+-- Highway kinds that receive sidewalk kerb strips
+local SIDEWALK_KINDS = {
+	primary   = true,
+	secondary = true,
+	tertiary  = true,
+	residential = true,
+}
+
 local function getMaterial(road)
 	-- 1. OSM surface tag takes priority (most specific physical description)
 	if road.surface then
@@ -86,7 +111,7 @@ end
 -- This mirrors Arnis / Minecraft: each road segment overwrites the terrain at its
 -- footprint with road material, so intersections are seamless — no z-fighting,
 -- no gaps at chunk edges, no floating parts.
-local function paintSegment(terrain, p1, p2, width, material)
+local function paintSegment(terrain, p1, p2, width, material, kind)
 	local delta  = p2 - p1
 	local length = delta.Magnitude
 	if length < 0.01 then return end
@@ -103,6 +128,19 @@ local function paintSegment(terrain, p1, p2, width, material)
 	-- FillBlock honours the rotation → oriented slab aligned with the road.
 	local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
 	terrain:FillBlock(cf, Vector3.new(width, ROAD_THICKNESS, length), material)
+
+	-- Sidewalk kerbs alongside wide enough roads of appropriate types
+	if width >= 8 and SIDEWALK_KINDS[kind] then
+		local sidewalkW = 3
+		local kerbH = 0.5
+		local kerbOffset = (width / 2) + (sidewalkW / 2)
+		-- Left kerb
+		local cfL = cf * CFrame.new(-kerbOffset, kerbH / 2, 0)
+		terrain:FillBlock(cfL, Vector3.new(sidewalkW, kerbH, length), Enum.Material.Pavement)
+		-- Right kerb
+		local cfR = cf * CFrame.new(kerbOffset, kerbH / 2, 0)
+		terrain:FillBlock(cfR, Vector3.new(sidewalkW, kerbH, length), Enum.Material.Pavement)
+	end
 end
 
 -- Build ALL roads in a chunk by painting them into the terrain.
@@ -121,12 +159,12 @@ end
 function RoadBuilder.FallbackBuild(_parent, road, originStuds)
 	local terrain  = Workspace.Terrain
 	local material = getMaterial(road)
-	local width    = road.widthStuds or 10
+	local width    = getRoadWidth(road)
 
 	for i = 1, #road.points - 1 do
 		local p1 = offsetPoint(road.points[i],     originStuds)
 		local p2 = offsetPoint(road.points[i + 1], originStuds)
-		paintSegment(terrain, p1, p2, width, material)
+		paintSegment(terrain, p1, p2, width, material, road.kind)
 	end
 end
 

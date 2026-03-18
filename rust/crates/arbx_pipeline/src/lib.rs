@@ -42,6 +42,8 @@ pub struct BuildingFeature {
     pub min_height: Option<f32>,
     pub usage: Option<String>,
     pub roof: String,
+    pub colour: Option<String>,
+    pub material_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -257,6 +259,8 @@ impl SourceAdapter for SyntheticAustinAdapter {
             min_height: None,
             usage: Some("government".to_string()),
             roof: "dome".to_string(),
+            colour: None,
+            material_tag: None,
         }));
 
         // Add a landuse polygon (park)
@@ -413,6 +417,13 @@ impl SourceAdapter for OverpassAdapter {
                             .get("roof:shape")
                             .cloned()
                             .unwrap_or_else(|| "flat".to_string()),
+                        colour: tags
+                            .get("building:colour")
+                            .or_else(|| tags.get("building:color"))
+                            .map(|s| s.trim().to_lowercase()),
+                        material_tag: tags
+                            .get("building:material")
+                            .map(|s| s.to_lowercase()),
                     }));
                 } else if let Some(highway) = tags.get("highway") {
                     let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
@@ -481,12 +492,53 @@ impl SourceAdapter for OverpassAdapter {
                         kind: landuse.clone(),
                         footprint: Footprint::new(footprint_points),
                     }));
-                } else if let Some(natural) = tags.get("natural") {
+                } else if let Some(leisure) = tags.get("leisure") {
+                    let kind = match leisure.as_str() {
+                        "park" | "garden" | "playground" => "park",
+                        "pitch" | "sports_centre" | "stadium" => "pitch",
+                        "golf_course" => "golf_course",
+                        "swimming_pool" => "water",
+                        "nature_reserve" | "dog_park" => "park",
+                        _ => "park",
+                    };
                     let footprint_points: Vec<Vec2> =
                         points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
                     features.push(Feature::Landuse(LanduseFeature {
                         id: format!("osm_{}", el.id),
-                        kind: natural.clone(),
+                        kind: kind.to_string(),
+                        footprint: Footprint::new(footprint_points),
+                    }));
+                } else if let Some(amenity) = tags.get("amenity") {
+                    let kind = match amenity.as_str() {
+                        "parking" | "parking_space" => "parking",
+                        "school" | "university" | "college" => "school",
+                        "hospital" | "clinic" => "hospital",
+                        "place_of_worship" => "religious",
+                        "marketplace" => "retail",
+                        _ => continue,
+                    };
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
+                    features.push(Feature::Landuse(LanduseFeature {
+                        id: format!("osm_{}", el.id),
+                        kind: kind.to_string(),
+                        footprint: Footprint::new(footprint_points),
+                    }));
+                } else if let Some(natural) = tags.get("natural") {
+                    let kind = match natural.as_str() {
+                        "wood" | "tree_row" => "forest",
+                        "scrub" | "heath" => "scrub",
+                        "grassland" | "meadow" => "grass",
+                        "sand" | "beach" => "beach",
+                        "wetland" => "wetland",
+                        "water" => "water",
+                        _ => continue,
+                    };
+                    let footprint_points: Vec<Vec2> =
+                        points.iter().map(|p| Vec2::new(p.x, p.z)).collect();
+                    features.push(Feature::Landuse(LanduseFeature {
+                        id: format!("osm_{}", el.id),
+                        kind: kind.to_string(),
                         footprint: Footprint::new(footprint_points),
                     }));
                 }
@@ -614,6 +666,8 @@ mod tests {
                 min_height: None,
                 usage: None,
                 roof: "flat".to_string(),
+                colour: None,
+                material_tag: None,
             })])
         }
     }

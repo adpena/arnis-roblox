@@ -21,14 +21,14 @@ mkdir -p "$DATA_DIR" "$OUT_DIR"
 
 echo "[export_austin_from_osm] Fetching OSM data via Overpass..."
 python3 "$ROOT_DIR/scripts/fetch_osm_overpass.py" \
-  --bbox "30.26,-97.75,30.27,-97.74" \
+  --bbox "30.245,-97.765,30.305,-97.715" \
   --out "$DATA_DIR/austin_overpass.json"
 
 echo "[export_austin_from_osm] Running full pipeline + exporter..."
 cd "$RUST_DIR"
 cargo run -p arbx_cli -- compile \
   --source "data/austin_overpass.json" \
-  --bbox "30.26,-97.75,30.27,-97.74" \
+  --bbox "30.245,-97.765,30.305,-97.715" \
   --out "out/austin-manifest.json"
 
 echo "[export_austin_from_osm] Done. Manifest written to rust/out/austin-manifest.json"

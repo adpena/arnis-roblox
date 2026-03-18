@@ -15,6 +15,7 @@ local WaterBuilder = require(script.Builders.WaterBuilder)
 local PropBuilder = require(script.Builders.PropBuilder)
 local RoomBuilder = require(script.Builders.RoomBuilder)
 local LanduseBuilder = require(script.Builders.LanduseBuilder)
+local BarrierBuilder = require(script.Builders.BarrierBuilder)
 
 local ImportService = {}
 
@@ -140,6 +141,15 @@ function ImportService.ImportChunk(chunk, options)
         for _, child in ipairs(landuseFolder:GetChildren()) do child:Destroy() end
     end
 
+    local barriersFolder = chunkFolder:FindFirstChild("Barriers")
+    if not barriersFolder then
+        barriersFolder = Instance.new("Folder")
+        barriersFolder.Name = "Barriers"
+        barriersFolder.Parent = chunkFolder
+    else
+        for _, child in ipairs(barriersFolder:GetChildren()) do child:Destroy() end
+    end
+
     if chunk.terrain and config.TerrainMode ~= "none" then
         local p = Profiler.begin("BuildTerrain")
         TerrainBuilder.Build(terrainFolder, chunk)
@@ -168,6 +178,10 @@ function ImportService.ImportChunk(chunk, options)
         end
         Profiler.finish(pRoads)
     end
+
+    local pBarriers = Profiler.begin("BuildBarriers")
+    BarrierBuilder.BuildAll(chunk, barriersFolder)
+    Profiler.finish(pBarriers)
 
     if config.BuildingMode ~= "none" then
         local pBldgs = Profiler.begin("BuildBuildings")
@@ -251,6 +265,7 @@ function ImportService.ImportManifest(manifest, options)
         waterImported = 0,
         propsImported = 0,
         landuseImported = 0,
+        barriersImported = 0,
     }
 
     for _, chunk in ipairs(validated.chunks) do
@@ -265,6 +280,7 @@ function ImportService.ImportManifest(manifest, options)
         stats.waterImported += #(chunk.water or {})
         stats.propsImported += #(chunk.props or {})
         stats.landuseImported += #(chunk.landuse or {})
+        stats.barriersImported += #(chunk.barriers or {})
     end
 
     local finalInstanceCount = #worldRoot:GetDescendants()
@@ -285,6 +301,7 @@ function ImportService.ImportManifest(manifest, options)
         "rails=" .. stats.railsImported,
         "buildings=" .. stats.buildingsImported,
         "landuse=" .. stats.landuseImported,
+        "barriers=" .. stats.barriersImported,
         "instances=" .. finalInstanceCount
     )
 

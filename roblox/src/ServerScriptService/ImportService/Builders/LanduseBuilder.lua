@@ -95,9 +95,29 @@ local function getMaterial(kind, materialName)
 	return KIND_MATERIAL[kind] or Enum.Material.Ground
 end
 
+-- Scatter park benches at pseudo-random but deterministic positions.
+local function placeParkFurniture(cx, cz, sizeX, sizeZ, parent)
+	local area = sizeX * sizeZ
+	local count = math.min(8, math.floor(area / 400))
+	if count <= 0 then return end
+	math.randomseed(math.floor(cx * 1000 + cz))
+	for _ = 1, count do
+		local bx = cx + (math.random() - 0.5) * sizeX * 0.7
+		local bz = cz + (math.random() - 0.5) * sizeZ * 0.7
+		local bench = Instance.new("Part", parent)
+		bench.Name = "ParkBench"
+		bench.Anchored = true
+		bench.Size = Vector3.new(3, 0.3, 0.6)
+		bench.CFrame = CFrame.new(bx, 0.15, bz) * CFrame.Angles(0, math.random() * math.pi, 0)
+		bench.Material = Enum.Material.WoodPlanks
+		bench.Color = Color3.fromRGB(139, 90, 43)
+		bench.CastShadow = true
+	end
+end
+
 -- Fills the AABB of a landuse polygon with the appropriate terrain material.
 -- Uses a thin fill at the terrain surface level.
-function LanduseBuilder.BuildOne(landuse, originStuds)
+function LanduseBuilder.BuildOne(landuse, originStuds, parent)
 	if not landuse.footprint or #landuse.footprint < 3 then return end
 
 	local terrain = Workspace.Terrain
@@ -124,12 +144,19 @@ function LanduseBuilder.BuildOne(landuse, originStuds)
 		(minZ + maxZ) * 0.5
 	)
 	terrain:FillBlock(cf, Vector3.new(sizeX, FILL_DEPTH, sizeZ), mat)
+
+	-- Scatter benches in park zones
+	if landuse.kind == "park" then
+		local cx = (minX + maxX) * 0.5
+		local cz = (minZ + maxZ) * 0.5
+		placeParkFurniture(cx, cz, sizeX, sizeZ, parent or Workspace)
+	end
 end
 
-function LanduseBuilder.BuildAll(landuseList, originStuds)
+function LanduseBuilder.BuildAll(landuseList, originStuds, parent)
 	if not landuseList or #landuseList == 0 then return end
 	for _, landuse in ipairs(landuseList) do
-		LanduseBuilder.BuildOne(landuse, originStuds)
+		LanduseBuilder.BuildOne(landuse, originStuds, parent)
 	end
 end
 

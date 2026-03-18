@@ -454,7 +454,7 @@ impl BuildingShell {
 
         if let Some(h) = self.height_m {
             out.push_str(",\n");
-            write_key(out, indent + 2, "heightM");
+            write_key(out, indent + 2, "height_m");
             write_number(out, h);
         }
 
