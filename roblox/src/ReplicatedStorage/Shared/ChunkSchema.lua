@@ -198,7 +198,6 @@ function ChunkSchema.validateManifest(manifest)
             end
         end
         chunk.barriers = validBarriers
-        end
     end
 
     return manifest
