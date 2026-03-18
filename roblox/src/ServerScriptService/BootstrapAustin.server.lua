@@ -16,9 +16,8 @@ local RunAustin = require(script.Parent.ImportService.RunAustin)
 
 print("[BootstrapAustin] Starting Austin, TX import...")
 
--- Note: StreamingEnabled must be set in Studio Game Settings > Streaming
--- (cannot be set from a server script — requires Plugin capability)
-Workspace.Terrain.SmoothingEnabled = true
+-- Note: StreamingEnabled and Terrain.SmoothingEnabled must be configured
+-- in Studio settings (File > Game Settings > Streaming) — not scriptable.
 
 RunAustin.run()
 print("[BootstrapAustin] Done.")
