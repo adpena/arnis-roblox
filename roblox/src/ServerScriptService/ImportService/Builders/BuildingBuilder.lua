@@ -184,14 +184,14 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 		local p1 = Instance.new("Part")
 		p1.Name     = bldgName .. "_roof_p1"
 		p1.Anchored = true
-		p1.CastShadow = true
+		p1.CastShadow = false
 		p1.Material = mat
 		p1.Color    = color
 
 		local p2 = Instance.new("Part")
 		p2.Name     = bldgName .. "_roof_p2"
 		p2.Anchored = true
-		p2.CastShadow = true
+		p2.CastShadow = false
 		p2.Material = mat
 		p2.Color    = color
 
@@ -223,7 +223,7 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 		apex.CFrame   = CFrame.new(centerX, baseY + height + rise, centerZ)
 		apex.Material = mat
 		apex.Color    = color
-		apex.CastShadow = true
+		apex.CastShadow = false
 		apex.Parent   = parent
 		return
 
@@ -236,7 +236,7 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 		dome.CFrame   = CFrame.new(centerX, baseY + height + footprintW * 0.25, centerZ)
 		dome.Material = mat
 		dome.Color    = color
-		dome.CastShadow = true
+		dome.CastShadow = false
 		dome.Parent   = parent
 		return
 	end
@@ -249,7 +249,7 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
 	roof.CFrame   = CFrame.new(centerX, baseY + height + 0.4, centerZ)
 	roof.Material = mat
 	roof.Color    = color
-	roof.CastShadow = true
+	roof.CastShadow = false
 	roof.Parent   = parent
 end
 
@@ -281,7 +281,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		))
 	end
 
-	-- One wall Part per edge
+	-- One wall Part per edge, plus corner posts at each vertex to eliminate gaps
 	local n = #worldPts
 	for i = 1, n do
 		local p1 = worldPts[i]
@@ -298,15 +298,29 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		local wall = Instance.new("Part")
 		wall.Name = bldgName .. "_wall" .. i
 		wall.Anchored = true
-		wall.Size = Vector3.new(edgeLen, height, WALL_THICKNESS)
+		-- Extend wall by WALL_THICKNESS on each end so it overlaps corner posts
+		wall.Size = Vector3.new(edgeLen + WALL_THICKNESS, height, WALL_THICKNESS)
 		wall.CFrame = CFrame.lookAt(
 			Vector3.new(midX, midY, midZ),
 			Vector3.new(p2.X, midY, p2.Z)
 		)
 		wall.Material = mat
 		wall.Color = color
-		wall.CastShadow = true
+		wall.CastShadow = false
+		wall.CollisionFidelity = Enum.CollisionFidelity.Box
 		wall.Parent = model
+
+		-- Corner post at p1 vertex to seal the joint between this wall and the previous
+		local post = Instance.new("Part")
+		post.Name = bldgName .. "_corner" .. i
+		post.Anchored = true
+		post.Size = Vector3.new(WALL_THICKNESS, height, WALL_THICKNESS)
+		post.CFrame = CFrame.new(p1.X, midY, p1.Z)
+		post.Material = mat
+		post.Color = color
+		post.CastShadow = false
+		post.CollisionFidelity = Enum.CollisionFidelity.Box
+		post.Parent = model
 	end
 
 	-- Fill interior with terrain (uses terrain-safe floor materials only)

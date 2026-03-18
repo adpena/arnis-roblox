@@ -62,6 +62,7 @@ local ROAD_MATERIAL = {
 }
 
 local ROAD_THICKNESS = 1  -- studs; road fills 0.5 studs into terrain + 0.5 above
+local BRIDGE_THRESHOLD = 3  -- studs above ground to consider a road elevated (bridge)
 
 -- Returns road width in studs: lanes take priority, then explicit widthStuds, then kind defaults.
 local function getRoadWidth(road)
@@ -107,10 +108,7 @@ local function offsetPoint(point, origin)
 	return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
 end
 
--- Paint one road segment into terrain using FillBlock.
--- This mirrors Arnis / Minecraft: each road segment overwrites the terrain at its
--- footprint with road material, so intersections are seamless — no z-fighting,
--- no gaps at chunk edges, no floating parts.
+-- Paint one road segment into terrain using FillBlock (ground-level roads).
 local function paintSegment(terrain, p1, p2, width, material, kind)
 	local delta  = p2 - p1
 	local length = delta.Magnitude
@@ -143,10 +141,86 @@ local function paintSegment(terrain, p1, p2, width, material, kind)
 	end
 end
 
+-- Build an elevated bridge/tunnel segment as a Part slab (not terrain).
+-- Bridges use a concrete deck Part; tunnels are skipped (underground).
+local function paintBridgeSegment(parent, p1, p2, width, material)
+	local delta  = p2 - p1
+	local length = delta.Magnitude
+	if length < 0.01 then return end
+
+	local midX = (p1.X + p2.X) * 0.5
+	local midZ = (p1.Z + p2.Z) * 0.5
+	local midY = (p1.Y + p2.Y) * 0.5
+
+	local deck = Instance.new("Part")
+	deck.Anchored    = true
+	deck.CastShadow  = true  -- bridge deck casts meaningful shadows
+	deck.Size        = Vector3.new(width, ROAD_THICKNESS, length + 0.1)
+	deck.Material    = material
+	deck.CFrame      = CFrame.lookAt(
+		Vector3.new(midX, midY, midZ),
+		Vector3.new(p2.X, midY, p2.Z)
+	)
+	deck.CollisionFidelity = Enum.CollisionFidelity.Box
+	deck.Parent = parent
+
+	-- Guardrail posts every 8 studs on each side
+	local numPosts = math.floor(length / 8)
+	for k = 0, numPosts do
+		local t = (numPosts > 0) and (k / numPosts) or 0
+		local px = p1.X + (p2.X - p1.X) * t
+		local pz = p1.Z + (p2.Z - p1.Z) * t
+		local railY = midY + 1.5
+		for _, side in ipairs({-1, 1}) do
+			local railCF = CFrame.lookAt(
+				Vector3.new(midX, railY, midZ),
+				Vector3.new(p2.X, railY, p2.Z)
+			) * CFrame.new(side * (width * 0.5 + 0.15), 0, (t - 0.5) * length)
+			local post = Instance.new("Part")
+			post.Anchored   = true
+			post.CastShadow = false
+			post.Size       = Vector3.new(0.3, 3, 0.3)
+			post.Material   = Enum.Material.Concrete
+			post.Color      = Color3.fromRGB(180, 180, 190)
+			post.CFrame     = CFrame.new(px + side * (width * 0.5 + 0.15), railY, pz)
+			post.Parent     = parent
+		end
+	end
+end
+
+-- Add a white dashed centerline stripe on roads wider than 12 studs.
+local function paintCenterline(parent, p1, p2, width)
+	if width < 12 then return end
+	local delta  = p2 - p1
+	local length = delta.Magnitude
+	if length < 4 then return end
+
+	local numDashes = math.floor(length / 6)
+	if numDashes < 1 then return end
+	for k = 0, numDashes - 1 do
+		local t = (k + 0.5) / numDashes
+		local cx = p1.X + (p2.X - p1.X) * t
+		local cz = p1.Z + (p2.Z - p1.Z) * t
+		local cy = p1.Y + (p2.Y - p1.Y) * t + 0.05  -- just above road surface
+
+		local dash = Instance.new("Part")
+		dash.Anchored    = true
+		dash.CastShadow  = false
+		dash.CanCollide  = false
+		dash.Size        = Vector3.new(0.4, 0.1, math.min(3, length / numDashes * 0.6))
+		dash.Material    = Enum.Material.SmoothPlastic
+		dash.Color       = Color3.fromRGB(255, 255, 255)
+		dash.CFrame      = CFrame.lookAt(
+			Vector3.new(cx, cy, cz),
+			Vector3.new(p2.X, cy, p2.Z)
+		)
+		dash.Parent = parent
+	end
+end
+
 -- Build ALL roads in a chunk by painting them into the terrain.
 function RoadBuilder.BuildAll(parent, roads, originStuds)
 	if not roads or #roads == 0 then return end
-	local terrain = Workspace.Terrain
 	for _, road in ipairs(roads) do
 		RoadBuilder.FallbackBuild(parent, road, originStuds)
 	end
@@ -156,7 +230,7 @@ function RoadBuilder.Build(parent, road, originStuds)
 	RoadBuilder.FallbackBuild(parent, road, originStuds)
 end
 
-function RoadBuilder.FallbackBuild(_parent, road, originStuds)
+function RoadBuilder.FallbackBuild(parent, road, originStuds)
 	local terrain  = Workspace.Terrain
 	local material = getMaterial(road)
 	local width    = getRoadWidth(road)
@@ -164,7 +238,19 @@ function RoadBuilder.FallbackBuild(_parent, road, originStuds)
 	for i = 1, #road.points - 1 do
 		local p1 = offsetPoint(road.points[i],     originStuds)
 		local p2 = offsetPoint(road.points[i + 1], originStuds)
-		paintSegment(terrain, p1, p2, width, material, road.kind)
+
+		-- Check if this segment is elevated (bridge) or underground (tunnel)
+		local avgY = (road.points[i].y + road.points[i + 1].y) * 0.5
+		if avgY < -BRIDGE_THRESHOLD then
+			-- Tunnel: skip rendering (underground)
+		elseif avgY > BRIDGE_THRESHOLD then
+			-- Bridge: elevated Part deck
+			paintBridgeSegment(parent, p1, p2, width, material)
+		else
+			-- Ground-level: terrain FillBlock
+			paintSegment(terrain, p1, p2, width, material, road.kind)
+			paintCenterline(parent, p1, p2, width)
+		end
 	end
 end
 

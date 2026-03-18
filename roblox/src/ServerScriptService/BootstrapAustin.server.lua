@@ -15,6 +15,13 @@ end
 local RunAustin = require(script.Parent.ImportService.RunAustin)
 
 print("[BootstrapAustin] Starting Austin, TX import...")
+
+-- Performance settings that must be set before world generation
+Workspace.StreamingEnabled = true
+Workspace.StreamingTargetRadius = 256
+Workspace.StreamingMinRadius = 64
+Workspace.Terrain.SmoothingEnabled = true
+
 RunAustin.run()
 print("[BootstrapAustin] Done.")
 
