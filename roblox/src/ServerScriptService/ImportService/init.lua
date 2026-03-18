@@ -138,7 +138,9 @@ function ImportService.ImportChunk(chunk, options)
         landuseFolder.Name = "Landuse"
         landuseFolder.Parent = chunkFolder
     else
-        for _, child in ipairs(landuseFolder:GetChildren()) do child:Destroy() end
+        for _, child in ipairs(landuseFolder:GetChildren()) do
+            child:Destroy()
+        end
     end
 
     local barriersFolder = chunkFolder:FindFirstChild("Barriers")
@@ -147,7 +149,9 @@ function ImportService.ImportChunk(chunk, options)
         barriersFolder.Name = "Barriers"
         barriersFolder.Parent = chunkFolder
     else
-        for _, child in ipairs(barriersFolder:GetChildren()) do child:Destroy() end
+        for _, child in ipairs(barriersFolder:GetChildren()) do
+            child:Destroy()
+        end
     end
 
     if chunk.terrain and config.TerrainMode ~= "none" then
@@ -159,18 +163,18 @@ function ImportService.ImportChunk(chunk, options)
     -- Landuse fills go BEFORE roads so roads paint over them
     if chunk.landuse and #chunk.landuse > 0 then
         local pLanduse = Profiler.begin("BuildLanduse")
-        LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds)
+        LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds, landuseFolder, chunk)
         Profiler.finish(pLanduse)
     end
 
     if config.RoadMode ~= "none" then
         local pRoads = Profiler.begin("BuildRoads")
         if config.RoadMode == "mesh" then
-            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds)
+            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk)
             RailBuilder.BuildAll(railsFolder, chunk.rails, chunk.originStuds)
         else
             for _, road in ipairs(chunk.roads or {}) do
-                RoadBuilder.FallbackBuild(roadsFolder, road, chunk.originStuds)
+                RoadBuilder.FallbackBuild(roadsFolder, road, chunk.originStuds, chunk)
             end
             for _, rail in ipairs(chunk.rails or {}) do
                 RailBuilder.FallbackBuild(railsFolder, rail, chunk.originStuds)
@@ -186,16 +190,16 @@ function ImportService.ImportChunk(chunk, options)
     if config.BuildingMode ~= "none" then
         local pBldgs = Profiler.begin("BuildBuildings")
         if config.BuildingMode == "shellMesh" then
-            BuildingBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds)
+            BuildingBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, chunk)
             -- Build interiors (merged by material across chunk)
             RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds)
         elseif config.BuildingMode == "shellParts" then
             for _, building in ipairs(chunk.buildings or {}) do
-                BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds)
+                BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds, chunk)
             end
         else
             for _, building in ipairs(chunk.buildings or {}) do
-                BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds)
+                BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds, chunk)
             end
         end
 
@@ -216,15 +220,15 @@ function ImportService.ImportChunk(chunk, options)
 
     local pProps = Profiler.begin("BuildProps")
     for _, prop in ipairs(chunk.props or {}) do
-        PropBuilder.Build(propsFolder, prop, chunk.originStuds)
+        PropBuilder.Build(propsFolder, prop, chunk.originStuds, chunk)
     end
     Profiler.finish(pProps)
 
     ChunkLoader.RegisterChunk(chunk.id, chunkFolder, chunk)
 
-    Profiler.finish(profile, { 
+    Profiler.finish(profile, {
         chunkId = chunk.id,
-        instanceCount = #chunkFolder:GetDescendants()
+        instanceCount = #chunkFolder:GetDescendants(),
     })
 
     return chunkFolder

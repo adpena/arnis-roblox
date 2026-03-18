@@ -2,31 +2,42 @@ local Profiler = {}
 
 local sessions = {}
 local MAX_SESSIONS = 50
+local ENABLE_DEBUG_ANNOTATIONS = false
 
-function Profiler.begin(label)
-    return {
+function Profiler.begin(label, annotateWithDebugProfile)
+    local profile = {
         label = label,
         startTime = os.clock(),
-        startCpu = debug.profilebegin(label)
+        usedDebugAnnotation = false,
     }
+
+    if ENABLE_DEBUG_ANNOTATIONS and annotateWithDebugProfile then
+        debug.profilebegin(label)
+        profile.usedDebugAnnotation = true
+    end
+
+    return profile
 end
 
 function Profiler.finish(profile, metadata)
-    debug.profileend()
+    if profile.usedDebugAnnotation then
+        debug.profileend()
+    end
+
     local elapsed = os.clock() - profile.startTime
-    
+
     local session = {
         label = profile.label,
         elapsedMs = elapsed * 1000,
         timestamp = os.time(),
-        metadata = metadata or {}
+        metadata = metadata or {},
     }
-    
+
     table.insert(sessions, session)
     if #sessions > MAX_SESSIONS then
         table.remove(sessions, 1)
     end
-    
+
     return session
 end
 
