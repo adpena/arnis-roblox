@@ -3,6 +3,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local ImportService = require(script.Parent)
 
 local RunAustin = {}
+RunAustin.LOAD_RADIUS = 1500
 
 function RunAustin.run()
     local success, manifestOrErr = pcall(function()
@@ -18,7 +19,7 @@ function RunAustin.run()
         clearFirst = true,
         worldRootName = "GeneratedWorld_Austin",
         printReport = true,
-        loadRadius = 1500,  -- studs (≈1.5 km); load only chunks near downtown Congress Ave
+        loadRadius = RunAustin.LOAD_RADIUS, -- studs; load only chunks near downtown Congress Ave
     })
 
     print(
@@ -29,7 +30,8 @@ function RunAustin.run()
             stats.propsImported
         )
     )
+
+    return manifestOrErr, stats
 end
 
 return RunAustin
-

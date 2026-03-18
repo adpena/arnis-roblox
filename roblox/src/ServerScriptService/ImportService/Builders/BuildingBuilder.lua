@@ -7,7 +7,7 @@ local BuildingBuilder = {}
 local WALL_THICKNESS = 0.6 -- studs
 local MIN_EDGE = 0.5 -- ignore edges shorter than this
 local BUILDING_GROUND_SNAP_MAX_DELTA = 40
-local ROOF_GRID_SIZE = 4
+local ROOF_GRID_SIZE = 8
 local ROOF_THICKNESS = 0.8
 
 -- Material palette keyed by OSM building usage (used for wall Parts — any Enum.Material valid)
@@ -148,34 +148,187 @@ local function fillInterior(footprint, baseY, material)
     end
 end
 
+local function getRoofBasis(footprint)
+    local centroid = Vector3.zero
+    local longestEdge = Vector3.new(0, 0, 1)
+    local longestEdgeLength = 0
+    local count = #footprint
+
+    for i, point in ipairs(footprint) do
+        centroid += point
+
+        local nextPoint = footprint[(i % count) + 1]
+        local edge = Vector3.new(nextPoint.X - point.X, 0, nextPoint.Z - point.Z)
+        local edgeLength = edge.Magnitude
+        if edgeLength > longestEdgeLength then
+            longestEdge = edge / edgeLength
+            longestEdgeLength = edgeLength
+        end
+    end
+
+    centroid /= count
+
+    if longestEdgeLength <= 1e-3 then
+        longestEdge = Vector3.new(0, 0, 1)
+    end
+
+    local rightAxis = Vector3.new(longestEdge.Z, 0, -longestEdge.X)
+    if rightAxis.Magnitude <= 1e-3 then
+        rightAxis = Vector3.new(1, 0, 0)
+    else
+        rightAxis = rightAxis.Unit
+    end
+
+    return centroid, rightAxis, longestEdge
+end
+
+local function collectUniqueRoofPoints(roofPoly)
+    local uniquePoints = {}
+
+    for _, point in ipairs(roofPoly) do
+        local isDuplicate = false
+        for _, existing in ipairs(uniquePoints) do
+            if
+                math.abs(existing.x - point.x) <= 0.05
+                and math.abs(existing.z - point.z) <= 0.05
+            then
+                isDuplicate = true
+                break
+            end
+        end
+
+        if not isDuplicate then
+            uniquePoints[#uniquePoints + 1] = point
+        end
+    end
+
+    return uniquePoints
+end
+
+local function tryBuildSimpleFlatRoof(
+    bldgName,
+    roofPoly,
+    centroid,
+    rightAxis,
+    forwardAxis,
+    roofY,
+    minX,
+    minZ,
+    maxX,
+    maxZ,
+    color,
+    mat,
+    parent
+)
+    local uniquePoints = collectUniqueRoofPoints(roofPoly)
+    if #uniquePoints ~= 4 then
+        return false
+    end
+
+    local expectedCorners = {
+        { x = minX, z = minZ },
+        { x = minX, z = maxZ },
+        { x = maxX, z = minZ },
+        { x = maxX, z = maxZ },
+    }
+    local usedCorners = {}
+
+    for _, point in ipairs(uniquePoints) do
+        local matched = false
+        for cornerIndex, corner in ipairs(expectedCorners) do
+            if
+                not usedCorners[cornerIndex]
+                and math.abs(point.x - corner.x) <= 0.1
+                and math.abs(point.z - corner.z) <= 0.1
+            then
+                usedCorners[cornerIndex] = true
+                matched = true
+                break
+            end
+        end
+
+        if not matched then
+            return false
+        end
+    end
+
+    local width = maxX - minX
+    local depth = maxZ - minZ
+    if width <= 0.5 or depth <= 0.5 then
+        return false
+    end
+
+    local localCenter = rightAxis * ((minX + maxX) * 0.5) + forwardAxis * ((minZ + maxZ) * 0.5)
+    local worldCenter = Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
+
+    local roof = Instance.new("Part")
+    roof.Name = bldgName .. "_roof"
+    roof.Anchored = true
+    roof.CastShadow = false
+    roof.Material = mat
+    roof.Color = color
+    roof.Size = Vector3.new(width, ROOF_THICKNESS, depth)
+    roof.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
+    roof.Parent = parent
+
+    return true
+end
+
 local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat, parent)
+    local centroid, rightAxis, forwardAxis = getRoofBasis(footprint)
     local roofPoly = table.create(#footprint)
     local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
 
     for _, point in ipairs(footprint) do
+        local offset = point - centroid
+        local localX = offset:Dot(rightAxis)
+        local localZ = offset:Dot(forwardAxis)
         roofPoly[#roofPoly + 1] = {
-            x = point.X,
-            z = point.Z,
+            x = localX,
+            z = localZ,
         }
-        if point.X < minX then
-            minX = point.X
+        if localX < minX then
+            minX = localX
         end
-        if point.Z < minZ then
-            minZ = point.Z
+        if localZ < minZ then
+            minZ = localZ
         end
-        if point.X > maxX then
-            maxX = point.X
+        if localX > maxX then
+            maxX = localX
         end
-        if point.Z > maxZ then
-            maxZ = point.Z
+        if localZ > maxZ then
+            maxZ = localZ
         end
     end
 
     local stripIndex = 0
     local roofY = topY + ROOF_THICKNESS * 0.5
 
+    if
+        tryBuildSimpleFlatRoof(
+            bldgName,
+            roofPoly,
+            centroid,
+            rightAxis,
+            forwardAxis,
+            roofY,
+            minX,
+            minZ,
+            maxX,
+            maxZ,
+            color,
+            mat,
+            parent
+        )
+    then
+        return
+    end
+
     local function emitStrip(x, runStartZ, runEndZ)
         stripIndex += 1
+        local localCenter = rightAxis * x + forwardAxis * ((runStartZ + runEndZ) * 0.5)
+        local worldCenter =
+            Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
 
         local strip = Instance.new("Part")
         strip.Name = string.format("%s_roof_%d", bldgName, stripIndex)
@@ -185,7 +338,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         strip.Color = color
         strip.Size =
             Vector3.new(ROOF_GRID_SIZE, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
-        strip.CFrame = CFrame.new(x, roofY, (runStartZ + runEndZ) * 0.5)
+        strip.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         strip.Parent = parent
     end
 
@@ -216,6 +369,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
     end
 
     if stripIndex == 0 then
+        local worldCenter = Vector3.new(centroid.X, roofY, centroid.Z)
         local roof = Instance.new("Part")
         roof.Name = bldgName .. "_roof"
         roof.Anchored = true
@@ -223,7 +377,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         roof.Material = mat
         roof.Color = color
         roof.Size = Vector3.new(math.max(1, maxX - minX), ROOF_THICKNESS, math.max(1, maxZ - minZ))
-        roof.CFrame = CFrame.new((minX + maxX) * 0.5, roofY, (minZ + maxZ) * 0.5)
+        roof.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         roof.Parent = parent
     end
 end
