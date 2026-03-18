@@ -16,10 +16,8 @@ local RunAustin = require(script.Parent.ImportService.RunAustin)
 
 print("[BootstrapAustin] Starting Austin, TX import...")
 
--- Performance settings that must be set before world generation
-Workspace.StreamingEnabled = true
-Workspace.StreamingTargetRadius = 256
-Workspace.StreamingMinRadius = 64
+-- Note: StreamingEnabled must be set in Studio Game Settings > Streaming
+-- (cannot be set from a server script — requires Plugin capability)
 Workspace.Terrain.SmoothingEnabled = true
 
 RunAustin.run()
