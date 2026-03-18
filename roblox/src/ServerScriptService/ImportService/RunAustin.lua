@@ -18,6 +18,7 @@ function RunAustin.run()
         clearFirst = true,
         worldRootName = "GeneratedWorld_Austin",
         printReport = true,
+        loadRadius = 1500,  -- studs (≈1.5 km); load only chunks near downtown Congress Ave
     })
 
     print(

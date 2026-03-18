@@ -563,6 +563,7 @@ impl Chunker {
     }
 }
 
+#[allow(dead_code)]
 fn point_in_poly(p: Vec2, poly: &[Vec2]) -> bool {
     let mut inside = false;
     let mut j = poly.len() - 1;

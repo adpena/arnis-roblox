@@ -269,6 +269,19 @@ function ImportService.ImportManifest(manifest, options)
     }
 
     for _, chunk in ipairs(validated.chunks) do
+        -- Skip chunks outside loadRadius (studs from world origin)
+        local loadRadius = options.loadRadius
+        if loadRadius then
+            local ox = chunk.originStuds and chunk.originStuds.x or 0
+            local oz = chunk.originStuds and chunk.originStuds.z or 0
+            local chunkSize = manifest.meta and manifest.meta.chunkSizeStuds or 256
+            local centerX = ox + chunkSize * 0.5
+            local centerZ = oz + chunkSize * 0.5
+            if math.sqrt(centerX * centerX + centerZ * centerZ) > loadRadius then
+                continue
+            end
+        end
+
         local chunkOptions = table.clone(options)
         chunkOptions.config = config
         ImportService.ImportChunk(chunk, chunkOptions)
