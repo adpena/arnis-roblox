@@ -411,7 +411,7 @@ impl Chunker {
                 });
             }
             Feature::Landuse(f) => {
-                if f.footprint.points.is_empty() {
+                if f.footprint.points.len() < 3 {
                     return;
                 }
                 let cx: f32 = f.footprint.points.iter().map(|p| p.x).sum::<f32>()

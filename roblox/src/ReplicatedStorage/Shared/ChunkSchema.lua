@@ -173,26 +173,31 @@ function ChunkSchema.validateManifest(manifest)
 
         -- Normalize landuse to an empty table if absent; validate present entries
         chunk.landuse = chunk.landuse or {}
+        local validLanduse = {}
         for _, lu in ipairs(chunk.landuse) do
-            assertType(lu.id, "string", prefix .. ".landuse[].id must be a string")
-            assertType(lu.kind, "string", prefix .. ".landuse[].kind must be a string")
-            assertType(lu.footprint, "table", prefix .. ".landuse[].footprint must be a table")
-            assert(#lu.footprint >= 3, prefix .. ".landuse[].footprint must contain at least three points")
-            for pointIndex, point in ipairs(lu.footprint) do
-                validatePoint2(point, ("%s.landuse[].footprint[%d]"):format(prefix, pointIndex))
+            if type(lu.id) == "string" and type(lu.kind) == "string"
+                and type(lu.footprint) == "table" and #lu.footprint >= 3 then
+                table.insert(validLanduse, lu)
+            else
+                warn(prefix .. ".landuse[]: skipping entry with invalid/missing fields (id="
+                    .. tostring(lu.id) .. " kind=" .. tostring(lu.kind)
+                    .. " footprint=" .. tostring(lu.footprint and #lu.footprint or 0) .. " pts)")
             end
         end
+        chunk.landuse = validLanduse
 
         -- barriers is optional; validate present entries
         chunk.barriers = chunk.barriers or {}
+        local validBarriers = {}
         for _, barrier in ipairs(chunk.barriers) do
-            assertType(barrier.id, "string", prefix .. ".barriers[].id must be a string")
-            assertType(barrier.kind, "string", prefix .. ".barriers[].kind must be a string")
-            assertType(barrier.points, "table", prefix .. ".barriers[].points must be a table")
-            assert(#barrier.points >= 2, prefix .. ".barriers[].points must contain at least two points")
-            for pointIndex, point in ipairs(barrier.points) do
-                validatePoint3(point, ("%s.barriers[].points[%d]"):format(prefix, pointIndex))
+            if type(barrier.id) == "string" and type(barrier.kind) == "string"
+                and type(barrier.points) == "table" and #barrier.points >= 2 then
+                table.insert(validBarriers, barrier)
+            else
+                warn(prefix .. ".barriers[]: skipping entry with invalid/missing fields")
             end
+        end
+        chunk.barriers = validBarriers
         end
     end
 
