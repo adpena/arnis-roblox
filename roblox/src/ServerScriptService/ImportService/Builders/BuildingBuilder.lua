@@ -8,7 +8,7 @@ local BuildingBuilder = {}
 local WALL_THICKNESS = 0.6  -- studs
 local MIN_EDGE = 0.5        -- ignore edges shorter than this
 
--- Material palette keyed by OSM building usage
+-- Material palette keyed by OSM building usage (used for wall Parts — any Enum.Material valid)
 local USAGE_MATERIAL = {
 	residential    = Enum.Material.Brick,
 	apartments     = Enum.Material.Brick,
@@ -24,6 +24,28 @@ local USAGE_MATERIAL = {
 	yes            = Enum.Material.Concrete,
 	default        = Enum.Material.Concrete,
 }
+
+-- Floor material for Terrain:FillBlock — must be a valid terrain material (no Glass/Metal/Neon)
+local USAGE_FLOOR_MATERIAL = {
+	residential    = Enum.Material.Brick,
+	apartments     = Enum.Material.Brick,
+	house          = Enum.Material.Brick,
+	commercial     = Enum.Material.Concrete,
+	retail         = Enum.Material.Concrete,
+	office         = Enum.Material.Concrete,      -- Glass → Concrete floor
+	industrial     = Enum.Material.Concrete,      -- Metal → Concrete floor
+	warehouse      = Enum.Material.Concrete,
+	church         = Enum.Material.SmoothPlastic,
+	school         = Enum.Material.SmoothPlastic,
+	hospital       = Enum.Material.SmoothPlastic,
+	yes            = Enum.Material.Concrete,
+	default        = Enum.Material.Concrete,
+}
+
+local function getFloorMaterial(building)
+	local usage = building.usage or building.kind or "default"
+	return USAGE_FLOOR_MATERIAL[usage] or USAGE_FLOOR_MATERIAL.default
+end
 
 local USAGE_COLOR = {
 	residential = Color3.fromRGB(180, 120, 90),
@@ -287,24 +309,12 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds)
 		wall.Parent = model
 	end
 
-	-- Fill interior with terrain
+	-- Fill interior with terrain (uses terrain-safe floor materials only)
 	local footprintRelative = {}
 	for _, p in ipairs(fp) do
 		table.insert(footprintRelative, {p.x + originStuds.x, p.z + originStuds.z})
 	end
-	local interiorMaterial = Enum.Material.Concrete
-	if building.usage == "residential" or building.usage == "house" or
-	   building.usage == "apartments" or building.usage == "detached" or
-	   building.usage == "terrace" or building.usage == "dormitory" or
-	   building.usage == "bungalow" then
-		interiorMaterial = Enum.Material.SmoothPlastic
-	elseif building.usage == "commercial" or building.usage == "office" or
-	       building.usage == "civic" or building.usage == "hospital" then
-		interiorMaterial = Enum.Material.Concrete
-	else
-		interiorMaterial = Enum.Material.Ground
-	end
-	fillInterior(footprintRelative, baseY, interiorMaterial, model)
+	fillInterior(footprintRelative, baseY, getFloorMaterial(building), model)
 
 	buildRoof(building, worldPts, baseY, height, color, mat, model)
 end
