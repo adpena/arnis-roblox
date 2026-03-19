@@ -7,8 +7,19 @@ use arbx_geo::{BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevati
 use arbx_pipeline::{run_pipeline, ElevationEnrichmentStage, NormalizeStage, TriangulateStage, ValidateStage};
 use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider};
 
+fn srtm_tile_name(lat: f64, lon: f64) -> String {
+    let lat_i = lat.floor() as i32;
+    let lon_i = lon.floor() as i32;
+    let ns = if lat_i >= 0 { "N" } else { "S" };
+    let ew = if lon_i >= 0 { "E" } else { "W" };
+    format!("{}{:02}{}{:03}", ns, lat_i.abs(), ew, lon_i.abs())
+}
+
 fn print_help() {
     println!("arbx_cli — Arnis HD Pipeline");
+    println!();
+    println!("Works with any location worldwide. SRTM elevation tiles are auto-downloaded");
+    println!("for the target bounding box — no manual tile selection needed.");
     println!();
     println!("COMMANDS:");
     println!("  compile    Build a chunk manifest from geodata sources");
@@ -23,23 +34,35 @@ fn print_help() {
     println!("  --source PATH          Read Overpass JSON from file (default: synthetic data)");
     println!("  --live                 Fetch from Overpass API instead of file (cached to --cache-dir)");
     println!("  --bbox S,W,N,E         Bounding box as min_lat,min_lon,max_lat,max_lon");
+    println!("  --world-name NAME      World name written into the manifest (default: ExportedWorld)");
     println!("  --out PATH             Write manifest to file (default: stdout)");
     println!("  --meters-per-stud N    World scale (default: 0.3, Roblox humanoid proportional)");
     println!("  --terrain-cell-size N  Terrain grid cell size in studs (default: 2, range: 1-32)");
     println!("  --satellite [DIR]      Enable satellite material classification (tiles cached to DIR)");
     println!("  --cache-dir PATH       Overpass API cache directory (default: out/overpass/)");
     println!();
-    println!("PRESETS:");
-    println!("  --yolo                 Maximum fidelity: cell=1, satellite=on, 256x256 terrain grid");
-    println!("                         Requires 16GB+ RAM. For M5 Max / workstation hardware.");
+    println!("PROFILES:");
+    println!("  --profile insane     cell=1, satellite=on, voxel=1 (36GB+ RAM)");
+    println!("  --profile high       cell=2, satellite=on, voxel=1 (16GB+ RAM) [default]");
+    println!("  --profile balanced   cell=4, voxel=2 (8GB+ RAM)");
+    println!("  --profile fast       cell=8, voxel=4 (4GB+ RAM)");
+    println!("  --yolo               Alias for --profile insane");
     println!();
     println!("SAMPLE FLAGS:");
     println!("  --out PATH             Write to file (default: stdout)");
     println!("  --grid X,Z             Multi-chunk grid dimensions (default: 1,1)");
     println!();
     println!("EXAMPLES:");
+    println!("  # Austin, TX");
+    println!("  arbx_cli compile --live --bbox 30.26,-97.75,30.27,-97.74 --world-name Austin --out out/austin.json");
+    println!("  # Tokyo, Japan");
+    println!("  arbx_cli compile --live --bbox 35.68,139.69,35.69,139.70 --world-name Tokyo --out out/tokyo.json");
+    println!("  # London, UK");
+    println!("  arbx_cli compile --live --bbox 51.50,-0.13,51.51,-0.12 --world-name London --profile balanced");
+    println!("  # Santiago, Chile (southern hemisphere)");
+    println!("  arbx_cli compile --live --bbox -33.46,-70.65,-33.45,-70.64 --world-name Santiago");
+    println!("  # From local file with satellite enrichment");
     println!("  arbx_cli compile --source data/austin.json --satellite --out out/austin.json");
-    println!("  arbx_cli compile --live --bbox 30.26,-97.75,30.27,-97.74 --yolo");
     println!("  arbx_cli compile --live --terrain-cell-size 4  # balanced for 8GB machines");
     println!("  arbx_cli stats out/austin.json");
     println!("  arbx_cli validate out/austin.json");
@@ -105,10 +128,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut cache_dir = "out/overpass".to_string();
     // --satellite: optional satellite tile directory for material enrichment.
     let mut satellite_dir: Option<String> = None;
-    // --terrain-cell-size: terrain grid cell size in studs (2 = insane, 4 = high, 8 = balanced).
+    // --terrain-cell-size: terrain grid cell size in studs (2 = high, 4 = balanced, 8 = fast).
     let mut terrain_cell_size: i32 = 2;
-    // --yolo: maximum fidelity preset — all settings cranked to max.
-    let mut yolo = false;
+    // --world-name: name written into the manifest meta.
+    let mut world_name = "ExportedWorld".to_string();
 
     let mut i = 0;
     while i < args.len() {
@@ -141,6 +164,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 bbox = BoundingBox::new(p[0], p[1], p[2], p[3]);
                 i += 2;
             }
+            "--world-name" => {
+                world_name = args.get(i + 1).ok_or("--world-name requires a name")?.clone();
+                i += 2;
+            }
             "--meters-per-stud" => {
                 let value = args.get(i + 1).ok_or("--meters-per-stud requires a number")?;
                 meters_per_stud = value
@@ -169,14 +196,44 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 }
                 i += 2;
             }
+            "--profile" => {
+                let profile = args.get(i + 1).ok_or("--profile requires a preset name")?;
+                match profile.as_str() {
+                    "insane" => {
+                        terrain_cell_size = 1;
+                        if satellite_dir.is_none() {
+                            satellite_dir = Some("out/tiles/satellite".to_string());
+                        }
+                        eprintln!("Profile: insane — cell=1, satellite=on (36GB+ RAM)");
+                    }
+                    "high" => {
+                        terrain_cell_size = 2;
+                        if satellite_dir.is_none() {
+                            satellite_dir = Some("out/tiles/satellite".to_string());
+                        }
+                        eprintln!("Profile: high — cell=2, satellite=on (16GB+ RAM)");
+                    }
+                    "balanced" => {
+                        terrain_cell_size = 4;
+                        eprintln!("Profile: balanced — cell=4 (8GB+ RAM)");
+                    }
+                    "fast" => {
+                        terrain_cell_size = 8;
+                        eprintln!("Profile: fast — cell=8 (4GB+ RAM)");
+                    }
+                    other => {
+                        return Err(format!("unknown profile: {other} (valid: insane, high, balanced, fast)"));
+                    }
+                }
+                i += 2;
+            }
             "--yolo" => {
-                yolo = true;
                 terrain_cell_size = 1;  // 256×256 grid = 65,536 cells per chunk
                 // satellite enabled automatically
                 if satellite_dir.is_none() {
                     satellite_dir = Some("out/tiles/satellite".to_string());
                 }
-                eprintln!("🔥 YOLO MODE: terrain cell=1, satellite=on, maximum fidelity");
+                eprintln!("YOLO MODE (--profile insane): terrain cell=1, satellite=on, maximum fidelity");
                 i += 1;
             }
             "--satellite" => {
@@ -231,21 +288,27 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let config = ExportConfig {
         meters_per_stud,
         terrain_cell_size,
+        world_name: world_name.clone(),
         ..ExportConfig::default()
     };
 
     // ── Create elevation provider BEFORE the pipeline so the enrichment
     //    stage can inject DEM-derived Y values into every feature. ──────────
 
-    // Try to download SRTM tile for the bbox if not already present
-    let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
+    // Compute the SRTM tile name from the bbox center (supports any worldwide location).
+    let tile_name = srtm_tile_name(bbox.center().lat, bbox.center().lon);
+    let hgt_path = PathBuf::from(format!("data/{}.hgt", tile_name));
     if !hgt_path.exists() {
-        eprintln!("Attempting to download SRTM elevation tile N30W098.hgt...");
-        let gz_path = std::path::PathBuf::from("data/N30W098.hgt.gz");
-        let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/N30/N30W098.hgt.gz";
+        eprintln!("Attempting to download SRTM elevation tile {tile_name}.hgt...");
+        let gz_path = PathBuf::from(format!("data/{}.hgt.gz", tile_name));
+        let url = format!(
+            "https://s3.amazonaws.com/elevation-tiles-prod/skadi/{}/{}.hgt.gz",
+            &tile_name[..3],
+            tile_name
+        );
         let status = std::process::Command::new("curl")
             .args([
-                "-L", "-o", gz_path.to_str().unwrap(), url,
+                "-L", "-o", gz_path.to_str().unwrap(), url.as_str(),
                 "--silent", "--fail",
                 "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
                 "--retry", "3",
@@ -257,7 +320,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 .arg(gz_path.to_str().unwrap())
                 .status();
             if hgt_path.exists() {
-                eprintln!("Downloaded N30W098.hgt successfully.");
+                eprintln!("Downloaded {tile_name}.hgt successfully.");
             }
         } else {
             eprintln!("Could not download SRTM tile, using flat elevation.");
@@ -275,9 +338,8 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             }
             Err(e) => {
                 eprintln!("Terrarium tiles unavailable ({e}), falling back to SRTM/flat.");
-                let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
                 if hgt_path.exists() {
-                    let hgt = HgtElevationProvider::new(std::path::PathBuf::from("data"));
+                    let hgt = HgtElevationProvider::new(PathBuf::from("data"));
                     let base = hgt.sample_height_at(bbox.center());
                     eprintln!("Using SRTM elevation, base offset = {:.1}m at bbox center", base);
                     Box::new(OffsetElevationProvider::new(Box::new(hgt), base))
@@ -663,6 +725,36 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn srtm_tile_name_austin() {
+        // Austin, TX: center ~30.265, -97.745 → SW corner N30W098
+        assert_eq!(srtm_tile_name(30.265, -97.745), "N30W098");
+    }
+
+    #[test]
+    fn srtm_tile_name_tokyo() {
+        // Tokyo: center ~35.685, 139.695 → SW corner N35E139
+        assert_eq!(srtm_tile_name(35.685, 139.695), "N35E139");
+    }
+
+    #[test]
+    fn srtm_tile_name_london() {
+        // London: center ~51.505, -0.125 → SW corner N51W001
+        assert_eq!(srtm_tile_name(51.505, -0.125), "N51W001");
+    }
+
+    #[test]
+    fn srtm_tile_name_southern_hemisphere() {
+        // Santiago, Chile: center ~-33.455, -70.645 → SW corner S34W071
+        assert_eq!(srtm_tile_name(-33.455, -70.645), "S34W071");
+    }
+
+    #[test]
+    fn srtm_tile_name_eastern_zero() {
+        // Exactly on the prime meridian, northern hemisphere → N51E000
+        assert_eq!(srtm_tile_name(51.5, 0.0), "N51E000");
+    }
 
     fn write_temp_manifest(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().unwrap();
