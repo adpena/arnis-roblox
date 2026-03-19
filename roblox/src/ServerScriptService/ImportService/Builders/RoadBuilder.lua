@@ -184,10 +184,15 @@ local function paintStrip(terrain, p1, p2, width, thickness, material, surfaceLi
         return nil, 0
     end
 
-    local surfaceY = (p1.Y + p2.Y) * 0.5 + surfaceLift
-    local midY = surfaceY - thickness * 0.5
-    local midPos = Vector3.new((p1.X + p2.X) * 0.5, midY, (p1.Z + p2.Z) * 0.5)
-    local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
+    -- Per-endpoint Y: follow the slope instead of averaging to a flat surface
+    local y1 = p1.Y + surfaceLift
+    local y2 = p2.Y + surfaceLift
+    local startPos = Vector3.new(p1.X, y1 - thickness * 0.5, p1.Z)
+    local endPos = Vector3.new(p2.X, y2 - thickness * 0.5, p2.Z)
+    local midPos = (startPos + endPos) * 0.5
+
+    -- CFrame.lookAt tilts the part to follow the slope between p1 and p2
+    local cf = CFrame.lookAt(midPos, endPos)
     if sideOffset and math.abs(sideOffset) > 1e-6 then
         cf = cf * CFrame.new(sideOffset, 0, 0)
     end
@@ -268,11 +273,9 @@ local function paintBridgeSegment(parent, p1, p2, width, material, chunk, sample
         return
     end
 
-    local midX = (p1.X + p2.X) * 0.5
-    local midZ = (p1.Z + p2.Z) * 0.5
-    local midY = (p1.Y + p2.Y) * 0.5
-    local midPos = Vector3.new(midX, midY, midZ)
-    local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
+    local midPos = (p1 + p2) * 0.5
+    -- CFrame.lookAt tilts the deck to follow the slope between p1 and p2
+    local cf = CFrame.lookAt(midPos, p2)
     local right = cf.RightVector
 
     local deck = Instance.new("Part")
@@ -347,7 +350,22 @@ local function paintOnewayArrows(parent, p1, p2, _width, road)
     -- Place arrows every 30 studs along the segment
     local interval = 30
     for dist = interval, segLen - interval, interval do
-        local pos = p1 + dir * dist
+        local t = dist / segLen
+        -- Interpolate Y along the slope
+        local arrowY = p1.Y + (p2.Y - p1.Y) * t + 0.2
+        local pos = Vector3.new(
+            p1.X + (p2.X - p1.X) * t,
+            arrowY,
+            p1.Z + (p2.Z - p1.Z) * t
+        )
+        -- Look-at target further along the slope for tilt
+        local tEnd = math.min(1, (dist + 1) / segLen)
+        local endPos = Vector3.new(
+            p1.X + (p2.X - p1.X) * tEnd,
+            p1.Y + (p2.Y - p1.Y) * tEnd + 0.2,
+            p1.Z + (p2.Z - p1.Z) * tEnd
+        )
+
         local arrow = Instance.new("Part")
         arrow.Name = "OnewayArrow"
         arrow.Size = Vector3.new(4, 0.05, 6)
@@ -356,9 +374,8 @@ local function paintOnewayArrows(parent, p1, p2, _width, road)
         arrow.Anchored = true
         arrow.CanCollide = false
         arrow.CastShadow = false
-        -- Orient arrow in road direction, flat on surface
-        arrow.CFrame = CFrame.lookAt(pos + Vector3.new(0, 0.2, 0), pos + Vector3.new(0, 0.2, 0) + dir)
-        CollectionService:AddTag(arrow, "LOD_Detail")
+        -- Orient arrow following the slope
+        arrow.CFrame = CFrame.lookAt(pos, endPos)
         arrow.Parent = parent
     end
 end
@@ -384,6 +401,12 @@ local function paintCenterline(parent, p1, p2, width)
         local cz = p1.Z + (p2.Z - p1.Z) * t
         local cy = p1.Y + (p2.Y - p1.Y) * t + 0.05 -- just above road surface
 
+        -- Look toward the next point along the slope for tilt
+        local tEnd = math.min(1, (k + 1) / numDashes)
+        local endX = p1.X + (p2.X - p1.X) * tEnd
+        local endZ = p1.Z + (p2.Z - p1.Z) * tEnd
+        local endY = p1.Y + (p2.Y - p1.Y) * tEnd + 0.05
+
         local dash = Instance.new("Part")
         dash.Anchored = true
         dash.CastShadow = false
@@ -391,7 +414,7 @@ local function paintCenterline(parent, p1, p2, width)
         dash.Size = Vector3.new(0.4, 0.1, math.min(3, length / numDashes * 0.6))
         dash.Material = Enum.Material.SmoothPlastic
         dash.Color = Color3.fromRGB(255, 255, 255)
-        dash.CFrame = CFrame.lookAt(Vector3.new(cx, cy, cz), Vector3.new(p2.X, cy, p2.Z))
+        dash.CFrame = CFrame.lookAt(Vector3.new(cx, cy, cz), Vector3.new(endX, endY, endZ))
         dash.Parent = parent
     end
 end
@@ -480,8 +503,12 @@ local function placeStreetLights(parent, p1, p2, width)
         return
     end
 
-    local midY = (p1.Y + p2.Y) * 0.5
-    local cf = CFrame.lookAt(Vector3.new(p1.X, midY, p1.Z), Vector3.new(p2.X, midY, p2.Z))
+    -- Use horizontal direction for the perpendicular offset (lights stay vertical)
+    local horizDir = Vector3.new(delta.X, 0, delta.Z)
+    if horizDir.Magnitude < 0.01 then
+        return
+    end
+    local cf = CFrame.lookAt(Vector3.new(p1.X, 0, p1.Z), Vector3.new(p2.X, 0, p2.Z))
     local right = cf.RightVector
 
     local numLights = math.max(1, math.floor(length / STREET_LIGHT_INTERVAL))
@@ -504,7 +531,6 @@ local function placeStreetLights(parent, p1, p2, width)
         pole.Material = Enum.Material.SmoothPlastic
         pole.Color = Color3.fromRGB(80, 80, 85)
         pole.CFrame = CFrame.new(Vector3.new(lx, p1.Y + (p2.Y - p1.Y) * t + 4, lz) + right * (width * 0.5 + 1) * side)
-        CollectionService:AddTag(pole, "LOD_Detail")
         pole.Parent = parent
 
         local head = Instance.new("Part")
@@ -516,7 +542,6 @@ local function placeStreetLights(parent, p1, p2, width)
         head.Material = Enum.Material.SmoothPlastic
         head.Color = Color3.fromRGB(220, 220, 220)
         head.CFrame = CFrame.new(lampPos)
-        CollectionService:AddTag(head, "LOD_Detail")
         CollectionService:AddTag(head, "StreetLight")
         head.Parent = parent
 
@@ -710,19 +735,28 @@ function RoadMeshAccumulator:addQuad(p1, p2, p3, p4)
     table.insert(self.triangles, { base + 1, base + 3, base + 4 })
 end
 
-function RoadMeshAccumulator:addRoadStrip(p1, p2, width, surfaceY)
+function RoadMeshAccumulator:addRoadStrip(p1, p2, width, surfaceLift)
     local dir = (p2 - p1)
     local segLen = dir.Magnitude
     if segLen < 0.1 then
         return
     end
-    dir = dir.Unit
-    local perp = Vector3.new(-dir.Z, 0, dir.X) * (width * 0.5)
+    -- Horizontal direction for perpendicular offset (keep perp flat)
+    local horizDir = Vector3.new(dir.X, 0, dir.Z)
+    if horizDir.Magnitude < 0.01 then
+        return
+    end
+    horizDir = horizDir.Unit
+    local perp = Vector3.new(-horizDir.Z, 0, horizDir.X) * (width * 0.5)
 
-    local v1 = Vector3.new(p1.X, surfaceY, p1.Z) - perp
-    local v2 = Vector3.new(p1.X, surfaceY, p1.Z) + perp
-    local v3 = Vector3.new(p2.X, surfaceY, p2.Z) + perp
-    local v4 = Vector3.new(p2.X, surfaceY, p2.Z) - perp
+    -- Per-endpoint Y: vertices at p1 and p2 follow the slope
+    local y1 = p1.Y + (surfaceLift or 0.15)
+    local y2 = p2.Y + (surfaceLift or 0.15)
+
+    local v1 = Vector3.new(p1.X, y1, p1.Z) - perp
+    local v2 = Vector3.new(p1.X, y1, p1.Z) + perp
+    local v3 = Vector3.new(p2.X, y2, p2.Z) + perp
+    local v4 = Vector3.new(p2.X, y2, p2.Z) - perp
 
     self:addQuad(v1, v2, v3, v4)
 end
@@ -815,8 +849,7 @@ function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk)
                 local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
                 paintBridgeSegment(parent, p1, p2, width, mat, chunk, sampleGroundY)
             else
-                local surfaceY = (p1.Y + p2.Y) * 0.5 + ROAD_SURFACE_LIFT
-                acc:addRoadStrip(p1, p2, width, surfaceY)
+                acc:addRoadStrip(p1, p2, width, ROAD_SURFACE_LIFT)
             end
         end
     end
@@ -830,7 +863,7 @@ end
 -- MeshBuildDecorations: per-road decoration pass for mesh mode.
 -- Renders steps, tunnels, centerlines, oneway arrows, street lights,
 -- and crosswalk markings.  Road surfaces are handled by MeshBuildAll.
--- Detail items (arrows, lights, crosswalks) are placed in a LOD_Detail
+-- Detail items (arrows, lights, crosswalks) are placed in the grouped detail
 -- sub-folder consistent with the FallbackBuild pattern.
 function RoadBuilder.MeshBuildDecorations(parent, roads, originStuds, _chunk)
     if not roads or #roads == 0 then
