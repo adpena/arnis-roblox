@@ -42,6 +42,6 @@
 ## Epic F — HD Pipeline
 
 - [x] SP-1: Coordinate contract (meters_per_stud=0.3, schema 0.4.0, elevation authority, terrain 64x64)
-- [ ] SP-2: Data source fusion (Mapbox DEM/MVT/satellite, expanded OSM/Overpass tags)
+- [x] SP-2: Data source fusion (z15 DEM, live Overpass tags, satellite tile classification, expanded OSM fields maxspeed/lit/oneway/layer/roofHeight/name/width/intermittent/circumference, Lua schema validation, JSON schema and docs updated)
 - [ ] SP-3: Builder fidelity (facades, windows, roofs, lanes, expanded props)
 - [ ] SP-4: Material & texture pipeline (satellite-derived roof/ground/road classification)

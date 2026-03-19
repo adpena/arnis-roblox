@@ -113,13 +113,21 @@ A simple height grid with:
 - `material`
 - optional per-cell `materials`
 
+The optional `materials` array is populated from satellite imagery classification (SP-2). Each cell
+receives a Roblox terrain material string derived from the satellite tile covering that grid cell,
+allowing ground cover (grass, rock, sand, mud, etc.) to vary across the chunk rather than using a
+single uniform material.
+
 This is intentionally basic so the contract stabilizes before the representation gets fancy.
 
 ### Roads, rails, water, and barriers
 
 Polyline-based ribbons with width and points. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
-`tunnel`, and `sidewalk` (both/left/right/no) flags. Water polygons carry `holes` for islands/cutouts
-and `surfaceY` for authoritative surface elevation.
+`tunnel`, and `sidewalk` (both/left/right/no) flags. Additional optional OSM-derived road fields:
+`maxspeed` (integer km/h speed limit), `lit` (boolean street lighting), `oneway` (boolean direction
+constraint), and `layer` (integer vertical stacking level for overpasses/underpasses). Water polygons
+carry `holes` for islands/cutouts, `surfaceY` for authoritative surface elevation, `width` (real-world
+meters for river/stream features), and `intermittent` (boolean for seasonal water bodies).
 
 ### Buildings
 
@@ -133,6 +141,8 @@ Shell-oriented footprints with:
 - optional facade style hints
 - optional usage (OSM building tag)
 - optional minHeight (for stilted/elevated structures)
+- optional roofHeight (real-world meters for the roof portion above the eave)
+- optional name (OSM `name` tag for labeled structures)
 
 ### Props
 
@@ -144,6 +154,7 @@ Point instances with:
 - optional species hint for vegetation
 - optional height (real-world meters, for trees)
 - optional leafType (broadleaved/needleleaved)
+- optional circumference (real-world meters trunk circumference, for tree scaling)
 
 ### Landuse
 

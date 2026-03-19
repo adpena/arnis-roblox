@@ -141,6 +141,10 @@
         "tunnel": { "type": "boolean", "default": false },
         "sidewalk": { "type": "string", "enum": ["both", "left", "right", "no"] },
         "surface": { "type": "string" },
+        "maxspeed": { "type": "integer", "minimum": 0 },
+        "lit": { "type": "boolean" },
+        "oneway": { "type": "boolean" },
+        "layer": { "type": "integer" },
         "points": {
           "type": "array",
           "minItems": 2,
@@ -179,6 +183,8 @@
         "roofMaterial": { "type": "string" },
         "usage": { "type": "string" },
         "minHeight": { "type": "number" },
+        "roofHeight": { "type": "number" },
+        "name": { "type": "string" },
         "footprint": {
           "type": "array",
           "minItems": 3,
@@ -211,6 +217,8 @@
         "material": { "type": "string" },
         "color": { "$ref": "#/$defs/color" },
         "surfaceY": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "intermittent": { "type": "boolean" },
         "widthStuds": { "type": "number", "exclusiveMinimum": 0 },
         "points": {
           "type": "array",
@@ -246,7 +254,10 @@
         "position": { "$ref": "#/$defs/point3" },
         "yawDegrees": { "type": "number" },
         "scale": { "type": "number", "exclusiveMinimum": 0 },
-        "species": { "type": "string" }
+        "species": { "type": "string" },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "leafType": { "type": "string" },
+        "circumference": { "type": "number", "exclusiveMinimum": 0 }
       },
       "additionalProperties": false
     },
