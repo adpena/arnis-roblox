@@ -17,6 +17,10 @@ impl Rgb {
     }
 }
 
+/// Maximum number of decoded satellite tiles held in memory at once.
+/// Each z17 tile is ~256×256 RGBA = ~256KB decoded. 64 tiles ≈ 16MB.
+const MAX_CACHED_TILES: usize = 64;
+
 pub struct SatelliteTileProvider {
     zoom: u32,
     cache_dir: PathBuf,
@@ -57,6 +61,13 @@ impl SatelliteTileProvider {
 
     fn get_or_fetch_tile(&mut self, tx: u32, ty: u32) -> Option<&DynamicImage> {
         if !self.tiles.contains_key(&(tx, ty)) {
+            // Evict oldest tiles if cache is full (simple strategy: clear half)
+            if self.tiles.len() >= MAX_CACHED_TILES {
+                let keys: Vec<_> = self.tiles.keys().copied().take(MAX_CACHED_TILES / 2).collect();
+                for k in keys {
+                    self.tiles.remove(&k);
+                }
+            }
             let img = self.fetch_tile(tx, ty)?;
             self.tiles.insert((tx, ty), img);
         }
