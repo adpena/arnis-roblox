@@ -233,7 +233,115 @@ impl PipelineStage for TriangulateStage {
     }
 }
 
-pub struct SyntheticAustinAdapter;
+/// Post-load pipeline stage that samples a DEM at each feature's XZ position
+/// and sets the correct Y value.  Features with Y already significantly
+/// non-zero (e.g. from adapter-level bridge detection) are left untouched.
+///
+/// This is better than per-adapter enrichment because it works uniformly for
+/// every adapter (Overpass, File, Synthetic, future Mapbox, etc.).
+pub struct ElevationEnrichmentStage<'a> {
+    pub elevation: &'a dyn ElevationProvider,
+    pub meters_per_stud: f64,
+    pub bbox_center: LatLon,
+}
+
+impl<'a> PipelineStage for ElevationEnrichmentStage<'a> {
+    fn name(&self) -> &'static str {
+        "elevation-enrichment"
+    }
+
+    fn run(&self, ctx: &mut PipelineContext) -> PipelineResult<()> {
+        let mps = self.meters_per_stud;
+        let center = self.bbox_center;
+        let cos_lat = center.lat.to_radians().cos();
+
+        // Helper: reverse-project stud-space XZ back to LatLon, sample DEM,
+        // return height in studs.
+        let sample_y = |x: f64, z: f64| -> f64 {
+            let lat = center.lat - (z * mps / 111_111.0);
+            let lon = center.lon + (x * mps / (111_111.0 * cos_lat));
+            let h = self.elevation.sample_height_at(LatLon::new(lat, lon));
+            h as f64 / mps
+        };
+
+        let mut enriched = 0usize;
+
+        for feature in &mut ctx.features {
+            match feature {
+                Feature::Road(f) => {
+                    // Skip bridges — they float above terrain; the builder
+                    // applies a fixed offset above the terrain surface.
+                    if f.elevated == Some(true) {
+                        continue;
+                    }
+                    for p in &mut f.points {
+                        if p.y.abs() < 0.01 {
+                            p.y = sample_y(p.x, p.z);
+                            enriched += 1;
+                        }
+                    }
+                }
+                Feature::Rail(f) => {
+                    for p in &mut f.points {
+                        if p.y.abs() < 0.01 {
+                            p.y = sample_y(p.x, p.z);
+                            enriched += 1;
+                        }
+                    }
+                }
+                Feature::Building(f) => {
+                    if f.base_y.abs() < 0.01 {
+                        // Sample at footprint centroid
+                        let n = f.footprint.points.len() as f64;
+                        let cx = f.footprint.points.iter().map(|p| p.x).sum::<f64>() / n;
+                        let cz = f.footprint.points.iter().map(|p| p.y).sum::<f64>() / n;
+                        f.base_y = sample_y(cx, cz);
+                        enriched += 1;
+                    }
+                }
+                Feature::Prop(f) => {
+                    if f.position.y.abs() < 0.01 {
+                        f.position.y = sample_y(f.position.x, f.position.z);
+                        enriched += 1;
+                    }
+                }
+                Feature::Water(WaterFeature::Ribbon(r)) => {
+                    for p in &mut r.points {
+                        if p.y.abs() < 0.01 {
+                            p.y = sample_y(p.x, p.z);
+                            enriched += 1;
+                        }
+                    }
+                }
+                Feature::Water(WaterFeature::Polygon(_)) => {
+                    // Water polygon surfaceY is computed in the chunker where
+                    // the chunk origin is known. Nothing to enrich here.
+                }
+                Feature::Barrier(f) => {
+                    for p in &mut f.points {
+                        if p.y.abs() < 0.01 {
+                            p.y = sample_y(p.x, p.z);
+                            enriched += 1;
+                        }
+                    }
+                }
+                Feature::Landuse(_) => {
+                    // 2-D footprint only — no Y to enrich.
+                }
+            }
+        }
+
+        ctx.notes.push(format!(
+            "enriched {} feature Y positions from DEM",
+            enriched,
+        ));
+        Ok(())
+    }
+}
+
+pub struct SyntheticAustinAdapter {
+    pub meters_per_stud: f64,
+}
 
 impl SourceAdapter for SyntheticAustinAdapter {
     fn name(&self) -> &'static str {
@@ -244,10 +352,11 @@ impl SourceAdapter for SyntheticAustinAdapter {
         let mut features = Vec::new();
         let elevation = PerlinElevationProvider::default();
         let center = bbox.center();
+        let mps = self.meters_per_stud;
 
         // Helper to project and sample height
         let project_with_y = |lat: f64, lon: f64| {
-            let mut p = Mercator::project(LatLon::new(lat, lon), center, 1.0);
+            let mut p = Mercator::project(LatLon::new(lat, lon), center, mps);
             p.y = elevation.sample_height_at(LatLon::new(lat, lon)) as f64;
             p
         };

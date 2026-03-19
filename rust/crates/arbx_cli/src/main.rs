@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use arbx_geo::{BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevationProvider, OffsetElevationProvider, TerrariumElevationProvider};
-use arbx_pipeline::{run_pipeline, NormalizeStage, TriangulateStage, ValidateStage};
+use arbx_pipeline::{run_pipeline, ElevationEnrichmentStage, NormalizeStage, TriangulateStage, ValidateStage};
 use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider};
 
 fn print_help() {
@@ -223,25 +223,19 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             cache_dir,
         })
     } else {
-        Box::new(arbx_pipeline::SyntheticAustinAdapter)
+        Box::new(arbx_pipeline::SyntheticAustinAdapter { meters_per_stud })
     };
 
     println!("Compiling from {}... (meters_per_stud={meters_per_stud})", adapter.name());
-
-    let stages = [
-        &ValidateStage as &dyn arbx_pipeline::PipelineStage,
-        &NormalizeStage as &dyn arbx_pipeline::PipelineStage,
-        &TriangulateStage as &dyn arbx_pipeline::PipelineStage,
-    ];
-
-    let ctx = run_pipeline(adapter.as_ref(), bbox, &stages)
-        .map_err(|e| format!("pipeline failed: {:?}", e))?;
 
     let config = ExportConfig {
         meters_per_stud,
         terrain_cell_size,
         ..ExportConfig::default()
     };
+
+    // ── Create elevation provider BEFORE the pipeline so the enrichment
+    //    stage can inject DEM-derived Y values into every feature. ──────────
 
     // Try to download SRTM tile for the bbox if not already present
     let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
@@ -272,9 +266,9 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
 
     let elevation: Box<dyn arbx_geo::ElevationProvider> = {
         // Try Terrarium tiles first (no API key required, auto-cached).
-        match TerrariumElevationProvider::new(&ctx.bbox, TerrariumElevationProvider::DEFAULT_ZOOM) {
+        match TerrariumElevationProvider::new(&bbox, TerrariumElevationProvider::DEFAULT_ZOOM) {
             Ok(terrarium) => {
-                let center = ctx.bbox.center();
+                let center = bbox.center();
                 let base = terrarium.sample_height_at(center);
                 eprintln!("Using Terrarium elevation, base offset = {:.1}m at bbox center", base);
                 Box::new(OffsetElevationProvider::new(Box::new(terrarium), base))
@@ -284,7 +278,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 let hgt_path = std::path::PathBuf::from("data/N30W098.hgt");
                 if hgt_path.exists() {
                     let hgt = HgtElevationProvider::new(std::path::PathBuf::from("data"));
-                    let base = hgt.sample_height_at(ctx.bbox.center());
+                    let base = hgt.sample_height_at(bbox.center());
                     eprintln!("Using SRTM elevation, base offset = {:.1}m at bbox center", base);
                     Box::new(OffsetElevationProvider::new(Box::new(hgt), base))
                 } else {
@@ -294,6 +288,23 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             }
         }
     };
+
+    // ── Run pipeline with elevation enrichment as the final stage ──────────
+    let enrichment = ElevationEnrichmentStage {
+        elevation: elevation.as_ref(),
+        meters_per_stud,
+        bbox_center: bbox.center(),
+    };
+
+    let stages: [&dyn arbx_pipeline::PipelineStage; 4] = [
+        &ValidateStage,
+        &NormalizeStage,
+        &TriangulateStage,
+        &enrichment,
+    ];
+
+    let ctx = run_pipeline(adapter.as_ref(), bbox, &stages)
+        .map_err(|e| format!("pipeline failed: {:?}", e))?;
 
     let mut sat_provider = satellite_dir.as_deref().map(SatelliteTileProvider::new);
     let manifest = export_to_chunks(
