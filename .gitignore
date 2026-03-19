@@ -8,6 +8,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Roblox / Rojo
 *.rbxl
@@ -17,6 +20,8 @@ venv/
 sourcemap.json
 Packages/
 *.local.project.json
+roblox/out/
+roblox/src/ServerStorage/SampleData/AustinManifest.lua
 
 # OS / editor
 .DS_Store
@@ -24,3 +29,15 @@ Thumbs.db
 .vscode/
 .idea/
 analysis/
+
+# Generated outputs / temp
+out/
+tmp/
+rust/out/
+*.log
+
+# Local secrets / env
+.env
+.env.*
+*.pem
+*.key
