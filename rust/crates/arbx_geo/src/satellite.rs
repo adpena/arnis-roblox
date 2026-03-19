@@ -26,6 +26,7 @@ pub struct SatelliteTileProvider {
     zoom: u32,
     cache_dir: PathBuf,
     tiles: HashMap<(u32, u32), DynamicImage>,
+    access_order: Vec<(u32, u32)>,  // most recently used at the end
 }
 
 impl SatelliteTileProvider {
@@ -36,6 +37,7 @@ impl SatelliteTileProvider {
             zoom: 19,  // z19 ≈ 0.3m/pixel — per-stud satellite resolution
             cache_dir: cache_path,
             tiles: HashMap::new(),
+            access_order: Vec::new(),
         }
     }
 
@@ -61,18 +63,31 @@ impl SatelliteTileProvider {
     }
 
     fn get_or_fetch_tile(&mut self, tx: u32, ty: u32) -> Option<&DynamicImage> {
-        if !self.tiles.contains_key(&(tx, ty)) {
-            // Evict oldest tiles if cache is full (simple strategy: clear half)
-            if self.tiles.len() >= MAX_CACHED_TILES {
-                let keys: Vec<_> = self.tiles.keys().copied().take(MAX_CACHED_TILES / 2).collect();
-                for k in keys {
-                    self.tiles.remove(&k);
-                }
+        let key = (tx, ty);
+
+        if self.tiles.contains_key(&key) {
+            // Move to end of access order (most recently used)
+            if let Some(pos) = self.access_order.iter().position(|k| *k == key) {
+                self.access_order.remove(pos);
             }
-            let img = self.fetch_tile(tx, ty)?;
-            self.tiles.insert((tx, ty), img);
+            self.access_order.push(key);
+            return self.tiles.get(&key);
         }
-        self.tiles.get(&(tx, ty))
+
+        // Evict LRU entries if at capacity
+        while self.tiles.len() >= MAX_CACHED_TILES {
+            if let Some(evict_key) = self.access_order.first().copied() {
+                self.access_order.remove(0);
+                self.tiles.remove(&evict_key);
+            } else {
+                break;
+            }
+        }
+
+        let img = self.fetch_tile(tx, ty)?;
+        self.tiles.insert(key, img);
+        self.access_order.push(key);
+        self.tiles.get(&key)
     }
 
     fn fetch_tile(&self, tx: u32, ty: u32) -> Option<DynamicImage> {
