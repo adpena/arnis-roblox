@@ -1,4 +1,5 @@
 pub mod overture;
+pub mod overpass_client;
 
 use arbx_geo::{
     BoundingBox, ElevationProvider, Footprint, LatLon, Mercator, PerlinElevationProvider, Vec2,
@@ -685,6 +686,32 @@ impl SourceAdapter for OverpassAdapter {
         features.extend(overture_features);
 
         Ok(features)
+    }
+}
+
+/// Adapter that fetches live Overpass API data for a given bounding box,
+/// caches the result to disk, then delegates parsing to [`OverpassAdapter`].
+pub struct LiveOverpassAdapter {
+    pub bbox: BoundingBox,
+    /// How many real-world meters correspond to one Roblox stud.
+    pub meters_per_stud: f64,
+    /// Directory used for on-disk caching of Overpass responses.
+    /// Defaults to `"out/overpass"` in the CLI.
+    pub cache_dir: String,
+}
+
+impl SourceAdapter for LiveOverpassAdapter {
+    fn name(&self) -> &'static str {
+        "live-overpass"
+    }
+
+    fn load(&self, bbox: BoundingBox) -> PipelineResult<Vec<Feature>> {
+        let path = overpass_client::fetch_overpass(bbox, &self.cache_dir)?;
+        let file_adapter = OverpassAdapter {
+            path,
+            meters_per_stud: self.meters_per_stud,
+        };
+        file_adapter.load(bbox)
     }
 }
 

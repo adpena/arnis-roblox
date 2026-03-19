@@ -13,7 +13,9 @@ fn print_help() {
     println!("Commands:");
     println!("  sample [--out PATH] [--grid X,Z]   Emit the sample manifest");
     println!("  compile [--out PATH] [--source PATH] [--bbox MIN_LAT,MIN_LON,MAX_LAT,MAX_LON]");
+    println!("          [--live] [--cache-dir PATH]");
     println!("                                     Run the pipeline and emit a manifest");
+    println!("                                     --live fetches from Overpass API (cached under out/overpass/)");
     println!("  config [--out PATH]               Emit a default world configuration JSON");
     println!("  stats <PATH>                       Print statistics for a manifest file");
     println!("  validate <PATH>                    Validate a manifest file");
@@ -75,6 +77,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
     // 1 stud = 1 meter by default. Use --meters-per-stud to scale the world.
     let mut meters_per_stud: f64 = 1.0;
+    // --live: fetch from the Overpass API instead of a local file.
+    let mut live = false;
+    // --cache-dir: where to store cached Overpass responses (default: out/overpass).
+    let mut cache_dir = "out/overpass".to_string();
 
     let mut i = 0;
     while i < args.len() {
@@ -117,6 +123,15 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 }
                 i += 2;
             }
+            "--live" => {
+                live = true;
+                i += 1;
+            }
+            "--cache-dir" => {
+                let value = args.get(i + 1).ok_or("--cache-dir requires a path")?;
+                cache_dir = value.clone();
+                i += 2;
+            }
             other => {
                 return Err(format!("unknown argument to compile: {other}"));
             }
@@ -126,6 +141,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let start = Instant::now();
 
     let adapter: Box<dyn arbx_pipeline::SourceAdapter> = if let Some(path) = &source_path {
+        // --source always uses the file-based adapter regardless of --live
         if path.to_string_lossy().ends_with(".json") {
             let content =
                 fs::read_to_string(path).map_err(|e| format!("failed to read source: {}", e))?;
@@ -140,6 +156,13 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         } else {
             Box::new(arbx_pipeline::FileSourceAdapter { path: path.clone() })
         }
+    } else if live {
+        // --live with no --source: fetch from the Overpass API
+        Box::new(arbx_pipeline::LiveOverpassAdapter {
+            bbox,
+            meters_per_stud,
+            cache_dir,
+        })
     } else {
         Box::new(arbx_pipeline::SyntheticAustinAdapter)
     };
