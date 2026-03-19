@@ -129,6 +129,18 @@ function ChunkSchema.validateManifest(manifest)
             if road.sidewalk ~= nil then
                 assertType(road.sidewalk, "string", prefix .. ".roads[].sidewalk must be a string")
             end
+            if road.maxspeed ~= nil then
+                assertType(road.maxspeed, "number", prefix .. ".roads[].maxspeed must be a number")
+            end
+            if road.lit ~= nil then
+                assertType(road.lit, "boolean", prefix .. ".roads[].lit must be a boolean")
+            end
+            if road.oneway ~= nil then
+                assertType(road.oneway, "boolean", prefix .. ".roads[].oneway must be a boolean")
+            end
+            if road.layer ~= nil then
+                assertType(road.layer, "number", prefix .. ".roads[].layer must be a number")
+            end
             for pointIndex, point in ipairs(road.points) do
                 validatePoint3(point, ("%s.roads[].points[%d]"):format(prefix, pointIndex))
             end
@@ -184,6 +196,12 @@ function ChunkSchema.validateManifest(manifest)
             if building.minHeight ~= nil then
                 assertType(building.minHeight, "number", prefix .. ".buildings[].minHeight must be a number")
             end
+            if building.roofHeight ~= nil then
+                assertType(building.roofHeight, "number", prefix .. ".buildings[].roofHeight must be a number")
+            end
+            if building.name ~= nil then
+                assertType(building.name, "string", prefix .. ".buildings[].name must be a string")
+            end
 
             for pointIndex, point in ipairs(building.footprint) do
                 validatePoint2(point, ("%s.buildings[].footprint[%d]"):format(prefix, pointIndex))
@@ -211,6 +229,12 @@ function ChunkSchema.validateManifest(manifest)
             assertType(water.material, "string", prefix .. ".water[].material must be a string")
             if water.surfaceY ~= nil then
                 assertType(water.surfaceY, "number", prefix .. ".water[].surfaceY must be a number")
+            end
+            if water.width ~= nil then
+                assertType(water.width, "number", prefix .. ".water[].width must be a number")
+            end
+            if water.intermittent ~= nil then
+                assertType(water.intermittent, "boolean", prefix .. ".water[].intermittent must be a boolean")
             end
 
             if water.points then
@@ -255,6 +279,15 @@ function ChunkSchema.validateManifest(manifest)
             assertType(prop.scale, "number", prefix .. ".props[].scale must be a number")
             if prop.species ~= nil then
                 assertType(prop.species, "string", prefix .. ".props[].species must be a string")
+            end
+            if prop.height ~= nil then
+                assertType(prop.height, "number", prefix .. ".props[].height must be a number")
+            end
+            if prop.leafType ~= nil then
+                assertType(prop.leafType, "string", prefix .. ".props[].leafType must be a string")
+            end
+            if prop.circumference ~= nil then
+                assertType(prop.circumference, "number", prefix .. ".props[].circumference must be a number")
             end
         end
 
