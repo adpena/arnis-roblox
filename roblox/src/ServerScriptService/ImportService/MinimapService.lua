@@ -4,12 +4,17 @@ local AssetService = game:GetService("AssetService")
 
 local MinimapService = {}
 
+local UserInputService = game:GetService("UserInputService")
+
 -- Minimap configuration
 local MAP_SIZE = 200          -- pixels (square)
-local MAP_DISPLAY_SIZE = 180  -- studs on screen (UDim2 pixel size)
-local MAP_RADIUS = 400        -- world studs visible in minimap radius
+local MAP_DISPLAY_SIZE = 180  -- pixel size on screen (small mode)
+local MAP_FULLSCREEN_SIZE = 600 -- pixel size on screen (fullscreen mode)
+local MAP_RADIUS = 400        -- world studs visible in minimap radius (small)
+local MAP_RADIUS_FULL = 1600  -- world studs visible (fullscreen)
 local UPDATE_INTERVAL = 0.2   -- seconds between minimap updates
 local BORDER_WIDTH = 3
+local isFullscreen = false
 
 -- Colors (RGBA bytes)
 local COLORS = {
@@ -118,7 +123,8 @@ local function worldToPixel(worldX, worldZ, camX, camZ, camYaw)
     local rotZ = rx * sinY + rz * cosY
 
     -- Scale to pixel space
-    local scale = MAP_SIZE / (MAP_RADIUS * 2)
+    local activeRadius = isFullscreen and MAP_RADIUS_FULL or MAP_RADIUS
+    local scale = MAP_SIZE / (activeRadius * 2)
     local px = MAP_SIZE / 2 + rotX * scale
     local py = MAP_SIZE / 2 + rotZ * scale
 
@@ -177,7 +183,7 @@ local function renderMap(camX, camZ, camYaw)
                     local p2 = water.points[i + 1]
                     local px1, py1 = worldToPixel(p1.x + ox, p1.z + oz, camX, camZ, camYaw)
                     local px2, py2 = worldToPixel(p2.x + ox, p2.z + oz, camX, camZ, camYaw)
-                    local widthPx = math.max(2, math.floor((water.widthStuds or 8) * MAP_SIZE / (MAP_RADIUS * 2)))
+                    local widthPx = math.max(2, math.floor((water.widthStuds or 8) * MAP_SIZE / (activeRadius * 2)))
                     drawLine(px1, py1, px2, py2, COLORS.water, widthPx)
                 end
             end
@@ -207,7 +213,7 @@ local function renderMap(camX, camZ, camYaw)
             if not majorKinds[road.kind] then
                 color = COLORS.road_minor
             end
-            local widthPx = math.max(1, math.floor((road.widthStuds or 10) * MAP_SIZE / (MAP_RADIUS * 2) * 0.5))
+            local widthPx = math.max(1, math.floor((road.widthStuds or 10) * MAP_SIZE / (activeRadius * 2) * 0.5))
             widthPx = math.min(widthPx, 4) -- cap line thickness
 
             for i = 1, #road.points - 1 do
@@ -259,7 +265,8 @@ function MinimapService.CreateGui(player)
     local frame = Instance.new("Frame")
     frame.Name = "MinimapFrame"
     frame.Size = UDim2.new(0, MAP_DISPLAY_SIZE + 10, 0, MAP_DISPLAY_SIZE + 10)
-    frame.Position = UDim2.new(1, -MAP_DISPLAY_SIZE - 20, 0, 10)
+    -- Bottom-left corner
+    frame.Position = UDim2.new(0, 10, 1, -MAP_DISPLAY_SIZE - 20)
     frame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -299,6 +306,29 @@ function MinimapService.CreateGui(player)
     label.Parent = frame
 
     screenGui.Parent = player.PlayerGui
+
+    -- M key toggles fullscreen
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == Enum.KeyCode.M then
+            isFullscreen = not isFullscreen
+            if isFullscreen then
+                -- Expand to fullscreen center
+                local size = MAP_FULLSCREEN_SIZE + 10
+                frame.Size = UDim2.new(0, size, 0, size)
+                frame.Position = UDim2.new(0.5, -size / 2, 0.5, -size / 2)
+                imageLabel.Size = UDim2.new(0, MAP_FULLSCREEN_SIZE, 0, MAP_FULLSCREEN_SIZE)
+                label.Text = "MAP  [M to close]"
+            else
+                -- Collapse to bottom-left mini
+                local size = MAP_DISPLAY_SIZE + 10
+                frame.Size = UDim2.new(0, size, 0, size)
+                frame.Position = UDim2.new(0, 10, 1, -size - 10)
+                imageLabel.Size = UDim2.new(0, MAP_DISPLAY_SIZE, 0, MAP_DISPLAY_SIZE)
+                label.Text = "MAP"
+            end
+        end
+    end)
 end
 
 -- Start the minimap update loop
