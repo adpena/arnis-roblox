@@ -7,9 +7,11 @@ local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldCon
 local DayNightCycle = {}
 
 local CYCLE_SPEED = 1 -- 1 = real-time, 60 = 1 minute per second, 0 = frozen
+local connection = nil
 local DAWN_HOUR = 6.5
 local DUSK_HOUR = 19.5
 local UPDATE_INTERVAL = 0.5 -- seconds between lighting updates
+local DETAIL_GROUP_TAG = "LOD_DetailGroup"
 
 local isNight = false
 local lastUpdate = 0
@@ -18,9 +20,21 @@ local function isDusk(hour)
     return hour >= DUSK_HOUR or hour < DAWN_HOUR
 end
 
+local function forEachDetailDescendant(visitor)
+    for _, group in ipairs(CollectionService:GetTagged(DETAIL_GROUP_TAG)) do
+        if group:IsDescendantOf(game) then
+            for _, descendant in ipairs(group:GetDescendants()) do
+                visitor(descendant)
+            end
+        end
+    end
+end
+
 local function updateLighting(hour)
     local night = isDusk(hour)
-    if night == isNight then return end -- no change
+    if night == isNight then
+        return
+    end -- no change
     isNight = night
 
     -- Toggle street lights
@@ -31,9 +45,8 @@ local function updateLighting(hour)
         end
     end
 
-    -- Toggle building window glow
-    -- Windows tagged LOD_Detail with Glass material get a warm glow at night
-    for _, part in ipairs(CollectionService:GetTagged("LOD_Detail")) do
+    -- Toggle building window glow from grouped detail ownership.
+    forEachDetailDescendant(function(part)
         if part:IsA("BasePart") and part.Material == Enum.Material.Glass then
             if night then
                 part.Color = Color3.fromRGB(255, 220, 150) -- warm interior glow
@@ -43,7 +56,7 @@ local function updateLighting(hour)
                 part.Transparency = part:GetAttribute("BaseTransparency") or 0.35
             end
         end
-    end
+    end)
 
     -- Adjust atmosphere
     local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
@@ -69,9 +82,12 @@ end
 
 function DayNightCycle.Start(speed)
     CYCLE_SPEED = speed or WorldConfig.DayNightSpeed or 60
-    if CYCLE_SPEED == 0 then return end -- frozen time
+    if CYCLE_SPEED == 0 then
+        return
+    end -- frozen time
 
-    RunService.Heartbeat:Connect(function(dt)
+    if connection then connection:Disconnect() end
+    connection = RunService.Heartbeat:Connect(function(dt)
         -- Advance clock
         local minutesPerSecond = CYCLE_SPEED / 60
         Lighting.ClockTime = (Lighting.ClockTime + minutesPerSecond * dt / 60) % 24
@@ -90,6 +106,7 @@ end
 
 function DayNightCycle.Stop()
     CYCLE_SPEED = 0
+    if connection then connection:Disconnect(); connection = nil end
 end
 
 function DayNightCycle.SetTime(hour)
