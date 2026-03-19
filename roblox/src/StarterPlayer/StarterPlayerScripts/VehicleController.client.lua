@@ -33,6 +33,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -61,7 +62,7 @@ local JETPACK_MAX_THRUST = 6000
 local JETPACK_RAMP_TIME = 0.3
 local JETPACK_DAMPING = 0.92
 local JETPACK_HOVER_FORCE_Y = 196.2 * 3  -- counteract gravity for ~3 mass
-local JETPACK_FUEL_MAX = 30          -- seconds
+local JETPACK_FUEL_MAX = 60          -- seconds (enough to reach top of tallest skyscrapers)
 local JETPACK_FUEL_RECHARGE_RATE = 0.5  -- per second on ground
 
 -- Parachute physics
@@ -191,6 +192,38 @@ local function tweenProperty(obj, props, duration, style, direction)
     local tween = TweenService:Create(obj, TweenInfo.new(duration, style, direction), props)
     tween:Play()
     return tween
+end
+
+local function getOrCreateDOF()
+    local dof = Lighting:FindFirstChildOfClass("DepthOfFieldEffect")
+    if not dof then
+        dof = Instance.new("DepthOfFieldEffect")
+        dof.Parent = Lighting
+    end
+    return dof
+end
+
+local function enableCinematicDOF()
+    local dof = getOrCreateDOF()
+    dof.FarIntensity = 0.5
+    dof.FocusDistance = 200
+    dof.InFocusRadius = 100
+    dof.NearIntensity = 0
+    dof.Enabled = true
+end
+
+local function enableParachuteDOF()
+    local dof = getOrCreateDOF()
+    dof.FarIntensity = 0.3
+    dof.FocusDistance = 300
+    dof.InFocusRadius = 200
+    dof.NearIntensity = 0
+    dof.Enabled = true
+end
+
+local function disableDOF()
+    local dof = Lighting:FindFirstChildOfClass("DepthOfFieldEffect")
+    if dof then dof.Enabled = false end
 end
 
 -- Sound assets from Roblox library
@@ -1590,6 +1623,8 @@ local function deployParachute()
         end
     end)
 
+    enableParachuteDOF()
+
     mode = "parachute"
     customCamActive = true
     setHUDMode("parachute")
@@ -1625,6 +1660,7 @@ local function retractParachute()
     chuteFlutterSound = nil
 
     if mode == "parachute" then
+        disableDOF()
         mode = "none"
         customCamActive = false
         camera.CameraType = Enum.CameraType.Custom
@@ -1860,6 +1896,8 @@ local function fullCleanup()
     camCurrentPos = nil
     jetpackFuel = JETPACK_FUEL_MAX
 
+    disableDOF()
+
     camera.CameraType = Enum.CameraType.Custom
     camera.FieldOfView = DEFAULT_FOV
 
@@ -1931,6 +1969,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     elseif keyCode == Enum.KeyCode.C then
         cinematicMode = not cinematicMode
         if cinematicMode then
+            enableCinematicDOF()
             controlHints.Text = "[C] Exit cinematic view"
             controlHintTimer = HUD_FADE_DELAY
             if not controlHintsVisible then
@@ -1938,6 +1977,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 tweenProperty(controlHints, { TextTransparency = 0, BackgroundTransparency = 0.4 }, 0.3)
             end
         else
+            disableDOF()
             camera.CameraType = Enum.CameraType.Custom
             camera.FieldOfView = DEFAULT_FOV
             setHUDMode(mode)
