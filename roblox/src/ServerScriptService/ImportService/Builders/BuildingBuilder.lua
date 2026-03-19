@@ -99,6 +99,34 @@ local function getColor(building)
     return BUILDING_PALETTE[(hashId(id) % #BUILDING_PALETTE) + 1]
 end
 
+local function getRoofColor(building, wallColor)
+    if building.roofColor and building.roofColor.r then
+        return Color3.fromRGB(building.roofColor.r, building.roofColor.g, building.roofColor.b)
+    end
+    -- Fallback: darken wall color by 20%
+    if wallColor then
+        return Color3.new(wallColor.R * 0.8, wallColor.G * 0.8, wallColor.B * 0.8)
+    end
+    return Color3.fromRGB(120, 120, 120) -- grey default
+end
+
+local ROOF_MATERIAL_LOOKUP = {
+    Asphalt = Enum.Material.Asphalt,
+    Metal = Enum.Material.Metal,
+    Brick = Enum.Material.Brick,
+    WoodPlanks = Enum.Material.WoodPlanks,
+    Slate = Enum.Material.Slate,
+    Concrete = Enum.Material.Concrete,
+}
+
+local function getRoofMaterial(building, wallMat)
+    if building.roofMaterial then
+        return ROOF_MATERIAL_LOOKUP[building.roofMaterial] or Enum.Material.Concrete
+    end
+    -- Fall back to wall material
+    return wallMat or Enum.Material.Concrete
+end
+
 local function pointInPolygon(px, pz, poly)
     local inside = false
     local j = #poly
@@ -302,7 +330,9 @@ local function tryBuildSimpleFlatRoof(
     return true
 end
 
-local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat, parent)
+local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat, parent, roofColor, roofMat)
+    local effectiveColor = roofColor or color
+    local effectiveMat = roofMat or mat
     local centroid, rightAxis, forwardAxis = getRoofBasis(footprint)
     local roofPoly = table.create(#footprint)
     local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
@@ -344,8 +374,8 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
             minZ,
             maxX,
             maxZ,
-            color,
-            mat,
+            effectiveColor,
+            effectiveMat,
             parent
         )
     then
@@ -361,8 +391,8 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         strip.Name = string.format("%s_roof_%d", bldgName, stripIndex)
         strip.Anchored = true
         strip.CastShadow = false
-        strip.Material = mat
-        strip.Color = color
+        strip.Material = effectiveMat
+        strip.Color = effectiveColor
         strip.Size = Vector3.new(ROOF_GRID_SIZE, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
         strip.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         strip.Parent = parent
@@ -400,8 +430,8 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         roof.Name = bldgName .. "_roof"
         roof.Anchored = true
         roof.CastShadow = false
-        roof.Material = mat
-        roof.Color = color
+        roof.Material = effectiveMat
+        roof.Color = effectiveColor
         roof.Size = Vector3.new(math.max(1, maxX - minX), ROOF_THICKNESS, math.max(1, maxZ - minZ))
         roof.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         roof.Parent = parent
@@ -426,21 +456,19 @@ local function resolveBuildingBaseY(chunk, footprintData, fallbackBaseY)
     end
 
     local minGroundY = math.huge
+    local sampleGroundY = GroundSampler.createSampler(chunk)
 
     for _, point in ipairs(footprintData.footprintXZ) do
         local worldX = point.x
         local worldZ = point.z
-        local groundY = GroundSampler.sampleWorldHeight(chunk, worldX, worldZ)
+        local groundY = sampleGroundY(worldX, worldZ)
         if groundY < minGroundY then
             minGroundY = groundY
         end
     end
 
-    local centroidGroundY = GroundSampler.sampleWorldHeight(
-        chunk,
-        footprintData.sumX / footprintData.count,
-        footprintData.sumZ / footprintData.count
-    )
+    local centroidGroundY =
+        sampleGroundY(footprintData.sumX / footprintData.count, footprintData.sumZ / footprintData.count)
     if centroidGroundY < minGroundY then
         minGroundY = centroidGroundY
     end
@@ -457,6 +485,9 @@ end
 local function buildRoof(building, footprint, bounds, baseY, height, color, mat, parent)
     local bldgName = building.id or "Building"
     local roofShape = (building.roof or "flat"):lower()
+    -- Resolve roof-specific color and material (may differ from wall color/mat)
+    local rc = getRoofColor(building, color)
+    local rm = getRoofMaterial(building, mat)
 
     local minX = bounds.minX
     local minZ = bounds.minZ
@@ -483,15 +514,15 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         p1.Name = bldgName .. "_roof_p1"
         p1.Anchored = true
         p1.CastShadow = false
-        p1.Material = mat
-        p1.Color = color
+        p1.Material = rm
+        p1.Color = rc
 
         local p2 = Instance.new("Part")
         p2.Name = bldgName .. "_roof_p2"
         p2.Anchored = true
         p2.CastShadow = false
-        p2.Material = mat
-        p2.Color = color
+        p2.Material = rm
+        p2.Color = rc
 
         if ridgeAxisIsZ then
             -- Panels tilt around Z axis: left half (+angle), right half (-angle)
@@ -519,8 +550,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         mesh.MeshType = Enum.MeshType.Wedge
         mesh.Parent = apex
         apex.CFrame = CFrame.new(centerX, baseY + height + rise, centerZ)
-        apex.Material = mat
-        apex.Color = color
+        apex.Material = rm
+        apex.Color = rc
         apex.CastShadow = false
         apex.Parent = parent
         return
@@ -532,8 +563,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         dome.Shape = Enum.PartType.Ball
         dome.Size = Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
         dome.CFrame = CFrame.new(centerX, baseY + height + radius * 0.5, centerZ)
-        dome.Material = mat
-        dome.Color = color
+        dome.Material = rm
+        dome.Color = rc
         dome.CastShadow = false
         dome.Parent = parent
         return
@@ -545,8 +576,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         wedge.Name = bldgName .. "_roof"
         wedge.Anchored = true
         wedge.CastShadow = false
-        wedge.Material = mat
-        wedge.Color = color
+        wedge.Material = rm
+        wedge.Color = rc
         if ridgeAxisIsZ then
             wedge.Size = Vector3.new(footprintW, rise, footprintL)
         else
@@ -566,8 +597,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         deck.Anchored = true
         deck.Size = Vector3.new(insetX, 0.5, insetZ)
         deck.CFrame = CFrame.new(centerX, baseY + height + slopeH + 0.25, centerZ)
-        deck.Material = Enum.Material.Slate
-        deck.Color = Color3.fromRGB(90, 90, 100)
+        deck.Material = rm
+        deck.Color = rc
         deck.CastShadow = false
         deck.Parent = parent
         -- Four sloped side strips
@@ -600,8 +631,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
                 strip.Anchored = true
                 strip.Size = s[1]
                 strip.CFrame = CFrame.new(s[2], baseY + height + slopeH * 0.5, s[3])
-                strip.Material = mat
-                strip.Color = color
+                strip.Material = rm
+                strip.Color = rc
                 strip.CastShadow = false
                 strip.Parent = parent
             end
@@ -616,8 +647,8 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
         cone.Anchored = true
         cone.Size = Vector3.new(radius * 2, rise, radius * 2)
         cone.CFrame = CFrame.new(centerX, baseY + height + rise * 0.5, centerZ)
-        cone.Material = mat
-        cone.Color = color
+        cone.Material = rm
+        cone.Color = rc
         cone.CastShadow = false
         local mesh = Instance.new("SpecialMesh")
         mesh.MeshType = Enum.MeshType.FileMesh
@@ -629,7 +660,7 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
     end
 
     -- Default / flat → flat slab
-    buildFlatRoofFromFootprint(bldgName, footprint, baseY + height, color, mat, parent)
+    buildFlatRoofFromFootprint(bldgName, footprint, baseY + height, color, mat, parent, rc, rm)
 end
 
 -- Build a single building as polygon wall Parts + roof
@@ -696,13 +727,20 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     end
 
     -- Window bands for tall buildings (>= 3 floors, simple polygons only)
-    local buildingMat = building.material or "Concrete"
-    local isGlass = (buildingMat == "Glass" or buildingMat == "office")
-    local bandColor = Color3.new(
-        math.min(1, color.R + 0.15),
-        math.min(1, color.G + 0.18),
-        math.min(1, color.B + 0.25) -- slightly blue-tinted lighter
-    )
+    -- Density varies by usage: office = dense (4-stud spacing), residential = medium (6-stud),
+    -- warehouse/industrial = sparse (12-stud); others default to 8-stud spacing.
+    local usage = building.usage or building.kind or "default"
+    local WIN_SPACING
+    if usage == "office" then
+        WIN_SPACING = 4
+    elseif usage == "residential" or usage == "apartments" or usage == "house" then
+        WIN_SPACING = 6
+    elseif usage == "warehouse" or usage == "industrial" then
+        WIN_SPACING = 12
+    else
+        WIN_SPACING = 8
+    end
+    local WIN_COLOR = Color3.fromRGB(40, 50, 70) -- dark blue-grey glass tint
     local FLOOR_H = 5
     local BAND_H = 2.5
     local numFloors = math.floor(height / FLOOR_H)
@@ -718,19 +756,29 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
                 if eLen < MIN_EDGE then
                     continue
                 end
-                local band = Instance.new("Part")
-                band.Name = bldgName .. "_win" .. i .. "_" .. floor
-                band.Anchored = true
-                band.Size = Vector3.new(WALL_THICKNESS * 0.5, BAND_H, eLen)
-                band.CFrame = CFrame.lookAt(
-                    Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
-                    Vector3.new(p2w.X, bandY, p2w.Z)
-                )
-                band.Material = isGlass and Enum.Material.Glass or Enum.Material.SmoothPlastic
-                band.Color = bandColor
-                band.CastShadow = false
-                band.Transparency = isGlass and 0.3 or 0.0
-                band.Parent = model
+                -- Emit individual window panes spaced by WIN_SPACING along the edge
+                local numPanes = math.max(1, math.floor(eLen / WIN_SPACING))
+                local paneW = eLen / numPanes
+                local edgeUnitX = dx / eLen
+                local edgeUnitZ = dz / eLen
+                for pane = 0, numPanes - 1 do
+                    local tCenter = (pane + 0.5) / numPanes
+                    local paneX = p1w.X + dx * tCenter
+                    local paneZ = p1w.Z + dz * tCenter
+                    local win = Instance.new("Part")
+                    win.Name = bldgName .. "_win" .. i .. "_" .. floor .. "_" .. pane
+                    win.Anchored = true
+                    win.Size = Vector3.new(WALL_THICKNESS * 0.4, BAND_H * 0.8, paneW * 0.6)
+                    win.CFrame = CFrame.lookAt(
+                        Vector3.new(paneX, bandY, paneZ),
+                        Vector3.new(paneX + edgeUnitX, bandY, paneZ + edgeUnitZ)
+                    )
+                    win.Material = Enum.Material.Glass
+                    win.Color = WIN_COLOR
+                    win.CastShadow = false
+                    win.Transparency = 0.35
+                    win.Parent = model
+                end
             end
         end
     end
