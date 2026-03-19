@@ -8,20 +8,41 @@ use arbx_pipeline::{run_pipeline, NormalizeStage, TriangulateStage, ValidateStag
 use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider};
 
 fn print_help() {
-    println!("arbx_cli");
+    println!("arbx_cli — Arnis HD Pipeline");
     println!();
-    println!("Commands:");
-    println!("  sample [--out PATH] [--grid X,Z]   Emit the sample manifest");
-    println!("  compile [--out PATH] [--source PATH] [--bbox MIN_LAT,MIN_LON,MAX_LAT,MAX_LON]");
-    println!("          [--live] [--cache-dir PATH] [--satellite [TILE_DIR]]");
-    println!("                                     Run the pipeline and emit a manifest");
-    println!("                                     --live fetches from Overpass API (cached under out/overpass/)");
-    println!("                                     --satellite enriches roofs/terrain from satellite imagery (tiles cached under TILE_DIR, default: out/tiles/satellite)");
-    println!("  config [--out PATH]               Emit a default world configuration JSON");
-    println!("  stats <PATH>                       Print statistics for a manifest file");
-    println!("  validate <PATH>                    Validate a manifest file");
-    println!("  diff <PATH1> <PATH2>               Compare two manifest files");
-    println!("  explain                            Print the scaffold mission");
+    println!("COMMANDS:");
+    println!("  compile    Build a chunk manifest from geodata sources");
+    println!("  sample     Emit a synthetic sample manifest for testing");
+    println!("  stats      Print statistics for a manifest file");
+    println!("  validate   Validate a manifest against the schema");
+    println!("  diff       Compare two manifest files");
+    println!("  config     Emit a default world configuration JSON");
+    println!("  explain    Print the pipeline architecture overview");
+    println!();
+    println!("COMPILE FLAGS:");
+    println!("  --source PATH          Read Overpass JSON from file (default: synthetic data)");
+    println!("  --live                 Fetch from Overpass API instead of file (cached to --cache-dir)");
+    println!("  --bbox S,W,N,E         Bounding box as min_lat,min_lon,max_lat,max_lon");
+    println!("  --out PATH             Write manifest to file (default: stdout)");
+    println!("  --meters-per-stud N    World scale (default: 0.3, Roblox humanoid proportional)");
+    println!("  --terrain-cell-size N  Terrain grid cell size in studs (default: 2, range: 1-32)");
+    println!("  --satellite [DIR]      Enable satellite material classification (tiles cached to DIR)");
+    println!("  --cache-dir PATH       Overpass API cache directory (default: out/overpass/)");
+    println!();
+    println!("PRESETS:");
+    println!("  --yolo                 Maximum fidelity: cell=1, satellite=on, 256x256 terrain grid");
+    println!("                         Requires 16GB+ RAM. For M5 Max / workstation hardware.");
+    println!();
+    println!("SAMPLE FLAGS:");
+    println!("  --out PATH             Write to file (default: stdout)");
+    println!("  --grid X,Z             Multi-chunk grid dimensions (default: 1,1)");
+    println!();
+    println!("EXAMPLES:");
+    println!("  arbx_cli compile --source data/austin.json --satellite --out out/austin.json");
+    println!("  arbx_cli compile --live --bbox 30.26,-97.75,30.27,-97.74 --yolo");
+    println!("  arbx_cli compile --live --terrain-cell-size 4  # balanced for 8GB machines");
+    println!("  arbx_cli stats out/austin.json");
+    println!("  arbx_cli validate out/austin.json");
 }
 
 fn cmd_sample(args: &[String]) -> Result<(), String> {
