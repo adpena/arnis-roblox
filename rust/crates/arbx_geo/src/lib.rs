@@ -302,11 +302,10 @@ pub struct MultiElevationProvider {
 
 impl ElevationProvider for MultiElevationProvider {
     fn sample_height_at(&self, latlon: LatLon) -> f32 {
-        for provider in &self.providers {
-            let h = provider.sample_height_at(latlon);
-            if h != 0.0 {
-                return h;
-            }
+        // Return the first provider's result. All providers return valid data
+        // for their coverage area; 0.0 is legitimate sea-level elevation.
+        if let Some(provider) = self.providers.first() {
+            return provider.sample_height_at(latlon);
         }
         0.0
     }
