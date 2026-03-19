@@ -93,6 +93,29 @@ local CHUTE_FOV = 90              -- wide panoramic view of the city
 
 local DEFAULT_FOV = 70
 
+-- Frame-rate-independent lerp rate (per second)
+local CAM_LERP_RATE = 6
+
+-- Pre-computed jetpack flame tiers (fix #1: zero per-frame NumberSequence allocs)
+local FLAME_SIZE_TIERS = {}
+local FLAME_SPEED_TIERS = {}
+for tier = 0, 10 do
+    local t = tier / 10
+    local baseSize = 0.5 + t * 2.0
+    FLAME_SIZE_TIERS[tier] = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, baseSize),
+        NumberSequenceKeypoint.new(0.3, baseSize * 0.6),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    FLAME_SPEED_TIERS[tier] = NumberRange.new(5 + t * 15, 10 + t * 20)
+end
+
+-- Cached Color3 values for brake/turn lights (fix #6: no per-frame Color3 allocs)
+local BRAKE_ON = Color3.fromRGB(255, 20, 20)
+local BRAKE_OFF = Color3.fromRGB(80, 10, 10)
+local TURN_ON = Color3.fromRGB(255, 180, 30)
+local TURN_OFF = Color3.fromRGB(80, 60, 20)
+
 -- HUD
 local HUD_FADE_DELAY = 5
 local HUD_FONT = Enum.Font.GothamBold
@@ -104,7 +127,6 @@ local HUD_ACCENT_COLOR = Color3.fromRGB(80, 180, 255)
 -- State
 --------------------------------------------------------------------------------
 local mode = "none"  -- "none" | "car" | "jetpack" | "parachute"
-local prevMode = "none"
 
 -- Car state
 local carModel = nil
@@ -120,6 +142,8 @@ local carIdleVibration = nil
 local carSteerAngle = 0
 local carPrevSpeed = 0
 local carIsBraking = false
+local prevBraking = false
+local prevTurnState = 0  -- -1 left, 0 none, 1 right
 local carGyro = nil
 
 -- Jetpack state
@@ -968,14 +992,7 @@ local function enterCar(seat)
     local hum = getHumanoid()
     if not hum or not seat then return end
 
-    -- Tween player toward seat before sitting
-    local hrp = getHRP()
-    if hrp then
-        local targetCF = seat.CFrame * CFrame.new(0, 1, 0)
-        local entryTween = tweenProperty(hrp, { CFrame = targetCF }, 0.25, Enum.EasingStyle.Quad)
-        entryTween.Completed:Wait()
-    end
-
+    -- Fix #13: let the engine handle seat entry — no CFrame tween
     seat:Sit(hum)
     mode = "car"
     customCamActive = true
@@ -996,8 +1013,11 @@ local function exitCar()
     end
     mode = "none"
     customCamActive = false
+    camCurrentPos = nil  -- fix #11: reset here, not in render loop
+    prevBraking = false
+    prevTurnState = 0
     camera.CameraType = Enum.CameraType.Custom
-    camera.FieldOfView = DEFAULT_FOV
+    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
     setHUDMode("none")
 end
 
@@ -1040,28 +1060,28 @@ local function updateCar(dt)
         end
     end
 
-    -- Brake lights: activate on deceleration or handbrake
+    -- Brake lights: activate on deceleration or handbrake (fix #6: only write on change)
     local decelerating = speed > 2 and (speed < carPrevSpeed - 0.5 or throttle < -0.1)
     carIsBraking = decelerating or handbrake
-    for _, bl in ipairs(carBrakeLights) do
-        bl.Color = carIsBraking
-            and Color3.fromRGB(255, 20, 20)
-            or Color3.fromRGB(80, 10, 10)
+    if carIsBraking ~= prevBraking then
+        prevBraking = carIsBraking
+        local brakeColor = carIsBraking and BRAKE_ON or BRAKE_OFF
+        for _, bl in ipairs(carBrakeLights) do
+            bl.Color = brakeColor
+        end
     end
 
-    -- Turn signals
-    if carModel then
+    -- Turn signals (fix #6: only write on change, use cached Color3)
+    local turnState = (steer < -0.5 and -1) or (steer > 0.5 and 1) or 0
+    if turnState ~= prevTurnState and carModel then
+        prevTurnState = turnState
         local turnL = carModel:FindFirstChild("TurnL")
         local turnR = carModel:FindFirstChild("TurnR")
         if turnL then
-            turnL.Color = (steer < -0.5)
-                and Color3.fromRGB(255, 180, 20)
-                or Color3.fromRGB(60, 40, 5)
+            turnL.Color = (turnState == -1) and TURN_ON or TURN_OFF
         end
         if turnR then
-            turnR.Color = (steer > 0.5)
-                and Color3.fromRGB(255, 180, 20)
-                or Color3.fromRGB(60, 40, 5)
+            turnR.Color = (turnState == 1) and TURN_ON or TURN_OFF
         end
     end
 
@@ -1076,13 +1096,19 @@ local function updateCar(dt)
         carEngineSound.Volume = 0.3 + (speed / CAR_MAX_SPEED) * 0.4
     end
 
-    -- Tire screech on hard turns at speed or handbrake
+    -- Tire screech on hard turns at speed or handbrake (fix #9: fade instead of hard stop)
     if carTireScreechSound then
         local shouldScreech = (math.abs(steer) > 0.7 and speed > 30) or (handbrake and speed > 15)
-        if shouldScreech and not carTireScreechSound.IsPlaying then
-            carTireScreechSound:Play()
-        elseif not shouldScreech and carTireScreechSound.IsPlaying then
-            carTireScreechSound:Stop()
+        if shouldScreech then
+            if not carTireScreechSound.IsPlaying then
+                carTireScreechSound.Volume = 0.3
+                carTireScreechSound:Play()
+            end
+        elseif carTireScreechSound.IsPlaying then
+            carTireScreechSound.Volume = lerp(carTireScreechSound.Volume, 0, math.min(1, 10 * dt))
+            if carTireScreechSound.Volume < 0.01 then
+                carTireScreechSound:Stop()
+            end
         end
     end
 
@@ -1114,7 +1140,7 @@ local function updateCar(dt)
         )).Position
 
         if camCurrentPos then
-            camCurrentPos = lerpVector3(camCurrentPos, targetPos, CAR_CAM_LERP)
+            camCurrentPos = lerpVector3(camCurrentPos, targetPos, math.min(1, CAM_LERP_RATE * dt))
         else
             camCurrentPos = targetPos
         end
@@ -1132,10 +1158,10 @@ local function updateCar(dt)
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget) * CFrame.Angles(0, 0, tiltAngle)
 
-        -- Speed-based FOV
+        -- Speed-based FOV (fix #7: dt-scaled lerp)
         local fovTarget = CAR_FOV_MIN + (speed / CAR_FOV_SPEED_RANGE) * (CAR_FOV_MAX - CAR_FOV_MIN)
         camTargetFOV = math.clamp(fovTarget, CAR_FOV_MIN, CAR_FOV_MAX)
-        camera.FieldOfView = lerp(camera.FieldOfView, camTargetFOV, 0.05)
+        camera.FieldOfView = lerp(camera.FieldOfView, camTargetFOV, math.min(1, CAM_LERP_RATE * dt))
     end
 end
 
@@ -1330,8 +1356,9 @@ local function cleanupJetpack()
     if mode == "jetpack" then
         mode = "none"
         customCamActive = false
+        camCurrentPos = nil  -- fix #11: reset here, not in render loop
         camera.CameraType = Enum.CameraType.Custom
-        camera.FieldOfView = DEFAULT_FOV
+        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
         setHUDMode("none")
     end
 end
@@ -1379,8 +1406,8 @@ local function updateJetpack(dt)
         isThrusting = true
     end
 
-    -- Gamepad thumbstick (additive to keyboard)
-    local gp = readGamepad()
+    -- Gamepad thumbstick (additive to keyboard) — fix #10: use cached frameGamepad
+    local gp = frameGamepad
     if gp then
         local stickMag = math.sqrt(gp.thumbstickX^2 + gp.thumbstickY^2)
         if stickMag > 0.1 then
@@ -1411,7 +1438,7 @@ local function updateJetpack(dt)
         isThrusting = true
     end
 
-    -- Gamepad triggers for vertical (additive, clamped)
+    -- Gamepad triggers for vertical (additive, clamped) — fix #10: reuse cached gp
     if gp then
         if gp.rightTrigger > 0.05 then
             verticalThrust = math.max(verticalThrust, gp.rightTrigger)
@@ -1460,16 +1487,13 @@ local function updateJetpack(dt)
     -- Character tilt based on movement
     -- (Uses a subtle approach: adjust the force direction slightly)
 
-    -- Particle intensity scales with thrust
+    -- Particle intensity scales with thrust (fix #1: pre-computed tier lookup, zero allocs)
+    local tier = math.floor(jetpackThrustLevel * 10 + 0.5)
+    tier = math.clamp(tier, 0, 10)
     for _, em in ipairs(jetpackEmitters) do
-        em.Rate = 40 + jetpackThrustLevel * 160
-        local baseSize = 0.5 + jetpackThrustLevel * 1.5
-        em.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, baseSize),
-            NumberSequenceKeypoint.new(0.3, baseSize * 0.6),
-            NumberSequenceKeypoint.new(1, 0),
-        })
-        em.Speed = NumberRange.new(5 + jetpackThrustLevel * 20, 10 + jetpackThrustLevel * 25)
+        em.Size = FLAME_SIZE_TIERS[tier]
+        em.Speed = FLAME_SPEED_TIERS[tier]
+        em.Rate = 50 + jetpackThrustLevel * 150
     end
 
     -- Nozzle glow intensity
@@ -1500,18 +1524,19 @@ local function updateJetpack(dt)
         )).Position
 
         if camCurrentPos then
-            camCurrentPos = lerpVector3(camCurrentPos, targetPos, JETPACK_CAM_LERP)
+            camCurrentPos = lerpVector3(camCurrentPos, targetPos, math.min(1, CAM_LERP_RATE * dt))
         else
             camCurrentPos = targetPos
         end
 
-        -- Slight shake at full thrust
-        local shake = Vector3.new(0, 0, 0)
+        -- Slight shake at full thrust (fix #2: math.noise for smooth, deterministic shake)
+        local shake = Vector3.zero
         if jetpackThrustLevel > 0.7 then
             local shakeAmt = (jetpackThrustLevel - 0.7) / 0.3 * JETPACK_CAM_SHAKE_INTENSITY
+            local t = tick()
             shake = Vector3.new(
-                (math.random() - 0.5) * shakeAmt,
-                (math.random() - 0.5) * shakeAmt,
+                math.noise(t * 12, 0) * shakeAmt,
+                math.noise(t * 12, 100) * shakeAmt,
                 0
             )
         end
@@ -1519,9 +1544,9 @@ local function updateJetpack(dt)
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.new(camCurrentPos + shake, hrp.Position + hrp.CFrame.LookVector * 10)
 
-        -- Pull FOV back slightly
+        -- Pull FOV back slightly (fix #7: dt-scaled lerp)
         local jetFov = DEFAULT_FOV + jetpackThrustLevel * 8
-        camera.FieldOfView = lerp(camera.FieldOfView, jetFov, 0.05)
+        camera.FieldOfView = lerp(camera.FieldOfView, jetFov, math.min(1, CAM_LERP_RATE * dt))
     end
 end
 
@@ -1725,10 +1750,18 @@ local function retractParachute()
         chuteLandedConn = nil
     end
 
-    -- Fade out canopy over 1 second
+    -- Fix #5: destroy physics forces IMMEDIATELY (no lingering drag/lift)
+    if chuteForce then chuteForce:Destroy() end
+    if chuteLift then chuteLift:Destroy() end
+    if chuteGyro then chuteGyro:Destroy() end
+    chuteForce = nil
+    chuteLift = nil
+    chuteGyro = nil
+
+    -- Visual parts fade out over 1 second (fix #14: guard nil via IsA check)
     local canopyParts = CollectionService:GetTagged(PARACHUTE_TAG)
     for _, obj in ipairs(canopyParts) do
-        if obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart" then
+        if obj and obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart" then
             tweenProperty(obj, { Transparency = 1 }, 1.0)
         end
     end
@@ -1739,9 +1772,6 @@ local function retractParachute()
 
     chuteCanopy = nil
     chuteLines = {}
-    chuteForce = nil
-    chuteLift = nil
-    chuteGyro = nil
     chuteWindSound = nil
     chuteFlutterSound = nil
 
@@ -1749,8 +1779,9 @@ local function retractParachute()
         disableDOF()
         mode = "none"
         customCamActive = false
+        camCurrentPos = nil  -- fix #11: reset here, not in render loop
         camera.CameraType = Enum.CameraType.Custom
-        camera.FieldOfView = DEFAULT_FOV
+        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
         setHUDMode("none")
     end
 end
@@ -1781,8 +1812,8 @@ local function updateParachute(dt)
         flareInput = 1
     end
 
-    -- Gamepad thumbstick X for parachute steering (additive, clamped to -1..1)
-    local gpChute = readGamepad()
+    -- Gamepad thumbstick X for parachute steering (additive, clamped to -1..1) — fix #10
+    local gpChute = frameGamepad
     if gpChute and math.abs(gpChute.thumbstickX) > 0.1 then
         steerInput = math.clamp(steerInput + gpChute.thumbstickX, -1, 1)
     end
@@ -1875,40 +1906,48 @@ local function updateParachute(dt)
         local targetPos = hrp.Position + behindOffset
 
         if camCurrentPos then
-            camCurrentPos = lerpVector3(camCurrentPos, targetPos, CHUTE_CAM_LERP)
+            camCurrentPos = lerpVector3(camCurrentPos, targetPos, math.min(1, CAM_LERP_RATE * dt))
         else
             camCurrentPos = targetPos
         end
 
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.new(camCurrentPos, hrp.Position + Vector3.new(0, -3, 0))
-        camera.FieldOfView = lerp(camera.FieldOfView, CHUTE_FOV, 0.04)
+        camera.FieldOfView = lerp(camera.FieldOfView, CHUTE_FOV, math.min(1, CAM_LERP_RATE * dt))
     end
 end
 
 --------------------------------------------------------------------------------
 -- TRANSITIONS
 --------------------------------------------------------------------------------
+-- Fix #3: all transitions use task.delay instead of task.wait (no yielding in render thread)
 local function transitionToJetpack()
     if transitionLock then return end
     transitionLock = true
 
     local hrp = getHRP()
 
-    -- If in car, eject upward
+    -- If in car, eject upward then deploy after delay
     if mode == "car" then
         exitCar()
         if hrp then
-            task.wait(0.1)
             hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, 40, 0)
-            task.wait(0.2)
         end
+        task.delay(0.3, function()
+            deployJetpack()
+            transitionLock = false
+        end)
+        return
     end
 
     -- If parachute active, retract first
     if mode == "parachute" then
         retractParachute()
-        task.wait(0.15)
+        task.delay(0.15, function()
+            deployJetpack()
+            transitionLock = false
+        end)
+        return
     end
 
     deployJetpack()
@@ -1922,13 +1961,21 @@ local function transitionToParachute()
     -- If jetpack active, swap seamlessly
     if mode == "jetpack" then
         cleanupJetpack()
-        task.wait(0.1)
+        task.delay(0.1, function()
+            deployParachute()
+            transitionLock = false
+        end)
+        return
     end
 
     -- If in car, eject first
     if mode == "car" then
         exitCar()
-        task.wait(0.2)
+        task.delay(0.2, function()
+            deployParachute()
+            transitionLock = false
+        end)
+        return
     end
 
     deployParachute()
@@ -1939,38 +1986,46 @@ local function transitionToCar()
     if transitionLock then return end
     transitionLock = true
 
+    local function doCarEntry()
+        -- Check if a car already exists nearby (proximity entry)
+        if carModel and carSeat then
+            local hrp = getHRP()
+            if hrp and (hrp.Position - carSeat.Position).Magnitude < 15 then
+                enterCar(carSeat)
+                transitionLock = false
+                return
+            else
+                destroyCar()
+            end
+        end
+
+        if not carModel then
+            local seat = spawnCar()
+            if seat then
+                task.delay(0.3, function()
+                    enterCar(seat)
+                    transitionLock = false
+                end)
+                return
+            end
+        end
+
+        transitionLock = false
+    end
+
     -- Clean up other modes
     if mode == "jetpack" then
         cleanupJetpack()
-        task.wait(0.1)
+        task.delay(0.1, doCarEntry)
+        return
     end
     if mode == "parachute" then
         retractParachute()
-        task.wait(0.1)
+        task.delay(0.1, doCarEntry)
+        return
     end
 
-    -- Check if a car already exists nearby (proximity entry)
-    if carModel and carSeat then
-        local hrp = getHRP()
-        if hrp and (hrp.Position - carSeat.Position).Magnitude < 15 then
-            enterCar(carSeat)
-            transitionLock = false
-            return
-        else
-            -- Too far, destroy old car and spawn new
-            destroyCar()
-        end
-    end
-
-    if not carModel then
-        local seat = spawnCar()
-        if seat then
-            task.wait(0.3)  -- brief pause for physics to settle
-            enterCar(seat)
-        end
-    end
-
-    transitionLock = false
+    doCarEntry()
 end
 
 --------------------------------------------------------------------------------
@@ -1993,7 +2048,7 @@ local function fullCleanup()
     disableDOF()
 
     camera.CameraType = Enum.CameraType.Custom
-    camera.FieldOfView = DEFAULT_FOV
+    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
 
     setHUDMode("none")
 end
@@ -2073,7 +2128,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         else
             disableDOF()
             camera.CameraType = Enum.CameraType.Custom
-            camera.FieldOfView = DEFAULT_FOV
+            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween
             setHUDMode(mode)
         end
 
@@ -2117,11 +2172,19 @@ end)
 --------------------------------------------------------------------------------
 -- MAIN RENDER LOOP
 --------------------------------------------------------------------------------
+-- Fix #10: single gamepad read per frame, stored for reuse
+local frameGamepad = nil
+
 RunService.RenderStepped:Connect(function(dt)
-    local character = getCharacter()
-    if not character then return end
-    local hrp = getHRP()
+    -- Fix #12: resolve character references once at top of render loop
+    local char = getCharacter()
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp then return end
+
+    -- Fix #10: read gamepad once per frame
+    frameGamepad = readGamepad()
 
     -- Update active mode
     updateCar(dt)
@@ -2138,12 +2201,12 @@ RunService.RenderStepped:Connect(function(dt)
 
     -- Detect if player fell out of car seat
     if mode == "car" and carSeat then
-        local hum = getHumanoid()
         if hum and not hum.Sit then
             mode = "none"
             customCamActive = false
+            camCurrentPos = nil  -- fix #11
             camera.CameraType = Enum.CameraType.Custom
-            camera.FieldOfView = DEFAULT_FOV
+            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4
             setHUDMode("none")
         end
     end
@@ -2159,7 +2222,7 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- Cinematic orbit camera
+    -- Cinematic orbit camera (fix #8: lerp FOV instead of hard-set 60)
     if cinematicMode then
         cinematicAngle = cinematicAngle + dt * 0.3
         local radius = 150
@@ -2172,12 +2235,8 @@ RunService.RenderStepped:Connect(function(dt)
         )
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.lookAt(camPos, target)
-        camera.FieldOfView = 60
+        camera.FieldOfView = lerp(camera.FieldOfView, 60, math.min(1, 4 * dt))
     end
 
-    -- Camera transition smoothing when switching modes
-    if mode ~= prevMode then
-        camCurrentPos = nil  -- reset so camera doesn't jump
-        prevMode = mode
-    end
+    -- Fix #11: removed prevMode comparison; camCurrentPos is now reset in exit functions
 end)
