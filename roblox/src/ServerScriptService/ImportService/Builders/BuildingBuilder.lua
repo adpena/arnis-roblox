@@ -87,8 +87,8 @@ local function getMaterial(building)
 end
 
 local function getColor(building)
-    if building.color and building.color.r then
-        local r, g, b = building.color.r, building.color.g, building.color.b
+    if building.wallColor and building.wallColor.r then
+        local r, g, b = building.wallColor.r, building.wallColor.g, building.wallColor.b
         -- Use the explicit color unless it is the OSM default grey placeholder
         if not (r == 170 and g == 170 and b == 170) then
             return Color3.fromRGB(r, g, b)
@@ -113,29 +113,60 @@ local function pointInPolygon(px, pz, poly)
     return inside
 end
 
-local function fillInterior(footprint, baseY, material)
+local function buildFootprintData(footprint, originStuds)
+    local worldPts = table.create(#footprint)
+    local footprintXZ = table.create(#footprint)
     local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
-    for _, p in ipairs(footprint) do
-        if p.x < minX then
-            minX = p.x
+    local sumX = 0
+    local sumZ = 0
+
+    for index, point in ipairs(footprint) do
+        local worldX = point.x + originStuds.x
+        local worldZ = point.z + originStuds.z
+        worldPts[index] = Vector3.new(worldX, 0, worldZ)
+        footprintXZ[index] = { x = worldX, z = worldZ }
+        sumX += worldX
+        sumZ += worldZ
+
+        if worldX < minX then
+            minX = worldX
         end
-        if p.z < minZ then
-            minZ = p.z
+        if worldZ < minZ then
+            minZ = worldZ
         end
-        if p.x > maxX then
-            maxX = p.x
+        if worldX > maxX then
+            maxX = worldX
         end
-        if p.z > maxZ then
-            maxZ = p.z
+        if worldZ > maxZ then
+            maxZ = worldZ
         end
     end
+
+    return {
+        worldPts = worldPts,
+        footprintXZ = footprintXZ,
+        minX = minX,
+        minZ = minZ,
+        maxX = maxX,
+        maxZ = maxZ,
+        sumX = sumX,
+        sumZ = sumZ,
+        count = #footprint,
+    }
+end
+
+local function fillInterior(footprintXZ, bounds, baseY, material)
+    local minX = bounds.minX
+    local minZ = bounds.minZ
+    local maxX = bounds.maxX
+    local maxZ = bounds.maxZ
 
     local GRID_SIZE = 4 -- 4-stud grid matching voxel resolution
     local x = minX + GRID_SIZE * 0.5
     while x < maxX do
         local z = minZ + GRID_SIZE * 0.5
         while z < maxZ do
-            if pointInPolygon(x, z, footprint) then
+            if pointInPolygon(x, z, footprintXZ) then
                 Workspace.Terrain:FillBlock(
                     CFrame.new(x, baseY, z),
                     Vector3.new(GRID_SIZE, GRID_SIZE, GRID_SIZE),
@@ -188,10 +219,7 @@ local function collectUniqueRoofPoints(roofPoly)
     for _, point in ipairs(roofPoly) do
         local isDuplicate = false
         for _, existing in ipairs(uniquePoints) do
-            if
-                math.abs(existing.x - point.x) <= 0.05
-                and math.abs(existing.z - point.z) <= 0.05
-            then
+            if math.abs(existing.x - point.x) <= 0.05 and math.abs(existing.z - point.z) <= 0.05 then
                 isDuplicate = true
                 break
             end
@@ -327,8 +355,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
     local function emitStrip(x, runStartZ, runEndZ)
         stripIndex += 1
         local localCenter = rightAxis * x + forwardAxis * ((runStartZ + runEndZ) * 0.5)
-        local worldCenter =
-            Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
+        local worldCenter = Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
 
         local strip = Instance.new("Part")
         strip.Name = string.format("%s_roof_%d", bldgName, stripIndex)
@@ -336,8 +363,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         strip.CastShadow = false
         strip.Material = mat
         strip.Color = color
-        strip.Size =
-            Vector3.new(ROOF_GRID_SIZE, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
+        strip.Size = Vector3.new(ROOF_GRID_SIZE, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
         strip.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         strip.Parent = parent
     end
@@ -383,82 +409,38 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
 end
 
 local function getBuildingHeight(building)
-    local METERS_PER_STUD = 0.3 -- 1 stud ≈ 0.3 meters (Roblox convention for real-world scale)
-    if building.height_m and building.height_m > 0 then
-        return math.max(4, building.height_m / METERS_PER_STUD)
+    -- Schema 0.4.0: building.height is already in studs at correct scale.
+    -- No conversion needed.
+    if building.height and building.height > 0 then
+        return math.max(4, building.height)
     elseif building.levels and building.levels > 0 then
-        return math.max(4, building.levels * 14) -- ~14 studs per floor (4.2m)
+        return math.max(4, building.levels * 14)
     else
-        local USAGE_HEIGHT_M = {
-            -- residential
-            apartments = 15,
-            house = 6,
-            detached = 6,
-            terrace = 6,
-            residential = 9,
-            dormitory = 12,
-            bungalow = 4,
-            -- commercial/civic
-            commercial = 12,
-            retail = 6,
-            office = 20,
-            bank = 10,
-            supermarket = 8,
-            mall = 12,
-            hotel = 20,
-            -- civic/public
-            hospital = 23,
-            school = 8,
-            university = 12,
-            civic = 10,
-            government = 12,
-            courthouse = 12,
-            -- industrial
-            industrial = 10,
-            warehouse = 8,
-            factory = 10,
-            -- religious
-            religious = 12,
-            church = 15,
-            cathedral = 25,
-            mosque = 12,
-            temple = 10,
-            -- utility/misc
-            garage = 3,
-            shed = 2.5,
-            barn = 6,
-            greenhouse = 3,
-            -- defaults by general category
-            building = 10,
-            yes = 10,
-        }
-        local heightM = USAGE_HEIGHT_M[building.usage] or 10
-        return math.max(4, heightM / METERS_PER_STUD)
+        return 33
     end
 end
 
-local function resolveBuildingBaseY(chunk, footprint, originStuds, fallbackBaseY)
-    if not chunk or not chunk.terrain or not footprint or #footprint == 0 then
+local function resolveBuildingBaseY(chunk, footprintData, fallbackBaseY)
+    if not chunk or not chunk.terrain or not footprintData or footprintData.count == 0 then
         return fallbackBaseY
     end
 
     local minGroundY = math.huge
-    local sumX = 0
-    local sumZ = 0
 
-    for _, point in ipairs(footprint) do
-        local worldX = point.x + originStuds.x
-        local worldZ = point.z + originStuds.z
+    for _, point in ipairs(footprintData.footprintXZ) do
+        local worldX = point.x
+        local worldZ = point.z
         local groundY = GroundSampler.sampleWorldHeight(chunk, worldX, worldZ)
         if groundY < minGroundY then
             minGroundY = groundY
         end
-        sumX += worldX
-        sumZ += worldZ
     end
 
-    local centroidGroundY =
-        GroundSampler.sampleWorldHeight(chunk, sumX / #footprint, sumZ / #footprint)
+    local centroidGroundY = GroundSampler.sampleWorldHeight(
+        chunk,
+        footprintData.sumX / footprintData.count,
+        footprintData.sumZ / footprintData.count
+    )
     if centroidGroundY < minGroundY then
         minGroundY = centroidGroundY
     end
@@ -472,26 +454,14 @@ end
 
 -- Build roof geometry based on building.roof shape.
 -- footprint: array of world-space Vector3 points (worldPts)
-local function buildRoof(building, footprint, baseY, height, color, mat, parent)
+local function buildRoof(building, footprint, bounds, baseY, height, color, mat, parent)
     local bldgName = building.id or "Building"
     local roofShape = (building.roof or "flat"):lower()
 
-    -- Compute bounding box
-    local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
-    for _, p in ipairs(footprint) do
-        if p.X < minX then
-            minX = p.X
-        end
-        if p.Z < minZ then
-            minZ = p.Z
-        end
-        if p.X > maxX then
-            maxX = p.X
-        end
-        if p.Z > maxZ then
-            maxZ = p.Z
-        end
-    end
+    local minX = bounds.minX
+    local minZ = bounds.minZ
+    local maxX = bounds.maxX
+    local maxZ = bounds.maxZ
     local footprintW = math.max(1, maxX - minX)
     local footprintL = math.max(1, maxZ - minZ)
     local centerX = (minX + maxX) * 0.5
@@ -526,19 +496,15 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
         if ridgeAxisIsZ then
             -- Panels tilt around Z axis: left half (+angle), right half (-angle)
             p1.Size = Vector3.new(panelW, 0.8, longExtent)
-            p1.CFrame = CFrame.new(centerX - halfWidth * 0.5, cy, centerZ)
-                * CFrame.Angles(0, 0, angle)
+            p1.CFrame = CFrame.new(centerX - halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, angle)
             p2.Size = Vector3.new(panelW, 0.8, longExtent)
-            p2.CFrame = CFrame.new(centerX + halfWidth * 0.5, cy, centerZ)
-                * CFrame.Angles(0, 0, -angle)
+            p2.CFrame = CFrame.new(centerX + halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, -angle)
         else
             -- Panels tilt around X axis: front half (-angle), back half (+angle)
             p1.Size = Vector3.new(longExtent, 0.8, panelW)
-            p1.CFrame = CFrame.new(centerX, cy, centerZ - halfWidth * 0.5)
-                * CFrame.Angles(-angle, 0, 0)
+            p1.CFrame = CFrame.new(centerX, cy, centerZ - halfWidth * 0.5) * CFrame.Angles(-angle, 0, 0)
             p2.Size = Vector3.new(longExtent, 0.8, panelW)
-            p2.CFrame = CFrame.new(centerX, cy, centerZ + halfWidth * 0.5)
-                * CFrame.Angles(angle, 0, 0)
+            p2.CFrame = CFrame.new(centerX, cy, centerZ + halfWidth * 0.5) * CFrame.Angles(angle, 0, 0)
         end
         p1.Parent = parent
         p2.Parent = parent
@@ -564,8 +530,7 @@ local function buildRoof(building, footprint, baseY, height, color, mat, parent)
         dome.Name = bldgName .. "_roof"
         dome.Anchored = true
         dome.Shape = Enum.PartType.Ball
-        dome.Size =
-            Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
+        dome.Size = Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
         dome.CFrame = CFrame.new(centerX, baseY + height + radius * 0.5, centerZ)
         dome.Material = mat
         dome.Color = color
@@ -674,11 +639,8 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
         return
     end
 
-    -- Seed RNG for deterministic output
-    math.randomseed(hashId(building.id or tostring(building)))
-
-    local baseY =
-        resolveBuildingBaseY(chunk, fp, originStuds, originStuds.y + (building.baseY or 0))
+    local footprintData = buildFootprintData(fp, originStuds)
+    local baseY = resolveBuildingBaseY(chunk, footprintData, originStuds.y + (building.baseY or 0))
     local height = getBuildingHeight(building)
     local mat = getMaterial(building)
     local color = getColor(building)
@@ -689,9 +651,9 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     model.Parent = parent
 
     -- World coordinates of footprint vertices
-    local worldPts = {}
-    for _, p in ipairs(fp) do
-        table.insert(worldPts, Vector3.new(p.x + originStuds.x, baseY, p.z + originStuds.z))
+    local worldPts = footprintData.worldPts
+    for index, point in ipairs(worldPts) do
+        worldPts[index] = Vector3.new(point.X, baseY, point.Z)
     end
 
     -- One wall Part per edge, plus corner posts at each vertex to eliminate gaps
@@ -774,13 +736,9 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     end
 
     -- Fill interior with terrain (uses terrain-safe floor materials only)
-    local footprintRelative = {}
-    for _, p in ipairs(fp) do
-        table.insert(footprintRelative, { x = p.x + originStuds.x, z = p.z + originStuds.z })
-    end
-    fillInterior(footprintRelative, baseY, getFloorMaterial(building))
+    fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
 
-    buildRoof(building, worldPts, baseY, height, color, mat, model)
+    buildRoof(building, worldPts, footprintData, baseY, height, color, mat, model)
 end
 
 -- PartBuild is the same as FallbackBuild (polygon walls)
