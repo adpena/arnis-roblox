@@ -1,3 +1,5 @@
+local CollectionService = game:GetService("CollectionService")
+
 local GeoUtils = require(script.Parent.Parent.GeoUtils)
 
 local RoomBuilder = {}
@@ -231,6 +233,7 @@ local function emitSurfacePart(
     part.Color = color
     part.Size = Vector3.new(width, thickness, depth)
     part.CFrame = CFrame.new(centerX, centerY, centerZ)
+    CollectionService:AddTag(part, "LOD_Interior")
     part.Parent = parent
 end
 
@@ -366,6 +369,8 @@ local function buildMergedSurfaceBatch(batch)
     local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
     local stripSize = ROOM_STRIP_SIZE
     local worldPolys = table.create(#batch.surfaces)
+    local totalRectArea = 0
+    local allRectangles = true
 
     for index, surface in ipairs(batch.surfaces) do
         local worldPoly, polyMinX, polyMinZ, polyMaxX, polyMaxZ =
@@ -377,6 +382,33 @@ local function buildMergedSurfaceBatch(batch)
         maxZ = math.max(maxZ, polyMaxZ)
         stripSize =
             math.min(stripSize, math.max(ROOM_MIN_STRIP_DEPTH, math.min(polyMaxX - polyMinX, polyMaxZ - polyMinZ)))
+
+        local rectMinX, rectMinZ, rectMaxX, rectMaxZ = getRectExtents(worldPoly)
+        if rectMinX then
+            totalRectArea += (rectMaxX - rectMinX) * (rectMaxZ - rectMinZ)
+        else
+            allRectangles = false
+        end
+    end
+
+    if allRectangles and #batch.surfaces > 0 then
+        local batchArea = (maxX - minX) * (maxZ - minZ)
+        if math.abs(totalRectArea - batchArea) <= 1e-3 then
+            emitSurfacePart(
+                batch.parent,
+                string.format("%s_%d", batch.partLabel, 1),
+                (minX + maxX) * 0.5,
+                batch.centerY,
+                (minZ + maxZ) * 0.5,
+                maxX - minX,
+                maxZ - minZ,
+                batch.thickness,
+                batch.material,
+                batch.color,
+                batch.canCollide
+            )
+            return 1
+        end
     end
 
     local mergedCount = 0
@@ -535,6 +567,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         aboveDoor.CanCollide = true
         aboveDoor.CFrame = CFrame.new(midX, slabTop + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) * 0.5, midZ)
             * CFrame.Angles(0, angle, 0)
+        CollectionService:AddTag(aboveDoor, "LOD_Interior")
         aboveDoor.Parent = parent
 
         if leftLen > MIN_EDGE then
@@ -548,6 +581,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             leftWall.CFrame = CFrame.new(midX, midY, midZ)
                 * CFrame.Angles(0, angle, 0)
                 * CFrame.new(-(edgeLen * 0.5 - leftLen * 0.5), 0, 0)
+            CollectionService:AddTag(leftWall, "LOD_Interior")
             leftWall.Parent = parent
         end
 
@@ -562,6 +596,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             rightWall.CFrame = CFrame.new(midX, midY, midZ)
                 * CFrame.Angles(0, angle, 0)
                 * CFrame.new(edgeLen * 0.5 - rightLen * 0.5, 0, 0)
+            CollectionService:AddTag(rightWall, "LOD_Interior")
             rightWall.Parent = parent
         end
     elseif partition.hasWindow and edgeLen > WINDOW_WIDTH * 2 then
@@ -577,6 +612,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             belowWin.Anchored = true
             belowWin.CanCollide = true
             belowWin.CFrame = CFrame.new(midX, slabTop + WINDOW_SILL_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+            CollectionService:AddTag(belowWin, "LOD_Interior")
             belowWin.Parent = parent
         end
 
@@ -590,6 +626,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             aboveWin.Anchored = true
             aboveWin.CanCollide = true
             aboveWin.CFrame = CFrame.new(midX, lintelY + aboveHeight * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+            CollectionService:AddTag(aboveWin, "LOD_Interior")
             aboveWin.Parent = parent
         end
 
@@ -602,6 +639,8 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         windowPane.Anchored = true
         windowPane.CanCollide = false
         windowPane.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+        windowPane:SetAttribute("BaseTransparency", 0.4)
+        CollectionService:AddTag(windowPane, "LOD_Interior")
         windowPane.Parent = parent
 
         local sideWidth = (edgeLen - WINDOW_WIDTH) * 0.5
@@ -617,6 +656,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
                 sidePart.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ)
                     * CFrame.Angles(0, angle, 0)
                     * CFrame.new(sign * (WINDOW_WIDTH * 0.5 + sideWidth * 0.5), 0, 0)
+                CollectionService:AddTag(sidePart, "LOD_Interior")
                 sidePart.Parent = parent
             end
         end
@@ -629,6 +669,7 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         wall.Anchored = true
         wall.CanCollide = true
         wall.CFrame = CFrame.new(midX, midY, midZ) * CFrame.Angles(0, angle, 0)
+        CollectionService:AddTag(wall, "LOD_Interior")
         wall.Parent = parent
     end
 end

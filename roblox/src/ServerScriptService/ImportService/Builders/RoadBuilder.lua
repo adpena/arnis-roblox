@@ -1,4 +1,5 @@
 local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local RoadProfile = require(script.Parent.Parent.RoadProfile)
@@ -278,6 +279,7 @@ local function paintOnewayArrows(parent, p1, p2, width, road)
         arrow.CastShadow = false
         -- Orient arrow in road direction, flat on surface
         arrow.CFrame = CFrame.lookAt(pos + Vector3.new(0, 0.2, 0), pos + Vector3.new(0, 0.2, 0) + dir)
+        CollectionService:AddTag(arrow, "LOD_Detail")
         arrow.Parent = parent
     end
 end
@@ -423,6 +425,7 @@ local function placeStreetLights(parent, p1, p2, width)
         pole.Material = Enum.Material.SmoothPlastic
         pole.Color = Color3.fromRGB(80, 80, 85)
         pole.CFrame = CFrame.new(Vector3.new(lx, p1.Y + (p2.Y - p1.Y) * t + 4, lz) + right * (width * 0.5 + 1) * side)
+        CollectionService:AddTag(pole, "LOD_Detail")
         pole.Parent = parent
 
         local head = Instance.new("Part")
@@ -434,6 +437,7 @@ local function placeStreetLights(parent, p1, p2, width)
         head.Material = Enum.Material.SmoothPlastic
         head.Color = Color3.fromRGB(220, 220, 220)
         head.CFrame = CFrame.new(lampPos)
+        CollectionService:AddTag(head, "LOD_Detail")
         head.Parent = parent
 
         local light = Instance.new("PointLight")
