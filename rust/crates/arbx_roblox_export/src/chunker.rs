@@ -5,8 +5,8 @@ use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
-    BuildingShell, Chunk, ChunkManifest, GroundPoint, LanduseShell, ManifestMeta, PropInstance,
-    RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    BarrierSegment, BuildingShell, Chunk, ChunkManifest, GroundPoint, LanduseShell, ManifestMeta,
+    PropInstance, RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
 
@@ -178,6 +178,7 @@ impl Chunker {
                 water: Vec::new(),
                 props: Vec::new(),
                 landuse: Vec::new(),
+                barriers: Vec::new(),
             }
         })
     }
@@ -474,6 +475,22 @@ impl Chunker {
                     footprint,
                 });
             }
+            Feature::Barrier(f) => {
+                let segments = self.split_polyline(f.points, self.chunk_size_studs);
+                for (chunk_id, points) in segments {
+                    let chunk = self.ensure_chunk(chunk_id, elevation, style);
+                    let origin = chunk.origin_studs;
+                    let relative_points = points
+                        .into_iter()
+                        .map(|p| Vec3::new(p.x - origin.x, p.y - origin.y, p.z - origin.z))
+                        .collect();
+                    chunk.barriers.push(BarrierSegment {
+                        id: f.id.clone(),
+                        kind: f.kind.clone(),
+                        points: relative_points,
+                    });
+                }
+            }
         }
     }
 
@@ -590,6 +607,7 @@ impl Chunker {
             chunk.water.sort_by(|a, b| a.id.cmp(&b.id));
             chunk.props.sort_by(|a, b| a.id.cmp(&b.id));
             chunk.landuse.sort_by(|a, b| a.id.cmp(&b.id));
+            chunk.barriers.sort_by(|a, b| a.id.cmp(&b.id));
         }
 
         chunks.sort_by_key(|c| (c.id.z, c.id.x));

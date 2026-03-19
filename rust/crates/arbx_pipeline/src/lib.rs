@@ -106,6 +106,13 @@ pub struct LanduseFeature {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarrierFeature {
+    pub id: String,
+    pub kind: String,
+    pub points: Vec<Vec3>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Feature {
     Road(RoadFeature),
@@ -114,6 +121,7 @@ pub enum Feature {
     Water(WaterFeature),
     Prop(PropFeature),
     Landuse(LanduseFeature),
+    Barrier(BarrierFeature),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -900,6 +908,12 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
             width: tags.get("width").and_then(|w| w.parse::<f64>().ok()),
             intermittent: tags.get("intermittent").map(|s| s == "yes"),
         })));
+    } else if let Some(barrier) = tags.get("barrier") {
+        features.push(Feature::Barrier(BarrierFeature {
+            id: format!("osm_{}", id),
+            kind: barrier.clone(),
+            points,
+        }));
     }
 }
 

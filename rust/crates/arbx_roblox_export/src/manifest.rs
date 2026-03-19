@@ -143,6 +143,13 @@ pub struct PropInstance {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BarrierSegment {
+    pub id: String,
+    pub kind: String,
+    pub points: Vec<Vec3>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ManifestMeta {
     pub world_name: String,
     pub generator: String,
@@ -165,6 +172,7 @@ pub struct Chunk {
     pub water: Vec<WaterFeature>,
     pub props: Vec<PropInstance>,
     pub landuse: Vec<LanduseShell>,
+    pub barriers: Vec<BarrierSegment>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -314,6 +322,30 @@ impl Chunk {
             item.write_json(out, indent)
         });
 
+        out.push_str(",\n");
+        write_key(out, indent + 2, "barriers");
+        write_array(out, indent + 2, &self.barriers, |item, out, indent| {
+            item.write_json(out, indent)
+        });
+
+        out.push('\n');
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl BarrierSegment {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+        write_key(out, indent + 2, "id");
+        write_string(out, &self.id);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "kind");
+        write_string(out, &self.kind);
+        out.push_str(",\n");
+        write_key(out, indent + 2, "points");
+        write_vec3_array(out, &self.points, indent + 2);
         out.push('\n');
         write_indent(out, indent);
         out.push('}');

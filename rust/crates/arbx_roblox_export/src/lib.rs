@@ -8,8 +8,8 @@ use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 use crate::chunker::Chunker;
 use crate::materials::StyleMapper;
 pub use manifest::{
-    BuildingShell, Chunk, ChunkManifest, Color, GroundPoint, LanduseShell, ManifestMeta,
-    PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
+    BarrierSegment, BuildingShell, Chunk, ChunkManifest, Color, GroundPoint, LanduseShell,
+    ManifestMeta, PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
 };
 pub use arbx_geo::satellite::SatelliteTileProvider;
 
@@ -133,6 +133,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                 water: vec![],
                 props: vec![],
                 landuse: vec![],
+                barriers: vec![],
             });
         }
     }
@@ -228,7 +229,8 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
             + chunk.buildings.len()
             + chunk.water.len()
             + chunk.props.len()
-            + chunk.landuse.len();
+            + chunk.landuse.len()
+            + chunk.barriers.len();
     }
     manifest.meta.total_features = total_features;
     manifest
@@ -247,6 +249,7 @@ fn collect_xz(feature: &Feature, pts: &mut Vec<(f64, f64)>) {
         }
         Feature::Prop(f) => pts.push((f.position.x, f.position.z)),
         Feature::Landuse(f) => pts.extend(f.footprint.points.iter().map(|p| (p.x, p.y))),
+        Feature::Barrier(f) => pts.extend(f.points.iter().map(|p| (p.x, p.z))),
     }
 }
 
@@ -305,6 +308,13 @@ fn shift_feature(feature: Feature, dx: f64, dz: f64) -> Feature {
                 p.y += dz;
             }
             Feature::Landuse(f)
+        }
+        Feature::Barrier(mut f) => {
+            for p in &mut f.points {
+                p.x += dx;
+                p.z += dz;
+            }
+            Feature::Barrier(f)
         }
     }
 }
@@ -449,6 +459,7 @@ pub fn export_to_chunks(
         total_features += chunk.water.len();
         total_features += chunk.props.len();
         total_features += chunk.landuse.len();
+        total_features += chunk.barriers.len();
     }
 
     manifest.schema_version = "0.4.0".to_string();
