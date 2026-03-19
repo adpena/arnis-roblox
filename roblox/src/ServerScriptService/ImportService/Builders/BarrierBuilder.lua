@@ -3,24 +3,36 @@ local Workspace = game:GetService("Workspace")
 local BarrierBuilder = {}
 
 local BARRIER_HEIGHT = {
-	wall           = 4,
-	fence          = 3,
-	hedge          = 3,
-	retaining_wall = 6,
-	guard_rail     = 2,
-	kerb           = 0.5,
+	wall           = 8,
 	city_wall      = 8,
+	fence          = 4,
+	hedge          = 4,
+	retaining_wall = 6,
+	guard_rail     = 3,
+	kerb           = 0.5,
 	default        = 2,
+}
+
+-- Thickness (X-axis size) per kind in studs.
+local BARRIER_THICKNESS = {
+	wall           = 3,
+	city_wall      = 3,
+	fence          = 0.3,
+	hedge          = 2,
+	retaining_wall = 3,
+	guard_rail     = 0.2,
+	kerb           = 0.5,
+	default        = 0.5,
 }
 
 local BARRIER_MATERIAL = {
 	wall           = Enum.Material.Brick,
-	fence          = Enum.Material.Slate,
-	hedge          = Enum.Material.Grass,
-	retaining_wall = Enum.Material.Concrete,
-	guard_rail     = Enum.Material.Concrete,
-	kerb           = Enum.Material.Concrete,
 	city_wall      = Enum.Material.Brick,
+	fence          = Enum.Material.WoodPlanks,
+	hedge          = Enum.Material.LeafyGrass,
+	retaining_wall = Enum.Material.Concrete,
+	guard_rail     = Enum.Material.Metal,
+	kerb           = Enum.Material.Concrete,
 	default        = Enum.Material.SmoothPlastic,
 }
 
@@ -29,10 +41,11 @@ function BarrierBuilder.BuildAll(chunk, _parent)
 	if not barriers or #barriers == 0 then return 0 end
 	local count = 0
 	for _, barrier in ipairs(barriers) do
-		local kind   = barrier.kind or "fence"
-		local height = BARRIER_HEIGHT[kind]   or BARRIER_HEIGHT.default
-		local mat    = BARRIER_MATERIAL[kind] or BARRIER_MATERIAL.default
-		local pts    = barrier.points
+		local kind      = barrier.kind or "fence"
+		local height    = BARRIER_HEIGHT[kind]    or BARRIER_HEIGHT.default
+		local thickness = BARRIER_THICKNESS[kind] or BARRIER_THICKNESS.default
+		local mat       = BARRIER_MATERIAL[kind]  or BARRIER_MATERIAL.default
+		local pts       = barrier.points
 		if pts and #pts >= 2 then
 			for i = 1, #pts - 1 do
 				local p1  = Vector3.new(pts[i].x,   pts[i].y,   pts[i].z)
@@ -41,7 +54,7 @@ function BarrierBuilder.BuildAll(chunk, _parent)
 				local len = (p2 - p1).Magnitude
 				if len > 0.1 then
 					local cf = CFrame.lookAt(mid, p2) * CFrame.new(0, height * 0.5, 0)
-					Workspace.Terrain:FillBlock(cf, Vector3.new(0.5, height, len), mat)
+					Workspace.Terrain:FillBlock(cf, Vector3.new(thickness, height, len), mat)
 					count = count + 1
 				end
 			end
