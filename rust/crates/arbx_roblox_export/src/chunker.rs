@@ -287,9 +287,21 @@ impl Chunker {
                     }
                     let count = p.footprint.points.len() as f64;
                     let centroid = Vec3::new(sum_x / count, 0.0, sum_z / count);
+
+                    // Sample DEM at polygon centroid to derive water surfaceY.
+                    // Must read self fields before the mutable borrow from ensure_chunk.
+                    let mps = self.meters_per_stud;
+                    let center = self.center_latlon;
+                    let cos_lat = center.lat.to_radians().cos();
+                    let centroid_lat = center.lat - (centroid.z * mps / 111_111.0);
+                    let centroid_lon = center.lon + (centroid.x * mps / (111_111.0 * cos_lat));
+                    let surface_h = elevation.sample_height_at(LatLon::new(centroid_lat, centroid_lon));
+
                     let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
                     let chunk = self.ensure_chunk(chunk_id, elevation, style);
                     let origin = chunk.origin_studs;
+
+                    let surface_y = Some(surface_h as f64 / mps - origin.y);
 
                     let relative_footprint = p
                         .footprint
@@ -321,7 +333,7 @@ impl Chunker {
                         footprint: Some(relative_footprint),
                         holes: relative_holes,
                         indices: p.indices,
-                        surface_y: None,
+                        surface_y,
                         width: None,
                         intermittent: p.intermittent,
                     });
