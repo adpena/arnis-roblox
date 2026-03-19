@@ -753,6 +753,20 @@ impl SourceAdapter for OverpassAdapter {
                     }));
                     continue;
                 }
+                if tags.get("highway") == Some(&"crossing".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("crossing_{}", el.id),
+                        kind: "crossing".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
                 if tags.get("natural") == Some(&"tree".to_string())
                     || tags.get("amenity") == Some(&"tree".to_string())
                 {
@@ -976,6 +990,27 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Ve
 
 /// Emit a linear feature (road, rail, waterway ribbon).
 fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, features: &mut Vec<Feature>) {
+    // Steps must be detected before the general highway branch so they get
+    // the correct fixed width and no sidewalk, rather than the generic road path.
+    if tags.get("highway").map(|s| s.as_str()) == Some("steps") {
+        features.push(Feature::Road(RoadFeature {
+            id: format!("osm_{}", id),
+            kind: "steps".to_string(),
+            lanes: None,
+            width_studs: 6.0,
+            has_sidewalk: false,
+            surface: tags.get("surface").cloned(),
+            elevated: None,
+            tunnel: None,
+            sidewalk: None,
+            points,
+            maxspeed: None,
+            lit: tags.get("lit").map(|s| s == "yes"),
+            oneway: None,
+            layer: tags.get("layer").and_then(|s| s.parse().ok()),
+        }));
+        return;
+    }
     if let Some(highway) = tags.get("highway") {
         let lanes = tags.get("lanes").and_then(|l| l.parse().ok());
         let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
