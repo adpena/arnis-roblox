@@ -5,6 +5,8 @@ local ChunkSchema = require(ReplicatedStorage.Shared.ChunkSchema)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
+local DayNightCycle = require(script.DayNightCycle)
+
 local Profiler = require(script.Profiler)
 local ChunkLoader = require(script.ChunkLoader)
 local GroundSampler = require(script.GroundSampler)
@@ -695,6 +697,10 @@ function ImportService.ImportManifest(manifest, options)
 
     if config.EnableAtmosphere ~= false then
         setupAtmosphere(validated)
+    end
+
+    if config.EnableDayNightCycle ~= false then
+        DayNightCycle.Start()
     end
 
     return stats

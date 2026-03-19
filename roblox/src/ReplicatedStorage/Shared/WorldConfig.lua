@@ -78,6 +78,8 @@ local WorldConfig = {
     -- ATMOSPHERE & LIGHTING
     -- ═══════════════════════════════════════════════════════════════
     EnableAtmosphere = true,     -- set false to skip cinematic lighting setup
+    EnableDayNightCycle = true,
+    DayNightSpeed = 60,          -- 60 = 1 game-day per 24 minutes, 0 = frozen
 
     -- ═══════════════════════════════════════════════════════════════
     -- INSTANCE BUDGETS (set high for powerful hardware)

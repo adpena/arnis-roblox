@@ -439,6 +439,7 @@ local function placeStreetLights(parent, p1, p2, width)
         head.Color = Color3.fromRGB(220, 220, 220)
         head.CFrame = CFrame.new(lampPos)
         CollectionService:AddTag(head, "LOD_Detail")
+        CollectionService:AddTag(head, "StreetLight")
         head.Parent = parent
 
         local light = Instance.new("PointLight")
