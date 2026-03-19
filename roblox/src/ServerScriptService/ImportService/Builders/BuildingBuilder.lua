@@ -1158,4 +1158,363 @@ function BuildingBuilder.Build(parent, building, originStuds, chunk, windowBudge
     return BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, windowBudget)
 end
 
+-------------------------------------------------------------------------------
+-- MeshBuildAll: merge wall + flat-roof geometry into per-material EditableMeshes.
+-- Windows, awnings, name labels, shaped roofs, foundations, cornices, and
+-- rooftop equipment remain as individual Instances (glass needs transparency,
+-- shaped roofs use SpecialMesh/WedgePart).
+-- Returns builtModelsById for RoomBuilder integration.
+-------------------------------------------------------------------------------
+function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, config)
+    if not buildings or #buildings == 0 then
+        return {}
+    end
+
+    config = config or WorldConfig
+
+    -- Per-(material, color) accumulators. Key = "MaterialName:R:G:B"
+    local accumulators = {}
+    local meshFolder = Instance.new("Folder")
+    meshFolder.Name = "MergedMeshes"
+    meshFolder.Parent = parent
+
+    local function getAccumulator(mat, color)
+        local r = math.floor(color.R * 255 + 0.5)
+        local g = math.floor(color.G * 255 + 0.5)
+        local b = math.floor(color.B * 255 + 0.5)
+        local key = string.format("%s:%d:%d:%d", mat.Name, r, g, b)
+        if not accumulators[key] then
+            accumulators[key] = MeshAccumulator.new(meshFolder, key, mat, color)
+        end
+        return accumulators[key]
+    end
+
+    local windowBudget = {
+        used = 0,
+        max = (config.InstanceBudget and config.InstanceBudget.MaxWindowsPerChunk) or 10000,
+    }
+
+    local builtModelsById = {}
+
+    for _, building in ipairs(buildings) do
+        local fp = building.footprint
+        if not fp or #fp < 2 then
+            continue
+        end
+
+        local footprintData = buildFootprintData(fp, originStuds)
+        local baseY = resolveBuildingBaseY(building, originStuds, chunk)
+        local height = getBuildingHeight(building)
+        local mat = getMaterial(building)
+        local color = getColor(building)
+        local bldgName = building.id or "Building"
+
+        -- Per-building model for metadata, detail children, and RoomBuilder
+        local model = Instance.new("Model")
+        model.Name = bldgName
+        model.Parent = parent
+        model:SetAttribute("ArnisImportBuildingBaseY", baseY)
+        model:SetAttribute("ArnisImportBuildingHeight", height)
+        model:SetAttribute("ArnisImportBuildingTopY", baseY + height)
+        local detailFolder = Instance.new("Folder")
+        detailFolder.Name = "Detail"
+        detailFolder.Parent = model
+        detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+        CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+
+        local buildingId = building.id
+        if model and type(buildingId) == "string" and buildingId ~= "" then
+            builtModelsById[buildingId] = model
+        end
+
+        -- World-space footprint vertices
+        local worldPts = footprintData.worldPts
+        for index, point in ipairs(worldPts) do
+            worldPts[index] = Vector3.new(point.X, baseY, point.Z)
+        end
+
+        -- Glass buildings can't be merged (need per-face transparency)
+        local isGlass = (mat == Enum.Material.Glass)
+
+        if isGlass then
+            -- Glass buildings: individual Parts (same as FallbackBuild shell)
+            local shellFolder = Instance.new("Folder")
+            shellFolder.Name = "Shell"
+            shellFolder.Parent = model
+            local n = #worldPts
+            for i = 1, n do
+                local p1 = worldPts[i]
+                local p2 = worldPts[(i % n) + 1]
+                local dx = p2.X - p1.X
+                local dz = p2.Z - p1.Z
+                local edgeLen = math.sqrt(dx * dx + dz * dz)
+                if edgeLen < MIN_EDGE then
+                    continue
+                end
+                local midX = (p1.X + p2.X) * 0.5
+                local midZ = (p1.Z + p2.Z) * 0.5
+                local midY = baseY + height * 0.5
+
+                local wall = Instance.new("Part")
+                wall.Name = bldgName .. "_wall" .. i
+                wall.Anchored = true
+                wall.Size = Vector3.new(WALL_THICKNESS, height, edgeLen + WALL_THICKNESS)
+                wall.CFrame = CFrame.lookAt(Vector3.new(midX, midY, midZ), Vector3.new(p2.X, midY, p2.Z))
+                wall.Material = mat
+                wall.Color = color
+                wall.CastShadow = false
+                wall.Transparency = 0.3
+                wall.Reflectance = 0.15
+                wall.Parent = shellFolder
+
+                local post = Instance.new("Part")
+                post.Name = bldgName .. "_corner" .. i
+                post.Anchored = true
+                post.Size = Vector3.new(WALL_THICKNESS, height, WALL_THICKNESS)
+                post.CFrame = CFrame.new(p1.X, midY, p1.Z)
+                post.Material = mat
+                post.Color = color
+                post.CastShadow = false
+                post.Transparency = 0.3
+                post.Reflectance = 0.15
+                post.Parent = shellFolder
+            end
+            buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
+        else
+            -- Merge opaque walls into EditableMesh accumulators
+            local acc = getAccumulator(mat, color)
+            local n = #worldPts
+            local halfThick = WALL_THICKNESS * 0.5
+
+            for i = 1, n do
+                local p1 = worldPts[i]
+                local p2 = worldPts[(i % n) + 1]
+                local dx = p2.X - p1.X
+                local dz = p2.Z - p1.Z
+                local edgeLen = math.sqrt(dx * dx + dz * dz)
+                if edgeLen < MIN_EDGE then
+                    continue
+                end
+
+                -- Outward-facing normal (perpendicular to edge, horizontal)
+                local outX = -dz / edgeLen
+                local outZ = dx / edgeLen
+                local normal = Vector3.new(outX, 0, outZ)
+
+                -- Wall quad: outer face offset by half thickness
+                local offX = outX * halfThick
+                local offZ = outZ * halfThick
+                local bottom1 = Vector3.new(p1.X + offX, baseY, p1.Z + offZ)
+                local bottom2 = Vector3.new(p2.X + offX, baseY, p2.Z + offZ)
+                local top1 = Vector3.new(p1.X + offX, baseY + height, p1.Z + offZ)
+                local top2 = Vector3.new(p2.X + offX, baseY + height, p2.Z + offZ)
+                acc:addQuad(bottom1, bottom2, top2, top1, normal)
+
+                -- Corner post faces at p1 vertex (4 faces of a small column)
+                local cx, cz = p1.X, p1.Z
+                local ht = halfThick
+                local cornerTop = baseY + height
+                -- +X face
+                acc:addQuad(
+                    Vector3.new(cx + ht, baseY, cz - ht),
+                    Vector3.new(cx + ht, baseY, cz + ht),
+                    Vector3.new(cx + ht, cornerTop, cz + ht),
+                    Vector3.new(cx + ht, cornerTop, cz - ht),
+                    Vector3.new(1, 0, 0)
+                )
+                -- -X face
+                acc:addQuad(
+                    Vector3.new(cx - ht, baseY, cz + ht),
+                    Vector3.new(cx - ht, baseY, cz - ht),
+                    Vector3.new(cx - ht, cornerTop, cz - ht),
+                    Vector3.new(cx - ht, cornerTop, cz + ht),
+                    Vector3.new(-1, 0, 0)
+                )
+                -- +Z face
+                acc:addQuad(
+                    Vector3.new(cx + ht, baseY, cz + ht),
+                    Vector3.new(cx - ht, baseY, cz + ht),
+                    Vector3.new(cx - ht, cornerTop, cz + ht),
+                    Vector3.new(cx + ht, cornerTop, cz + ht),
+                    Vector3.new(0, 0, 1)
+                )
+                -- -Z face
+                acc:addQuad(
+                    Vector3.new(cx - ht, baseY, cz - ht),
+                    Vector3.new(cx + ht, baseY, cz - ht),
+                    Vector3.new(cx + ht, cornerTop, cz - ht),
+                    Vector3.new(cx - ht, cornerTop, cz - ht),
+                    Vector3.new(0, 0, -1)
+                )
+            end
+
+            -- Merge flat roof geometry into mesh; shaped roofs stay as Parts
+            local roofShape = (building.roof or "flat"):lower()
+            if roofShape == "flat" then
+                local rc = getRoofColor(building, color)
+                local rm = getRoofMaterial(building, mat)
+                local roofAcc = getAccumulator(rm, rc)
+                local roofY = baseY + height + ROOF_THICKNESS * 0.5
+                local upNormal = Vector3.new(0, 1, 0)
+
+                -- Triangulate footprint as a fan from centroid
+                local centroidX = footprintData.sumX / footprintData.count
+                local centroidZ = footprintData.sumZ / footprintData.count
+                local center = Vector3.new(centroidX, roofY, centroidZ)
+
+                for i = 1, n do
+                    local p1 = worldPts[i]
+                    local p2 = worldPts[(i % n) + 1]
+                    roofAcc:addTriangle(
+                        Vector3.new(p1.X, roofY, p1.Z),
+                        Vector3.new(p2.X, roofY, p2.Z),
+                        center,
+                        upNormal
+                    )
+                end
+            else
+                -- Non-flat roofs: individual Parts (SpecialMesh/WedgePart)
+                local shellFolder = model:FindFirstChild("Shell")
+                if not shellFolder then
+                    shellFolder = Instance.new("Folder")
+                    shellFolder.Name = "Shell"
+                    shellFolder.Parent = model
+                end
+                buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
+            end
+        end
+
+        -- Window bands (individual glass Parts with transparency)
+        local usage = building.usage or building.kind or "default"
+        local WIN_SPACING = (config.WindowSpacing and config.WindowSpacing[usage])
+            or (config.WindowSpacing and config.WindowSpacing.default)
+            or getFacadeBandSpacing(usage)
+        local FACADE_INSET = getFacadeInset(usage)
+        local WIN_COLOR = Color3.fromRGB(40, 50, 70)
+        local FLOOR_H = 5
+        local BAND_H = 2.5
+        local n = #worldPts
+        local numFloors = math.floor(height / FLOOR_H)
+        local maxWindows = windowBudget.max
+        if
+            config.EnableWindowRendering ~= false
+            and numFloors >= 1
+            and n <= 8
+            and (n * numFloors * 2) <= 100
+        then
+            local budgetExceeded = false
+            for floor = 1, math.min(numFloors - 1, 10) do
+                if budgetExceeded then
+                    break
+                end
+                local bandY = baseY + floor * FLOOR_H + BAND_H * 0.5
+                for i = 1, n do
+                    if budgetExceeded then
+                        break
+                    end
+                    local p1w = worldPts[i]
+                    local p2w = worldPts[(i % n) + 1]
+                    local dx = p2w.X - p1w.X
+                    local dz = p2w.Z - p1w.Z
+                    local eLen = math.sqrt(dx * dx + dz * dz)
+                    if eLen < MIN_EDGE then
+                        continue
+                    end
+                    local edgeUnitX = dx / eLen
+                    local edgeUnitZ = dz / eLen
+                    local numPanes = math.max(1, math.floor(eLen / WIN_SPACING))
+                    local bandLen = eLen * FACADE_INSET
+                    if numPanes >= 1 and bandLen > MIN_EDGE then
+                        if windowBudget.used >= maxWindows then
+                            budgetExceeded = true
+                            break
+                        end
+                        windowBudget.used += 1
+                        local band = Instance.new("Part")
+                        band.Name = bldgName .. "_facade_" .. i .. "_" .. floor
+                        band.Anchored = true
+                        band.Size = Vector3.new(WALL_THICKNESS * 0.35, BAND_H * 0.8, bandLen)
+                        band.CFrame = CFrame.lookAt(
+                            Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
+                            Vector3.new(
+                                (p1w.X + p2w.X) * 0.5 + edgeUnitX,
+                                bandY,
+                                (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ
+                            )
+                        )
+                        band.Material = Enum.Material.Glass
+                        band.Color = WIN_COLOR
+                        band.CastShadow = false
+                        band.Transparency = 0.35
+                        band:SetAttribute("BaseTransparency", 0.35)
+                        band:SetAttribute("ArnisFacadePaneCount", numPanes)
+                        CollectionService:AddTag(band, "LOD_Detail")
+                        band.Parent = detailFolder
+
+                        -- Window sill
+                        local paneW = bandLen
+                        local windowCFrame = band.CFrame
+                        local sill = Instance.new("Part")
+                        sill.Name = "WindowSill"
+                        sill.Size = Vector3.new(paneW + 0.4, 0.2, 0.5)
+                        sill.Material = Enum.Material.Concrete
+                        sill.Color = Color3.fromRGB(200, 195, 185)
+                        sill.Anchored = true
+                        sill.CanCollide = false
+                        sill.CastShadow = false
+                        sill.CFrame = windowCFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)
+                        CollectionService:AddTag(sill, "LOD_Detail")
+                        sill.Parent = detailFolder
+                    end
+                end
+            end
+        end
+
+        -- Foundation strip along the base of every wall edge
+        buildFoundation(detailFolder, worldPts, baseY)
+
+        -- Awning on commercial/retail/restaurant ground floors
+        buildAwning(detailFolder, building, baseY, worldPts)
+
+        -- Fill interior with terrain
+        fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
+
+        -- Cornice trim at the roofline
+        buildCornice(detailFolder, worldPts, baseY + height)
+
+        -- Rooftop equipment for tall buildings
+        buildRooftopEquipment(detailFolder, building, baseY, height, worldPts)
+
+        -- Building name label
+        if building.name and building.name ~= "" then
+            local nameLabel = Instance.new("BillboardGui")
+            nameLabel.Name = "BuildingName"
+            nameLabel.Size = UDim2.new(0, 200, 0, 30)
+            nameLabel.StudsOffset = Vector3.new(0, height + 5, 0)
+            nameLabel.AlwaysOnTop = false
+            nameLabel.MaxDistance = 200
+
+            local text = Instance.new("TextLabel")
+            text.Size = UDim2.new(1, 0, 1, 0)
+            text.BackgroundTransparency = 1
+            text.Text = building.name
+            text.TextColor3 = Color3.fromRGB(255, 255, 255)
+            text.TextStrokeTransparency = 0.5
+            text.TextScaled = true
+            text.Font = Enum.Font.GothamBold
+            text.Parent = nameLabel
+
+            CollectionService:AddTag(nameLabel, "LOD_Detail")
+            nameLabel.Parent = detailFolder
+        end
+    end
+
+    -- Flush all remaining geometry in every accumulator
+    for _, acc in pairs(accumulators) do
+        acc:flush()
+    end
+
+    return builtModelsById
+end
+
 return BuildingBuilder

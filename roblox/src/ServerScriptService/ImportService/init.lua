@@ -501,15 +501,11 @@ function ImportService.ImportChunk(chunk, options)
             max = (config.InstanceBudget and config.InstanceBudget.MaxWindowsPerChunk) or 10000,
         }
         if config.BuildingMode == "shellMesh" then
-            local builtModelsById = {}
-            forEachWithPacing(chunk.buildings, function(building)
-                local model =
-                    BuildingBuilder.Build(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
-                local buildingId = building.id
-                if model and type(buildingId) == "string" and buildingId ~= "" then
-                    builtModelsById[buildingId] = model
-                end
-            end, maybeYield)
+            -- Merge opaque wall + flat-roof geometry into per-material EditableMeshes
+            -- (10-100x draw call reduction). Windows/shaped roofs remain as Parts.
+            local builtModelsById = BuildingBuilder.MeshBuildAll(
+                buildingsFolder, chunk.buildings, chunk.originStuds, chunk, config
+            )
             -- Build interiors (merged by material across chunk)
             RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, builtModelsById)
         elseif config.BuildingMode == "shellParts" then
