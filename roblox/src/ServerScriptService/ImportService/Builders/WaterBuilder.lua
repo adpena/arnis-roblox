@@ -4,13 +4,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local GeoUtils = require(script.Parent.Parent.GeoUtils)
 local _Logger = require(ReplicatedStorage.Shared.Logger)
+local WorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
 local WaterBuilder = {}
 
 -- Water fills 2 studs deep from the surface so it looks like a body of water.
 local WATER_DEPTH = 2
 -- How many studs below the water surface to carve terrain.
-local CARVE_DEPTH = 4
+local CARVE_DEPTH = WorldConfig.WaterCarveDepth or 4
 
 local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)

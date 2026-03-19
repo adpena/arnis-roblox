@@ -3,6 +3,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local RoadProfile = require(script.Parent.Parent.RoadProfile)
+local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 local RoadBuilder = {}
 
@@ -71,9 +72,9 @@ local CURB_SURFACE_LIFT = 0.45
 local BRIDGE_PILLAR_SPACING = 24
 local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
 local BRIDGE_GUARDRAIL_OFFSET = 0.15
-local LANE_WIDTH = 12 -- studs (~3.6 m at 0.3 m/stud)
-local STREET_LIGHT_INTERVAL = 50 -- studs between lamp posts
-local STREET_LIGHT_RANGE = 40
+local LANE_WIDTH = WorldConfig.LaneWidth or 12 -- studs (~3.6 m at 0.3 m/stud)
+local STREET_LIGHT_INTERVAL = WorldConfig.StreetLightInterval or 50 -- studs between lamp posts
+local STREET_LIGHT_RANGE = WorldConfig.StreetLightRange or 40
 local STREET_LIGHT_BRIGHTNESS = 1
 local STREET_LIGHT_COLOR = Color3.fromRGB(255, 244, 214) -- warm white
 
@@ -457,6 +458,24 @@ local function paintSteps(parent, p1, p2, width)
 
     -- Compute height difference (steps have varying Y)
     local heightDiff = math.abs(p2.Y - p1.Y)
+
+    -- Flat path: no meaningful height change — render as a single flat slab.
+    if heightDiff < 0.5 then
+        local flatPart = Instance.new("Part")
+        flatPart.Name = "FlatPath"
+        flatPart.Size = Vector3.new(width, 0.3, segLen)
+        flatPart.Material = Enum.Material.Concrete
+        flatPart.Color = Color3.fromRGB(180, 175, 168)
+        flatPart.Anchored = true
+        flatPart.CanCollide = true
+        flatPart.CFrame = CFrame.lookAt(
+            Vector3.new((p1.X + p2.X) * 0.5, (p1.Y + p2.Y) * 0.5, (p1.Z + p2.Z) * 0.5),
+            Vector3.new(p2.X, (p1.Y + p2.Y) * 0.5, p2.Z)
+        )
+        flatPart.Parent = parent
+        return
+    end
+
     local stepCount = math.max(2, math.floor(heightDiff / 0.5))  -- ~0.5 stud per step (~0.15m)
     local stepDepth = segLen / stepCount
     local stepHeight = heightDiff / stepCount
@@ -541,7 +560,7 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
             paintSegment(terrain, resolvedP1, resolvedP2, road, width, material, sidewalkMode)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
             paintOnewayArrows(parent, resolvedP1, resolvedP2, width, road)
-            if road.lit then
+            if road.lit and WorldConfig.EnableStreetLighting ~= false then
                 placeStreetLights(parent, resolvedP1, resolvedP2, width)
             end
         end

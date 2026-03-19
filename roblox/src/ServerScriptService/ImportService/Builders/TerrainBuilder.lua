@@ -139,9 +139,9 @@ function TerrainBuilder.Build(_parent, chunk)
 		end
 
 		local slope = computeSlope(x, z)
-		if slope > 1.0 then          -- > ~45°
+		if slope > (WorldConfig.SlopeRockThreshold or 1.0) then    -- > ~45°
 			return Enum.Material.Rock
-		elseif slope > 0.47 then     -- > ~25°
+		elseif slope > (WorldConfig.SlopeGroundThreshold or 0.47) then -- > ~25°
 			return Enum.Material.Ground
 		end
 		return baseMat
@@ -279,11 +279,15 @@ function TerrainBuilder.ImprintRoads(roads, originStuds, chunk)
 			-- Fill with Asphalt at road level, Air above
 			local midpoint = (worldP1 + worldP2) * 0.5
 
-			-- Fill the road bed with Asphalt terrain material
+			-- Fill the road bed with the road's own material, falling back to Asphalt.
+			local roadMat = Enum.Material.Asphalt
+			if road.material then
+				pcall(function() roadMat = Enum.Material[road.material] end)
+			end
 			terrain:FillBlock(
 				CFrame.new(midpoint.X, surfaceY - 1, midpoint.Z) * CFrame.Angles(0, math.atan2(dir.X, dir.Z), 0),
 				Vector3.new(halfWidth * 2, 2, segLen),
-				Enum.Material.Asphalt
+				roadMat
 			)
 		end
 	end

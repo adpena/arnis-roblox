@@ -50,6 +50,28 @@ local function getFloorMaterial(building)
     return USAGE_FLOOR_MATERIAL[usage] or USAGE_FLOOR_MATERIAL.default
 end
 
+local function getFacadeBandSpacing(usage)
+    if usage == "office" then
+        return 4
+    elseif usage == "residential" or usage == "apartments" or usage == "house" then
+        return 6
+    elseif usage == "warehouse" or usage == "industrial" then
+        return 12
+    else
+        return 8
+    end
+end
+
+local function getFacadeInset(usage)
+    if usage == "office" then
+        return 0.6
+    elseif usage == "warehouse" or usage == "industrial" then
+        return 0.85
+    else
+        return 0.7
+    end
+end
+
 local function hashId(id)
     local h = 5381
     for i = 1, #id do
@@ -369,9 +391,9 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         return
     end
 
-    local function emitStrip(x, runStartZ, runEndZ)
+    local function emitStrip(centerX, width, runStartZ, runEndZ)
         stripIndex += 1
-        local localCenter = rightAxis * x + forwardAxis * ((runStartZ + runEndZ) * 0.5)
+        local localCenter = rightAxis * centerX + forwardAxis * ((runStartZ + runEndZ) * 0.5)
         local worldCenter = Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
 
         local strip = Instance.new("Part")
@@ -380,11 +402,12 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         strip.CastShadow = false
         strip.Material = effectiveMat
         strip.Color = effectiveColor
-        strip.Size = Vector3.new(ROOF_GRID_SIZE, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
+        strip.Size = Vector3.new(width, ROOF_THICKNESS, runEndZ - runStartZ + ROOF_GRID_SIZE)
         strip.CFrame = CFrame.lookAt(worldCenter, worldCenter + forwardAxis)
         strip.Parent = parent
     end
 
+    local stripSegments = table.create(0)
     local x = minX + ROOF_GRID_SIZE * 0.5
     while x <= maxX do
         local z = minZ + ROOF_GRID_SIZE * 0.5
@@ -400,7 +423,12 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
                 end
                 runEndZ = z
             elseif runStartZ and runEndZ then
-                emitStrip(x, runStartZ, runEndZ)
+                stripSegments[#stripSegments + 1] = {
+                    centerX = x,
+                    width = ROOF_GRID_SIZE,
+                    runStartZ = runStartZ,
+                    runEndZ = runEndZ,
+                }
                 runStartZ = nil
                 runEndZ = nil
             end
@@ -409,6 +437,32 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         end
 
         x += ROOF_GRID_SIZE
+    end
+
+    if #stripSegments > 0 then
+        local active = stripSegments[1]
+        local function flushActive()
+            emitStrip(active.centerX, active.width, active.runStartZ, active.runEndZ)
+        end
+
+        for index = 2, #stripSegments do
+            local segment = stripSegments[index]
+            local expectedCenterX = active.centerX + (active.width + segment.width) * 0.5
+            if
+                math.abs(segment.runStartZ - active.runStartZ) <= 1e-6
+                and math.abs(segment.runEndZ - active.runEndZ) <= 1e-6
+                and math.abs(segment.centerX - expectedCenterX) <= 1e-6
+            then
+                local combinedWidth = active.width + segment.width
+                active.centerX = (active.centerX * active.width + segment.centerX * segment.width) / combinedWidth
+                active.width = combinedWidth
+            else
+                flushActive()
+                active = segment
+            end
+        end
+
+        flushActive()
     end
 
     if stripIndex == 0 then
@@ -437,7 +491,7 @@ local function getBuildingHeight(building)
     end
 end
 
-local function resolveBuildingBaseY(building, originStuds, chunk)
+local function resolveBuildingBaseY(building, originStuds, _chunk)
     -- Schema 0.4.0: baseY is authoritative from DEM. Use directly.
     return originStuds.y + building.baseY
 end
@@ -648,7 +702,9 @@ local function buildAwning(parent, building, baseY, worldPts)
         end
     end
 
-    if not bestP1 or bestLen < 6 then return end
+    if not bestP1 or bestLen < 6 then
+        return
+    end
 
     local mid = Vector3.new((bestP1.X + bestP2.X) * 0.5, 0, (bestP1.Z + bestP2.Z) * 0.5)
     local dx = bestP2.X - bestP1.X
@@ -662,9 +718,9 @@ local function buildAwning(parent, building, baseY, worldPts)
     local h = hashId(id)
     local h2 = ((h * 33) + 7) % 2147483647
     local h3 = ((h2 * 33) + 13) % 2147483647
-    local r = 120 + (h % 81)   -- 120–200
-    local g = 40 + (h2 % 41)   -- 40–80
-    local b = 30 + (h3 % 31)   -- 30–60
+    local r = 120 + (h % 81) -- 120–200
+    local g = 40 + (h2 % 41) -- 40–80
+    local b = 30 + (h3 % 31) -- 30–60
     local awningColor = Color3.fromRGB(r, g, b)
 
     local awningDepth = 4 -- studs
@@ -705,6 +761,14 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     model:SetAttribute("ArnisImportBuildingBaseY", baseY)
     model:SetAttribute("ArnisImportBuildingHeight", height)
     model:SetAttribute("ArnisImportBuildingTopY", baseY + height)
+    local shellFolder = Instance.new("Folder")
+    shellFolder.Name = "Shell"
+    shellFolder.Parent = model
+    local detailFolder = Instance.new("Folder")
+    detailFolder.Name = "Detail"
+    detailFolder.Parent = model
+    detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+    CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
 
     -- World coordinates of footprint vertices
     local worldPts = footprintData.worldPts
@@ -741,7 +805,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
             wall.Transparency = 0.3
             wall.Reflectance = 0.15
         end
-        wall.Parent = model
+        wall.Parent = shellFolder
 
         -- Corner post at p1 vertex to seal the joint between this wall and the previous
         local post = Instance.new("Part")
@@ -752,23 +816,17 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         post.Material = mat
         post.Color = color
         post.CastShadow = false
-        post.Parent = model
+        post.Parent = shellFolder
     end
 
     -- Window bands for tall buildings (>= 3 floors, simple polygons only)
-    -- Density varies by usage: office = dense (4-stud spacing), residential = medium (6-stud),
-    -- warehouse/industrial = sparse (12-stud); others default to 8-stud spacing.
+    -- Density varies by usage: read from WorldConfig.WindowSpacing when available,
+    -- otherwise fall back to the local table. Gated by WorldConfig.EnableWindowRendering.
     local usage = building.usage or building.kind or "default"
-    local WIN_SPACING
-    if usage == "office" then
-        WIN_SPACING = 4
-    elseif usage == "residential" or usage == "apartments" or usage == "house" then
-        WIN_SPACING = 6
-    elseif usage == "warehouse" or usage == "industrial" then
-        WIN_SPACING = 12
-    else
-        WIN_SPACING = 8
-    end
+    local WIN_SPACING = (WorldConfig.WindowSpacing and WorldConfig.WindowSpacing[usage])
+        or (WorldConfig.WindowSpacing and WorldConfig.WindowSpacing.default)
+        or getFacadeBandSpacing(usage)
+    local FACADE_INSET = getFacadeInset(usage)
     local WIN_COLOR = Color3.fromRGB(40, 50, 70) -- dark blue-grey glass tint
     local FLOOR_H = 5
     local BAND_H = 2.5
@@ -776,13 +834,22 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     local maxWindows = windowBudget and windowBudget.max
         or (WorldConfig.InstanceBudget and WorldConfig.InstanceBudget.MaxWindowsPerChunk)
         or 10000
-    if numFloors >= 1 and #worldPts <= 8 and (#worldPts * numFloors * 2) <= 100 then
+    if
+        WorldConfig.EnableWindowRendering ~= false
+        and numFloors >= 1
+        and #worldPts <= 8
+        and (#worldPts * numFloors * 2) <= 100
+    then
         local budgetExceeded = false
         for floor = 1, math.min(numFloors - 1, 10) do
-            if budgetExceeded then break end
+            if budgetExceeded then
+                break
+            end
             local bandY = baseY + floor * FLOOR_H + BAND_H * 0.5
             for i = 1, n do
-                if budgetExceeded then break end
+                if budgetExceeded then
+                    break
+                end
                 local p1w = worldPts[i]
                 local p2w = worldPts[(i % n) + 1]
                 local dx = p2w.X - p1w.X
@@ -791,13 +858,11 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                 if eLen < MIN_EDGE then
                     continue
                 end
-                -- Emit individual window panes spaced by WIN_SPACING along the edge
-                local numPanes = math.max(1, math.floor(eLen / WIN_SPACING))
-                local paneW = eLen / numPanes
                 local edgeUnitX = dx / eLen
                 local edgeUnitZ = dz / eLen
-                for pane = 0, numPanes - 1 do
-                    -- Check chunk-level window budget
+                local numPanes = math.max(1, math.floor(eLen / WIN_SPACING))
+                local bandLen = eLen * FACADE_INSET
+                if numPanes >= 1 and bandLen > MIN_EDGE then
                     if windowBudget then
                         if windowBudget.used >= maxWindows then
                             budgetExceeded = true
@@ -805,36 +870,34 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                         end
                         windowBudget.used += 1
                     end
-                    local tCenter = (pane + 0.5) / numPanes
-                    local paneX = p1w.X + dx * tCenter
-                    local paneZ = p1w.Z + dz * tCenter
-                    local win = Instance.new("Part")
-                    win.Name = bldgName .. "_win" .. i .. "_" .. floor .. "_" .. pane
-                    win.Anchored = true
-                    win.Size = Vector3.new(WALL_THICKNESS * 0.4, BAND_H * 0.8, paneW * 0.6)
-                    win.CFrame = CFrame.lookAt(
-                        Vector3.new(paneX, bandY, paneZ),
-                        Vector3.new(paneX + edgeUnitX, bandY, paneZ + edgeUnitZ)
+                    local band = Instance.new("Part")
+                    band.Name = bldgName .. "_facade_" .. i .. "_" .. floor
+                    band.Anchored = true
+                    band.Size = Vector3.new(WALL_THICKNESS * 0.35, BAND_H * 0.8, bandLen)
+                    band.CFrame = CFrame.lookAt(
+                        Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
+                        Vector3.new((p1w.X + p2w.X) * 0.5 + edgeUnitX, bandY, (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ)
                     )
-                    win.Material = Enum.Material.Glass
-                    win.Color = WIN_COLOR
-                    win.CastShadow = false
-                    win.Transparency = 0.35
-                    win:SetAttribute("BaseTransparency", 0.35)
-                    CollectionService:AddTag(win, "LOD_Detail")
-                    win.Parent = model
+                    band.Material = Enum.Material.Glass
+                    band.Color = WIN_COLOR
+                    band.CastShadow = false
+                    band.Transparency = 0.35
+                    band:SetAttribute("BaseTransparency", 0.35)
+                    band:SetAttribute("ArnisFacadePaneCount", numPanes)
+                    CollectionService:AddTag(band, "LOD_Detail")
+                    band.Parent = detailFolder
                 end
             end
         end
     end
 
     -- Awning on commercial/retail/restaurant ground floors
-    buildAwning(model, building, baseY, worldPts)
+    buildAwning(detailFolder, building, baseY, worldPts)
 
     -- Fill interior with terrain (uses terrain-safe floor materials only)
     fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
 
-    buildRoof(building, worldPts, footprintData, baseY, height, color, mat, model)
+    buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
 
     -- Building name label (from OSM name tag)
     if building.name and building.name ~= "" then
@@ -856,7 +919,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         text.Parent = nameLabel
 
         CollectionService:AddTag(nameLabel, "LOD_Detail")
-        nameLabel.Parent = model
+        nameLabel.Parent = detailFolder
     end
 
     return model
@@ -884,8 +947,8 @@ function BuildingBuilder.BuildAll(parent, buildings, originStuds, chunk)
     return builtModelsById
 end
 
-function BuildingBuilder.Build(parent, building, originStuds, chunk)
-    return BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, nil)
+function BuildingBuilder.Build(parent, building, originStuds, chunk, windowBudget)
+    return BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, windowBudget)
 end
 
 return BuildingBuilder

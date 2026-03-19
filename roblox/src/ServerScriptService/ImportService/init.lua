@@ -494,12 +494,15 @@ function ImportService.ImportChunk(chunk, options)
 
     if shouldImportLayer(layers, "buildings") and config.BuildingMode ~= "none" then
         local pBldgs = Profiler.begin("BuildBuildings")
-        local buildingSampler = if chunk.terrain then GroundSampler.createSampler(chunk) else nil
+        local windowBudget = {
+            used = 0,
+            max = (config.InstanceBudget and config.InstanceBudget.MaxWindowsPerChunk) or 10000,
+        }
         if config.BuildingMode == "shellMesh" then
             local builtModelsById = {}
             forEachWithPacing(chunk.buildings, function(building)
                 local model =
-                    BuildingBuilder.Build(buildingsFolder, building, chunk.originStuds, chunk, buildingSampler)
+                    BuildingBuilder.Build(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
                 local buildingId = building.id
                 if model and type(buildingId) == "string" and buildingId ~= "" then
                     builtModelsById[buildingId] = model
@@ -509,11 +512,11 @@ function ImportService.ImportChunk(chunk, options)
             RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, builtModelsById)
         elseif config.BuildingMode == "shellParts" then
             forEachWithPacing(chunk.buildings, function(building)
-                BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds, chunk, buildingSampler)
+                BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
             end, maybeYield)
         else
             forEachWithPacing(chunk.buildings, function(building)
-                BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds, chunk, buildingSampler)
+                BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
             end, maybeYield)
         end
 
