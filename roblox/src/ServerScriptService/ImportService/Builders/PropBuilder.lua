@@ -262,9 +262,8 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
         prop.position.z + originStuds.z
     )
     local yaw = math.rad(prop.yawDegrees or 0)
-    -- prop.scale is an optional manifest override; getTreeScale derives scale from
-    -- prop.height (real meters) when available, otherwise falls back to species table.
-    local scale = prop.scale or getTreeScale(prop)
+    -- prop.scale defaults to 1.0 from exporter; use getTreeScale for real height-based scaling
+    local scale = getTreeScale(prop)
     local canopySeed = hashId(prop.id or tostring(prop.position.x) .. ":" .. tostring(prop.position.z))
 
     local model = Instance.new("Model")
