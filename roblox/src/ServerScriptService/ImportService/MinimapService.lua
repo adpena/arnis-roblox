@@ -307,26 +307,50 @@ function MinimapService.CreateGui(player)
 
     screenGui.Parent = player.PlayerGui
 
-    -- M key toggles fullscreen
+    -- M key toggles fullscreen with smooth animation
+    local TweenService = game:GetService("TweenService")
+    local TWEEN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    local animating = false
+
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.M then
+        if input.KeyCode == Enum.KeyCode.M and not animating then
             isFullscreen = not isFullscreen
+            animating = true
+
             if isFullscreen then
-                -- Expand to fullscreen center
                 local size = MAP_FULLSCREEN_SIZE + 10
-                frame.Size = UDim2.new(0, size, 0, size)
-                frame.Position = UDim2.new(0.5, -size / 2, 0.5, -size / 2)
-                imageLabel.Size = UDim2.new(0, MAP_FULLSCREEN_SIZE, 0, MAP_FULLSCREEN_SIZE)
+                local targetFrameProps = {
+                    Size = UDim2.new(0, size, 0, size),
+                    Position = UDim2.new(0.5, -size / 2, 0.5, -size / 2),
+                }
+                local targetImageProps = {
+                    Size = UDim2.new(0, MAP_FULLSCREEN_SIZE, 0, MAP_FULLSCREEN_SIZE),
+                }
                 label.Text = "MAP  [M to close]"
+                local tw1 = TweenService:Create(frame, TWEEN_INFO, targetFrameProps)
+                local tw2 = TweenService:Create(imageLabel, TWEEN_INFO, targetImageProps)
+                tw1:Play()
+                tw2:Play()
+                tw1.Completed:Wait()
             else
-                -- Collapse to bottom-left mini
                 local size = MAP_DISPLAY_SIZE + 10
-                frame.Size = UDim2.new(0, size, 0, size)
-                frame.Position = UDim2.new(0, 10, 1, -size - 10)
-                imageLabel.Size = UDim2.new(0, MAP_DISPLAY_SIZE, 0, MAP_DISPLAY_SIZE)
+                local targetFrameProps = {
+                    Size = UDim2.new(0, size, 0, size),
+                    Position = UDim2.new(0, 10, 1, -size - 10),
+                }
+                local targetImageProps = {
+                    Size = UDim2.new(0, MAP_DISPLAY_SIZE, 0, MAP_DISPLAY_SIZE),
+                }
                 label.Text = "MAP"
+                local tw1 = TweenService:Create(frame, TWEEN_INFO, targetFrameProps)
+                local tw2 = TweenService:Create(imageLabel, TWEEN_INFO, targetImageProps)
+                tw1:Play()
+                tw2:Play()
+                tw1.Completed:Wait()
             end
+
+            animating = false
         end
     end)
 end

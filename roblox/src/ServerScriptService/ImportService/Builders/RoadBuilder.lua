@@ -2,42 +2,75 @@ local Workspace = game:GetService("Workspace")
 local CollectionService = game:GetService("CollectionService")
 local AssetService = game:GetService("AssetService")
 
-local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local RoadChunkPlan = require(script.Parent.Parent.RoadChunkPlan)
 local RoadProfile = require(script.Parent.Parent.RoadProfile)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 local RoadBuilder = {}
 
--- Maps OSM surface tag → CustomPhysicalProperties for road Parts and MeshParts.
--- CustomPhysicalProperties.new(density, friction, elasticity, frictionWeight, elasticityWeight)
+-- Maps OSM surface tag → physical properties for road Parts and MeshParts.
+-- Surface physics tuned for realistic vehicle handling.
+-- Roblox Friction range 0-2; real tire-on-surface coefficients mapped to this range.
+-- Density affects mass/inertia. Elasticity affects bounce (low for all roads).
+-- FrictionWeight=1 means equal influence between wheel and surface.
+--
+-- Reference (dry conditions, rubber tires):
+--   Real asphalt μ ≈ 0.7-0.8  →  Roblox 0.75
+--   Real concrete μ ≈ 0.6-0.7 →  Roblox 0.65
+--   Real cobble μ  ≈ 0.5-0.6  →  Roblox 0.55
+--   Real gravel μ  ≈ 0.3-0.5  →  Roblox 0.40
+--   Real dirt μ    ≈ 0.3-0.4  →  Roblox 0.30
+--   Real sand μ    ≈ 0.2-0.3  →  Roblox 0.20
+--   Real ice μ     ≈ 0.1-0.2  →  Roblox 0.12
+
 local SURFACE_PHYSICS = {
-    asphalt = CustomPhysicalProperties.new(2.4, 0.8, 0.1, 1, 1),
-    concrete = CustomPhysicalProperties.new(2.4, 0.7, 0.15, 1, 1),
-    paving_stones = CustomPhysicalProperties.new(2.4, 0.6, 0.1, 1, 1),
-    cobblestone = CustomPhysicalProperties.new(2.4, 0.55, 0.1, 1, 1),
-    sett = CustomPhysicalProperties.new(2.4, 0.55, 0.1, 1, 1),
-    gravel = CustomPhysicalProperties.new(1.8, 0.4, 0.05, 1, 1),
-    fine_gravel = CustomPhysicalProperties.new(1.8, 0.45, 0.05, 1, 1),
-    unpaved = CustomPhysicalProperties.new(1.6, 0.35, 0.05, 1, 1),
-    dirt = CustomPhysicalProperties.new(1.6, 0.3, 0.05, 1, 1),
-    sand = CustomPhysicalProperties.new(1.4, 0.25, 0.02, 1, 1),
-    grass = CustomPhysicalProperties.new(1.2, 0.35, 0.1, 1, 1),
-    wood = CustomPhysicalProperties.new(0.8, 0.5, 0.2, 1, 1),
-    metal = CustomPhysicalProperties.new(3.0, 0.4, 0.15, 1, 1),
-    compacted = CustomPhysicalProperties.new(2.0, 0.5, 0.05, 1, 1),
+    -- Paved surfaces (high grip)
+    asphalt         = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1),
+    concrete        = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1),
+    asphalt_smooth  = PhysicalProperties.new(2.4, 0.70, 0.08, 1, 1),  -- newer asphalt
+
+    -- Stone surfaces (medium-high grip, some bump)
+    paving_stones   = PhysicalProperties.new(2.4, 0.58, 0.12, 1, 1),
+    cobblestone     = PhysicalProperties.new(2.4, 0.50, 0.12, 1, 1),  -- uneven, bumpy
+    sett            = PhysicalProperties.new(2.4, 0.52, 0.10, 1, 1),  -- cut stone blocks
+    unhewn_cobblestone = PhysicalProperties.new(2.4, 0.45, 0.14, 1, 1), -- rough, very bumpy
+
+    -- Loose surfaces (low grip, vehicles slide)
+    gravel          = PhysicalProperties.new(1.8, 0.38, 0.04, 1, 1),
+    fine_gravel     = PhysicalProperties.new(1.8, 0.42, 0.04, 1, 1),
+    pebblestone     = PhysicalProperties.new(1.8, 0.35, 0.05, 1, 1),
+    compacted       = PhysicalProperties.new(2.0, 0.48, 0.05, 1, 1),  -- packed earth, decent grip
+
+    -- Unpaved (low grip)
+    unpaved         = PhysicalProperties.new(1.6, 0.32, 0.04, 1, 1),
+    dirt            = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    earth           = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    mud             = PhysicalProperties.new(1.4, 0.18, 0.02, 1, 1),  -- very slippery
+    sand            = PhysicalProperties.new(1.4, 0.20, 0.02, 1, 1),  -- wheels sink + slide
+    grass           = PhysicalProperties.new(1.2, 0.30, 0.08, 1, 1),  -- damp grass, moderate grip
+
+    -- Special surfaces
+    wood            = PhysicalProperties.new(0.8, 0.45, 0.15, 1, 1),  -- boardwalk, slightly bouncy
+    metal           = PhysicalProperties.new(3.0, 0.35, 0.10, 1, 1),  -- bridge grating, slippery
+    rubber          = PhysicalProperties.new(1.2, 0.90, 0.20, 1, 1),  -- playground, high grip
+    tartan          = PhysicalProperties.new(1.2, 0.85, 0.15, 1, 1),  -- running track
+    ice             = PhysicalProperties.new(2.4, 0.12, 0.02, 1, 1),  -- future: winter mode
+    snow            = PhysicalProperties.new(1.0, 0.18, 0.05, 1, 1),  -- future: winter mode
 }
 
--- Default physics for roads with no surface tag (treated as asphalt).
-local DEFAULT_ROAD_PHYSICS = CustomPhysicalProperties.new(2.4, 0.8, 0.1, 1, 1)
+-- Default for roads with no surface tag (treated as good asphalt).
+local DEFAULT_ROAD_PHYSICS = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1)
 
--- Concrete physics used for bridge decks and tunnel surfaces.
-local CONCRETE_PHYSICS = CustomPhysicalProperties.new(2.4, 0.7, 0.15, 1, 1)
+-- Concrete physics for bridge decks and tunnel surfaces.
+local CONCRETE_PHYSICS = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1)
 
--- Extra-grip physics for steps/stairs.
-local STEPS_PHYSICS = CustomPhysicalProperties.new(2.4, 0.9, 0.1, 1, 1)
+-- Extra-grip physics for steps/stairs (textured concrete, anti-slip).
+local STEPS_PHYSICS = PhysicalProperties.new(2.4, 0.85, 0.08, 1, 1)
 
--- Returns the appropriate CustomPhysicalProperties for a road entry.
+-- Sidewalk physics (smooth concrete, good walking grip).
+local SIDEWALK_PHYSICS = PhysicalProperties.new(2.4, 0.70, 0.10, 1, 1)
+
+-- Returns the appropriate physical properties for a road entry.
 local function getPhysicsProperties(road)
     if road.surface and SURFACE_PHYSICS[road.surface] then
         return SURFACE_PHYSICS[road.surface]
@@ -116,7 +149,6 @@ local CURB_SURFACE_LIFT = 0.45
 local BRIDGE_PILLAR_SPACING = 24
 local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
 local BRIDGE_GUARDRAIL_OFFSET = 0.15
-local LANE_WIDTH = WorldConfig.LaneWidth or 12 -- studs (~3.6 m at 0.3 m/stud)
 local STREET_LIGHT_INTERVAL = WorldConfig.StreetLightInterval or 50 -- studs between lamp posts
 local STREET_LIGHT_RANGE = WorldConfig.StreetLightRange or 40
 local STREET_LIGHT_BRIGHTNESS = 1
@@ -137,22 +169,6 @@ local function getRoadDetailParent(parent)
 end
 
 -- Returns "both", "left", "right", or "no".
-local function getSidewalkMode(road)
-    if road.sidewalk then
-        return road.sidewalk -- explicit manifest value takes priority
-    end
-    return road.hasSidewalk and "both" or "no"
-end
-
--- Returns the effective road-surface width in studs.
--- When lane count is available it overrides the raw widthStuds estimate.
-local function getEffectiveWidth(road, profileWidth)
-    if road.lanes and road.lanes > 0 then
-        return road.lanes * LANE_WIDTH
-    end
-    return profileWidth
-end
-
 local function getMaterial(road)
     -- 1. OSM surface tag takes priority (most specific physical description)
     if road.surface then
@@ -204,10 +220,6 @@ local ROAD_COLOR = {
 
 local function getRoadColor(road)
     return ROAD_COLOR[road.kind] or ROAD_COLOR.default
-end
-
-local function offsetPoint(point, origin)
-    return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
 end
 
 local function classifySegment(road, p1, p2, _chunk)
@@ -825,12 +837,12 @@ local function executeRoadPlan(parent, detailParent, roadPlan)
 end
 
 -- Build ALL roads in a chunk by painting them into the terrain.
-function RoadBuilder.BuildAll(parent, roads, originStuds, chunk, maybeYield)
+function RoadBuilder.BuildAll(parent, roads, originStuds, chunk, maybeYield, preparedChunkPlan)
     if not roads or #roads == 0 then
         return
     end
     local detailParent = getRoadDetailParent(parent)
-    local chunkPlan = buildChunkPlan(roads, originStuds, chunk)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
     for _, roadPlan in ipairs(chunkPlan.roads) do
         executeRoadPlan(parent, detailParent, roadPlan)
         if maybeYield then
@@ -839,17 +851,17 @@ function RoadBuilder.BuildAll(parent, roads, originStuds, chunk, maybeYield)
     end
 end
 
-function RoadBuilder.Build(parent, road, originStuds, chunk)
+function RoadBuilder.Build(parent, road, originStuds, chunk, preparedChunkPlan)
     local detailParent = getRoadDetailParent(parent)
-    local chunkPlan = buildChunkPlan({ road }, originStuds, chunk)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan({ road }, originStuds, chunk)
     if chunkPlan.roads[1] then
         executeRoadPlan(parent, detailParent, chunkPlan.roads[1])
     end
 end
 
-function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk, detailParent)
+function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk, detailParent, preparedChunkPlan)
     detailParent = detailParent or getRoadDetailParent(parent)
-    local chunkPlan = buildChunkPlan({ road }, originStuds, chunk)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan({ road }, originStuds, chunk)
     if chunkPlan.roads[1] then
         executeRoadPlan(parent, detailParent, chunkPlan.roads[1])
     end
@@ -960,7 +972,7 @@ end
 -- Bridges, tunnels, and steps fall back to per-part rendering.
 -- Decorations (centerlines, arrows, lights, crosswalks) are NOT included here;
 -- call MeshBuildDecorations in a separate pass.
-function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk)
+function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk, preparedChunkPlan)
     if not roads or #roads == 0 then
         return
     end
@@ -977,7 +989,7 @@ function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk)
         return accumulators[key]
     end
 
-    local chunkPlan = buildChunkPlan(roads, originStuds, chunk)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
 
     for _, roadPlan in ipairs(chunkPlan.roads) do
         local road = roadPlan.road
@@ -1016,13 +1028,13 @@ end
 -- and crosswalk markings.  Road surfaces are handled by MeshBuildAll.
 -- Detail items (arrows, lights, crosswalks) are placed in the grouped detail
 -- sub-folder consistent with the FallbackBuild pattern.
-function RoadBuilder.MeshBuildDecorations(parent, roads, originStuds, _chunk)
+function RoadBuilder.MeshBuildDecorations(parent, roads, originStuds, chunk, preparedChunkPlan)
     if not roads or #roads == 0 then
         return
     end
 
     local detailParent = getRoadDetailParent(parent)
-    local chunkPlan = buildChunkPlan(roads, originStuds, _chunk)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
 
     for _, roadPlan in ipairs(chunkPlan.roads) do
         local road = roadPlan.road
