@@ -1,5 +1,4 @@
 local WorldConfig = {
-    MetersPerStud = 1.0,
     ChunkSizeStuds = 256,
 
     TerrainMode = "voxel", -- Options: "none", "debugParts", "voxel"
@@ -8,8 +7,8 @@ local WorldConfig = {
     WaterMode = "mesh", -- Added for completeness
     LanduseMode = "fill", -- Options: "none", "fill"
 
-    StreamingEnabled = false, -- must be false; terrain FillBlock conflicts with streaming
-    StreamingTargetRadius = 4096, -- Distance to keep ANY representation loaded
+    StreamingEnabled = false, -- importer-driven chunk streaming; keep off until runtime path is validated for your map
+    StreamingTargetRadius = 4096, -- Distance to keep any representation loaded
     HighDetailRadius = 2048, -- Distance to keep full buildings/water/props loaded
 
     InstanceBudget = {
