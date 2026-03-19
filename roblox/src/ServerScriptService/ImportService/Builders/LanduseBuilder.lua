@@ -1,6 +1,7 @@
 local Workspace = game:GetService("Workspace")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
+local GeoUtils = require(script.Parent.Parent.GeoUtils)
 local SpatialQuery = require(script.Parent.Parent.SpatialQuery)
 
 local LanduseBuilder = {}
@@ -102,19 +103,28 @@ local function getMaterial(kind, materialName)
     return KIND_MATERIAL[kind] or Enum.Material.Ground
 end
 
--- Scatter park benches at pseudo-random but deterministic positions.
-local function pointInPolygon(px, pz, poly)
-    local inside = false
-    local j = #poly
-    for i = 1, #poly do
-        local xi, zi = poly[i].x, poly[i].z
-        local xj, zj = poly[j].x, poly[j].z
-        if ((zi > pz) ~= (zj > pz)) and (px < (xj - xi) * (pz - zi) / (zj - zi) + xi) then
-            inside = not inside
-        end
-        j = i
+local function hashSeed(value)
+    local text = tostring(value)
+    local h = 2166136261
+    for i = 1, #text do
+        h = bit32.band(bit32.bxor(h, string.byte(text, i)) * 16777619, 0xFFFFFFFF)
     end
-    return inside
+    return h
+end
+
+local function nextRandomUnit(state)
+    state = (1103515245 * state + 12345) % 2147483648
+    return state, state / 2147483648
+end
+
+local function nextRandomIndex(state, maxInclusive)
+    local unit
+    state, unit = nextRandomUnit(state)
+    local index = math.floor(unit * maxInclusive) + 1
+    if index > maxInclusive then
+        index = maxInclusive
+    end
+    return state, index
 end
 
 local function collectCells(landuse, originStuds, chunk)
@@ -131,6 +141,11 @@ local function collectCells(landuse, originStuds, chunk)
     end
 
     local cells = {}
+    local roadIndex = nil
+    local sampleGroundY = GroundSampler.createSampler(chunk)
+    if chunk and chunk.roads and #chunk.roads > 0 then
+        roadIndex = SpatialQuery.GetRoadIndex(chunk.roads, originStuds)
+    end
     local x = minX + GRID_SIZE * 0.5
     local sampledCells = 0
     while x <= maxX do
@@ -141,17 +156,17 @@ local function collectCells(landuse, originStuds, chunk)
                 task.wait()
             end
 
-            if pointInPolygon(x, z, worldPoly) then
+            if GeoUtils.pointInPolygon(x, z, worldPoly) then
                 local isNearRoad = false
-                if chunk and chunk.roads and #chunk.roads > 0 then
-                    isNearRoad = SpatialQuery.isPointNearAnyRoad(chunk.roads, originStuds, x, z)
+                if roadIndex then
+                    isNearRoad = SpatialQuery.isPointNearRoadIndex(roadIndex, x, z)
                 end
 
                 if not isNearRoad then
                     cells[#cells + 1] = {
                         x = x,
                         z = z,
-                        y = GroundSampler.sampleWorldHeight(chunk, x, z),
+                        y = sampleGroundY(x, z),
                     }
                 end
             end
@@ -163,19 +178,43 @@ local function collectCells(landuse, originStuds, chunk)
     return cells
 end
 
+local function placeParkingStalls(parent, cells, id)
+    -- Place white line markings in a grid pattern, deterministically
+    local stallDepth = 16 -- studs (~4.8m)
+    local state = hashSeed((id or "") .. #cells)
+    for _, cell in ipairs(cells) do
+        -- Skip ~40% of cells to avoid overdoing it (deterministic)
+        local unit
+        state, unit = nextRandomUnit(state)
+        if unit > 0.6 then continue end
+
+        local line = Instance.new("Part")
+        line.Name = "ParkingLine"
+        line.Size = Vector3.new(0.3, 0.05, stallDepth)
+        line.Material = Enum.Material.SmoothPlastic
+        line.Color = Color3.fromRGB(255, 255, 255)
+        line.Anchored = true
+        line.CanCollide = false
+        line.CastShadow = false
+        line.CFrame = CFrame.new(cell.x, cell.y + 0.1, cell.z)
+        line.Parent = parent
+    end
+end
+
 local function placeParkFurniture(cells, parent)
     local area = #cells * GRID_SIZE * GRID_SIZE
     local count = math.min(8, math.floor(area / 400))
     if count <= 0 then
         return
     end
-    math.randomseed(#cells * 7919)
+    local state = hashSeed(#cells * 7919)
     local used = {}
     for _ = 1, count do
-        local idx = math.random(1, #cells)
+        local idx
+        state, idx = nextRandomIndex(state, #cells)
         local attempts = 0
         while used[idx] and attempts < #cells do
-            idx = math.random(1, #cells)
+            state, idx = nextRandomIndex(state, #cells)
             attempts += 1
         end
         used[idx] = true
@@ -185,8 +224,9 @@ local function placeParkFurniture(cells, parent)
         bench.Anchored = true
         bench.CanCollide = false
         bench.Size = Vector3.new(3, 0.3, 0.6)
-        bench.CFrame = CFrame.new(cell.x, cell.y + 0.15, cell.z)
-            * CFrame.Angles(0, math.random() * math.pi, 0)
+        local yawUnit
+        state, yawUnit = nextRandomUnit(state)
+        bench.CFrame = CFrame.new(cell.x, cell.y + 0.15, cell.z) * CFrame.Angles(0, yawUnit * math.pi, 0)
         bench.Material = Enum.Material.WoodPlanks
         bench.Color = Color3.fromRGB(139, 90, 43)
         bench.CastShadow = false
@@ -227,14 +267,24 @@ local function placeVegetation(kind, cells, parent)
     end
     local canopyColor = FOREST_CANOPY[kind] or BrickColor.new("Bright green")
 
-    math.randomseed(#cells * 997 + kind:byte(1, 1))
+    local state = hashSeed(#cells * 997 + kind:byte(1, 1))
     for _ = 1, count do
-        local cell = cells[math.random(1, #cells)]
-        local tx = cell.x + (math.random() - 0.5) * GRID_SIZE * 0.6
-        local tz = cell.z + (math.random() - 0.5) * GRID_SIZE * 0.6
-        local scale = 0.7 + math.random() * 0.6
+        local cellIndex
+        state, cellIndex = nextRandomIndex(state, #cells)
+        local cell = cells[cellIndex]
+        local offsetX
+        state, offsetX = nextRandomUnit(state)
+        local offsetZ
+        state, offsetZ = nextRandomUnit(state)
+        local scaleUnit
+        state, scaleUnit = nextRandomUnit(state)
+        local canopyUnit
+        state, canopyUnit = nextRandomUnit(state)
+        local tx = cell.x + (offsetX - 0.5) * GRID_SIZE * 0.6
+        local tz = cell.z + (offsetZ - 0.5) * GRID_SIZE * 0.6
+        local scale = 0.7 + scaleUnit * 0.6
         local trunkH = 6 * scale
-        local canopyR = (3.5 + math.random() * 2.5) * scale
+        local canopyR = (3.5 + canopyUnit * 2.5) * scale
 
         local model = Instance.new("Model")
         model.Name = kind .. "_tree"
@@ -245,8 +295,7 @@ local function placeVegetation(kind, cells, parent)
         trunk.CastShadow = false
         trunk.Size = Vector3.new(0.8 * scale, trunkH, 0.8 * scale)
         trunk.Shape = Enum.PartType.Cylinder
-        trunk.CFrame = CFrame.new(tx, cell.y + trunkH * 0.5, tz)
-            * CFrame.Angles(0, 0, math.pi * 0.5)
+        trunk.CFrame = CFrame.new(tx, cell.y + trunkH * 0.5, tz) * CFrame.Angles(0, 0, math.pi * 0.5)
         trunk.Material = Enum.Material.Wood
         trunk.Color = Color3.fromRGB(90, 65, 40)
         trunk.Parent = model
@@ -290,6 +339,11 @@ function LanduseBuilder.BuildOne(landuse, originStuds, parent, chunk)
         if filledCells % FILL_YIELD_INTERVAL == 0 then
             task.wait()
         end
+    end
+
+    -- Parking stall markings
+    if landuse.kind == "parking" then
+        placeParkingStalls(parent or Workspace, cells, landuse.id)
     end
 
     -- Scatter benches in parks
