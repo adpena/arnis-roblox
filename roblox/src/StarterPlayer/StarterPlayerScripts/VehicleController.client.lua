@@ -46,13 +46,13 @@ local JETPACK_TAG = "JetpackPart"
 local PARACHUTE_TAG = "ParachutePart"
 
 -- Car physics
-local CAR_MAX_SPEED = 120           -- studs/s
-local CAR_TORQUE = 800
-local CAR_STEER_ANGLE = 35          -- degrees
-local CAR_STEER_SPEED = 4           -- how fast steering responds
-local SUSPENSION_REST_LENGTH = 1.5
-local SUSPENSION_STIFFNESS = 800
-local SUSPENSION_DAMPING = 60
+local CAR_MAX_SPEED = 160            -- studs/s (~48m/s, feels FAST)
+local CAR_TORQUE = 1200              -- strong acceleration, feel the g-force
+local CAR_STEER_ANGLE = 40           -- degrees — sharp turns possible
+local CAR_STEER_SPEED = 5            -- responsive steering
+local SUSPENSION_REST_LENGTH = 1.8   -- slightly softer, more body roll
+local SUSPENSION_STIFFNESS = 600     -- softer springs = more body roll in turns
+local SUSPENSION_DAMPING = 45        -- less damping = bouncier, more alive
 local DRIFT_GRIP_REDUCTION = 0.4
 local ENGINE_IDLE_VIBRATION = 0.03
 
@@ -79,8 +79,8 @@ local CAR_CAM_OFFSET = Vector3.new(0, 8, 22)
 local CAR_CAM_LERP = 0.08
 local CAR_CAM_TILT_FACTOR = 0.04
 local CAR_FOV_MIN = 70
-local CAR_FOV_MAX = 95
-local CAR_FOV_SPEED_RANGE = 100     -- speed at which FOV maxes out
+local CAR_FOV_MAX = 105              -- dramatic speed distortion at top speed
+local CAR_FOV_SPEED_RANGE = 130      -- ramp to max over full speed range
 
 local JETPACK_CAM_OFFSET = Vector3.new(0, 4, 16)
 local JETPACK_CAM_LERP = 0.06
@@ -88,7 +88,7 @@ local JETPACK_CAM_SHAKE_INTENSITY = 0.15
 
 local CHUTE_CAM_OFFSET = Vector3.new(0, 10, 24)
 local CHUTE_CAM_LERP = 0.05
-local CHUTE_FOV = 82
+local CHUTE_FOV = 90              -- wide panoramic view of the city
 
 local DEFAULT_FOV = 70
 
@@ -557,7 +557,7 @@ local function createCarBody(spawnCF)
 
     -- Anti-flip gyro
     local gyro = Instance.new("BodyGyro")
-    gyro.MaxTorque = Vector3.new(80000, 0, 80000)
+    gyro.MaxTorque = Vector3.new(30000, 0, 30000) -- reduced: car CAN flip if reckless
     gyro.P = 6000
     gyro.D = 500
     gyro.CFrame = chassis.CFrame
@@ -715,7 +715,7 @@ local function createWheelWithSuspension(model, chassis, spawnCF, offset, isFron
     wheel.Anchored = false
     wheel.CustomPhysicalProperties = PhysicalProperties.new(
         isFront and 1.5 or (1.5 * (1 - DRIFT_GRIP_REDUCTION * 0.3)),
-        isFront and 1.2 or 0.6,   -- rear wheels: less friction for drift
+        isFront and 1.0 or 0.4,   -- rear wheels: MUCH less friction — tail kicks out in turns
         0.15, 1, 1
     )
     wheel.Parent = model
@@ -1484,10 +1484,11 @@ local function deployParachute()
         panel.Size = Vector3.new(panelWidth - 0.1, panelHeight, panelDepth)
         panel.Material = Enum.Material.Fabric
 
-        if i % 2 == 0 then
-            panel.Color = Color3.fromRGB(255, 255, 255)
+        -- White canopy with red center panel
+        if i == math.ceil(panelCount / 2) then
+            panel.Color = Color3.fromRGB(200, 30, 30)  -- red center panel
         else
-            panel.Color = Color3.fromRGB(255, 120, 30)
+            panel.Color = Color3.fromRGB(245, 245, 245)  -- clean white
         end
 
         local xOff = (i - (panelCount + 1) / 2) * panelWidth
