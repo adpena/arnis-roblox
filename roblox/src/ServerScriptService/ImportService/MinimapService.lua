@@ -14,7 +14,7 @@ local MAP_FULLSCREEN_SIZE = 600 -- pixel size on screen (fullscreen mode)
 local MAP_RADIUS = 400 -- world studs visible in minimap radius (small)
 local MAP_RADIUS_FULL = 1600 -- world studs visible (fullscreen)
 local UPDATE_INTERVAL = 0.2 -- seconds between minimap updates
-local BORDER_WIDTH = 3
+local BORDER_WIDTH = 2  -- tighter border for more map area
 local isFullscreen = false
 
 -- Colors (RGBA bytes)
@@ -37,6 +37,7 @@ local chunks = {} -- stored chunk data for rendering
 local editableImage = nil
 local screenGui = nil
 local imageLabel = nil
+local mapLabel = nil
 local lastUpdate = 0
 
 -- Pixel buffer (flattened RGBA)
@@ -317,6 +318,7 @@ function MinimapService.CreateGui(player)
     label.TextSize = 11
     label.Font = Enum.Font.GothamBold
     label.Parent = frame
+    mapLabel = label  -- store for compass heading updates
 
     screenGui.Parent = player.PlayerGui
 
@@ -406,6 +408,14 @@ function MinimapService.Start()
 
         -- Write to EditableImage
         editableImage:WritePixels(Vector2.zero, Vector2.new(MAP_SIZE, MAP_SIZE), pixelBuffer)
+
+        -- Update compass heading on label (when not fullscreen)
+        if not isFullscreen and mapLabel then
+            local heading = math.floor((-camYaw * 180 / math.pi) % 360)
+            local dirs = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+            local dirIdx = math.floor((heading + 22.5) / 45) % 8 + 1
+            mapLabel.Text = string.format("MAP  %s %d°", dirs[dirIdx], heading)
+        end
     end)
 end
 

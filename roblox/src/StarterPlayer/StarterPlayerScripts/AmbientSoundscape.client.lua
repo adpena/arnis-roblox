@@ -118,7 +118,7 @@ local function updateAmbience()
             break
         end
     end
-    smoothVol(sounds.cityHum, nearRoad and 0.2 or 0.08)
+    smoothVol(sounds.cityHum, nearRoad and 0.28 or 0.14) -- always-present urban pulse
 end
 
 -- ---------------------------------------------------------------------------

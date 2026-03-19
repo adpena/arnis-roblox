@@ -22,8 +22,14 @@ function LoadingScreen.Show(worldName)
         bg.Name = "Background"
         bg.Size = UDim2.new(1, 0, 1, 0)
         bg.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+        bg.BackgroundTransparency = 1 -- starts invisible, fades in
         bg.BorderSizePixel = 0
         bg.Parent = gui
+
+        -- Fade in
+        TweenService:Create(bg, TweenInfo.new(0.6, Enum.EasingStyle.Quad), {
+            BackgroundTransparency = 0,
+        }):Play()
 
         -- City name (large, centered)
         local title = Instance.new("TextLabel")
@@ -44,7 +50,7 @@ function LoadingScreen.Show(worldName)
         subtitle.Size = UDim2.new(0.8, 0, 0, 24)
         subtitle.Position = UDim2.new(0.1, 0, 0.35, 65)
         subtitle.BackgroundTransparency = 1
-        subtitle.Text = "Generated from OpenStreetMap"
+        subtitle.Text = "Arnis HD Pipeline v0.4.0 — Generated from OpenStreetMap"
         subtitle.TextColor3 = Color3.fromRGB(120, 125, 140)
         subtitle.TextSize = 16
         subtitle.Font = Enum.Font.Gotham

@@ -23,9 +23,9 @@ local function getTimePhase(hour)
         return "dawn"
     elseif hour >= 7.5 and hour < 17 then
         return "day"
-    elseif hour >= 17 and hour < 19.5 then
-        return "golden"
-    elseif hour >= 19.5 and hour < 21 then
+    elseif hour >= 17 and hour < 18.5 then
+        return "golden"    -- compressed for snappier demo pacing
+    elseif hour >= 18.5 and hour < 20 then
         return "dusk"
     else
         return "night"
@@ -120,7 +120,7 @@ end
 local function isWindowLit(part)
     local pos = part.Position
     local hash = math.floor(math.abs(pos.X * 7 + pos.Z * 13)) % 100
-    return hash < 65
+    return hash < 75  -- 75% lit for vibrant night city feel
 end
 
 local function updateReactiveVisibility(reactiveKind, lightsOn)
