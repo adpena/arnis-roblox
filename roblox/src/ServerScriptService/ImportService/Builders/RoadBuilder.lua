@@ -315,6 +315,82 @@ local function paintCenterline(parent, p1, p2, width)
     end
 end
 
+-- Paint a tunnel segment: road surface plus ceiling and side walls.
+local function paintTunnelSegment(parent, p1, p2, width, road)
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 0.1 then return end
+    dir = dir.Unit
+
+    local midpoint = (p1 + p2) * 0.5
+    local surfaceY = midpoint.Y
+
+    -- Road surface (same as ground road but underground)
+    local roadPart = Instance.new("Part")
+    roadPart.Name = "TunnelRoad"
+    roadPart.Size = Vector3.new(width, 0.5, segLen)
+    roadPart.Material = Enum.Material.Asphalt
+    roadPart.Color = Color3.fromRGB(60, 60, 60)
+    roadPart.Anchored = true
+    roadPart.CanCollide = true
+    roadPart.CFrame = CFrame.lookAt(midpoint, p2) * CFrame.new(0, -0.25, 0)
+    roadPart.Parent = parent
+
+    -- Tunnel ceiling
+    local tunnelHeight = 12 -- studs clearance
+    local ceiling = Instance.new("Part")
+    ceiling.Name = "TunnelCeiling"
+    ceiling.Size = Vector3.new(width + 2, 1, segLen)
+    ceiling.Material = Enum.Material.Concrete
+    ceiling.Color = Color3.fromRGB(140, 140, 140)
+    ceiling.Anchored = true
+    ceiling.CanCollide = true
+    ceiling.CFrame = CFrame.lookAt(midpoint + Vector3.new(0, tunnelHeight, 0), p2 + Vector3.new(0, tunnelHeight, 0))
+    ceiling.Parent = parent
+
+    -- Tunnel walls (left and right)
+    for _, side in ipairs({-1, 1}) do
+        local wall = Instance.new("Part")
+        wall.Name = "TunnelWall"
+        wall.Size = Vector3.new(1, tunnelHeight, segLen)
+        wall.Material = Enum.Material.Concrete
+        wall.Color = Color3.fromRGB(160, 160, 160)
+        wall.Anchored = true
+        wall.CanCollide = true
+        wall.CFrame = CFrame.lookAt(
+            midpoint + Vector3.new(side * (width * 0.5 + 0.5), tunnelHeight * 0.5, 0),
+            p2 + Vector3.new(side * (width * 0.5 + 0.5), tunnelHeight * 0.5, 0)
+        )
+        wall.Parent = parent
+    end
+end
+
+-- Paint crosswalk stripes at a road endpoint for roads wider than 15 studs.
+local function paintCrosswalk(parent, position, direction, width)
+    local stripeCount = math.floor(width / 3)
+    local stripeWidth = 1.5
+    local stripeGap = 1.5
+
+    local perpDir = Vector3.new(-direction.Z, 0, direction.X) -- perpendicular
+
+    for i = 1, stripeCount do
+        local offset = (i - stripeCount / 2 - 0.5) * (stripeWidth + stripeGap)
+        local stripe = Instance.new("Part")
+        stripe.Name = "CrosswalkStripe"
+        stripe.Size = Vector3.new(stripeWidth, 0.05, 4)
+        stripe.Material = Enum.Material.SmoothPlastic
+        stripe.Color = Color3.fromRGB(255, 255, 255)
+        stripe.Anchored = true
+        stripe.CanCollide = false
+        stripe.CastShadow = false
+        stripe.CFrame = CFrame.lookAt(
+            position + perpDir * offset + Vector3.new(0, 0.15, 0),
+            position + perpDir * offset + Vector3.new(0, 0.15, 0) + direction
+        )
+        stripe.Parent = parent
+    end
+end
+
 -- Place PointLight lamp posts along a ground-level segment at fixed intervals.
 local function placeStreetLights(parent, p1, p2, width)
     local delta = p2 - p1
@@ -410,6 +486,8 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
         local segmentMode, resolvedP1, resolvedP2 = classifySegment(road, p1, p2, chunk)
         if segmentMode == "bridge" then
             paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material, chunk, sampleGroundY)
+        elseif segmentMode == "tunnel" then
+            paintTunnelSegment(parent, resolvedP1, resolvedP2, width, road)
         elseif segmentMode == "ground" then
             paintSegment(terrain, resolvedP1, resolvedP2, road, width, material, sidewalkMode)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
@@ -417,6 +495,25 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
             if road.lit then
                 placeStreetLights(parent, resolvedP1, resolvedP2, width)
             end
+        end
+    end
+
+    -- Crosswalk markings at road endpoints for main roads (width > 15 studs).
+    if width > 15 and #road.points >= 2 then
+        local firstP1 = offsetPoint(road.points[1], originStuds)
+        local firstP2 = offsetPoint(road.points[2], originStuds)
+        local firstDir = (firstP2 - firstP1)
+        if firstDir.Magnitude > 0.01 then
+            firstDir = firstDir.Unit
+            paintCrosswalk(parent, firstP1, firstDir, width)
+        end
+
+        local lastP1 = offsetPoint(road.points[#road.points - 1], originStuds)
+        local lastP2 = offsetPoint(road.points[#road.points], originStuds)
+        local lastDir = (lastP2 - lastP1)
+        if lastDir.Magnitude > 0.01 then
+            lastDir = lastDir.Unit
+            paintCrosswalk(parent, lastP2, lastDir, width)
         end
     end
 end
