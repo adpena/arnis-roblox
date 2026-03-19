@@ -60,13 +60,12 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected roof truth world root")
 
-    local building =
-        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("l_shape")
+    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("l_shape")
     Assert.truthy(building, "expected l-shape building")
 
     local function collectRoofParts(model)
         local roofParts = {}
-        for _, child in ipairs(model:GetChildren()) do
+        for _, child in ipairs(model:GetDescendants()) do
             if child:IsA("Part") and string.find(child.Name, "_roof", 1, true) then
                 roofParts[#roofParts + 1] = child
             end
@@ -75,19 +74,12 @@ return function()
     end
 
     local roofParts = collectRoofParts(building)
-    Assert.truthy(
-        #roofParts > 1,
-        "expected flat roof to be footprint strips, not one bounding box slab"
-    )
+    Assert.equal(#roofParts, 2, "expected coalesced flat roof strips for L-shape footprint")
 
     local function pointCovered(pointX, pointZ)
         for _, roofPart in ipairs(roofParts) do
-            local localPoint =
-                roofPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roofPart.Position.Y, pointZ))
-            if
-                math.abs(localPoint.X) <= roofPart.Size.X * 0.5
-                and math.abs(localPoint.Z) <= roofPart.Size.Z * 0.5
-            then
+            local localPoint = roofPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roofPart.Position.Y, pointZ))
+            if math.abs(localPoint.X) <= roofPart.Size.X * 0.5 and math.abs(localPoint.Z) <= roofPart.Size.Z * 0.5 then
                 return true
             end
         end
@@ -149,8 +141,7 @@ return function()
     })
 
     worldRoot = Workspace:FindFirstChild(worldRootName)
-    local rotatedBuilding =
-        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("rotated_shape")
+    local rotatedBuilding = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("rotated_shape")
     Assert.truthy(rotatedBuilding, "expected rotated building")
 
     local rotatedRoofParts = collectRoofParts(rotatedBuilding)
@@ -158,8 +149,7 @@ return function()
     local rotatedRoof = rotatedRoofParts[1]
     Assert.truthy(rotatedRoof, "expected rotated roof strip")
     Assert.truthy(
-        math.abs(rotatedRoof.CFrame.LookVector.X) > 0.1
-            and math.abs(rotatedRoof.CFrame.LookVector.Z) > 0.1,
+        math.abs(rotatedRoof.CFrame.LookVector.X) > 0.1 and math.abs(rotatedRoof.CFrame.LookVector.Z) > 0.1,
         "expected roof strips to rotate with the building instead of staying axis-aligned"
     )
 

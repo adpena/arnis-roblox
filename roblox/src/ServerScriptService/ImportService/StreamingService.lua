@@ -1,7 +1,6 @@
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
 local Workspace = game:GetService("Workspace")
 
 local ImportService = require(script.Parent)
@@ -26,7 +25,6 @@ local lastLODUpdate = 0
 
 local LOD_HIGH = "High"
 local LOD_LOW = "Low"
-
 -- Registry of chunkId -> current LOD level
 local loadedChunkLods = {}
 local lodConfigCache = setmetatable({}, { __mode = "k" })
@@ -203,13 +201,9 @@ local function getLodConfig(level, baseConfig)
         return cached
     end
 
+    -- Low LOD is residency-driven; grouped detail/interior handle visual downgrade
+    -- while macro layers remain resident and rebuild-free.
     local config = table.clone(baseConfig)
-    if level == LOD_LOW then
-        -- Low LOD: keep terrain and roads, hide buildings/water/props
-        config.BuildingMode = "none"
-        config.WaterMode = "none"
-        -- config.RoadMode = "mesh" -- Keep roads for macro shape
-    end
 
     cachedByLevel[level] = config
     return config
@@ -238,6 +232,65 @@ local function buildChunkOptionsByLod(options, baseConfig)
     }
 end
 
+local function setInstanceVisible(instance, visible)
+    if instance:IsA("BasePart") then
+        instance.Transparency = if visible
+            then (instance:GetAttribute("BaseTransparency") or instance:GetAttribute("ArnisBaseTransparency") or 0)
+            else 1
+    elseif instance:IsA("BillboardGui") then
+        instance.Enabled = visible
+    end
+end
+
+local function setGroupVisible(group, visible)
+    if group:GetAttribute("ArnisLodVisible") == visible then
+        return
+    end
+
+    for _, descendant in ipairs(group:GetDescendants()) do
+        setInstanceVisible(descendant, visible)
+    end
+    group:SetAttribute("ArnisLodVisible", visible)
+end
+
+local function updateChunkEntryLodGroups(chunkEntry, camPos, highDetailRadius, interiorRadius)
+    if not chunkEntry or not chunkEntry.lodGroups then
+        return
+    end
+
+    local folder = chunkEntry.folder
+    local chunkCenter = nil
+    if folder and folder.Parent then
+        local chunkPos = folder:GetAttribute("ArnisChunkCenter")
+        if typeof(chunkPos) == "Vector3" then
+            chunkCenter = chunkPos
+        end
+    end
+    if chunkCenter == nil and chunkEntry.chunk then
+        local origin = chunkEntry.chunk.originStuds or { x = 0, y = 0, z = 0 }
+        local chunkSize = streamingOptions and streamingOptions.config and streamingOptions.config.ChunkSizeStuds
+            or DefaultWorldConfig.ChunkSizeStuds
+            or 256
+        chunkCenter = Vector3.new(origin.x + chunkSize * 0.5, origin.y or 0, origin.z + chunkSize * 0.5)
+    end
+    if chunkCenter == nil then
+        return
+    end
+
+    local detailVisible = (chunkCenter - camPos).Magnitude <= highDetailRadius
+    local interiorVisible = (chunkCenter - camPos).Magnitude <= interiorRadius
+    for _, group in ipairs(chunkEntry.lodGroups.detail or {}) do
+        if group:IsDescendantOf(Workspace) then
+            setGroupVisible(group, detailVisible)
+        end
+    end
+    for _, group in ipairs(chunkEntry.lodGroups.interior or {}) do
+        if group:IsDescendantOf(Workspace) then
+            setGroupVisible(group, interiorVisible)
+        end
+    end
+end
+
 -- Toggle visibility of LOD-tagged detail and interior parts based on camera distance.
 -- Runs at LOD_UPDATE_INTERVAL cadence — cheap: iterates CollectionService lists,
 -- not the full workspace tree.
@@ -251,36 +304,9 @@ local function updateLOD()
     local highDetailRadius = config.HighDetailRadius or 2048
     local interiorRadius = highDetailRadius * 0.25 -- interiors only very close
 
-    -- LOD_Detail: windows, street lights, oneway arrows, building name labels.
-    for _, instance in ipairs(CollectionService:GetTagged("LOD_Detail")) do
-        -- Guard: only toggle parts that are in the workspace and currently rendered.
-        -- BillboardGui tagged instances are toggled via Enabled, not Transparency.
-        if instance:IsA("BasePart") then
-            local dist = (instance.Position - camPos).Magnitude
-            if dist > highDetailRadius then
-                instance.Transparency = 1
-            else
-                instance.Transparency = instance:GetAttribute("BaseTransparency") or 0
-            end
-        elseif instance:IsA("BillboardGui") then
-            local adornee = instance.Adornee or instance.Parent
-            if adornee and adornee:IsA("BasePart") then
-                local dist = (adornee.Position - camPos).Magnitude
-                instance.Enabled = dist <= highDetailRadius
-            end
-        end
-    end
-
-    -- LOD_Interior: room floors, walls, ceilings.
-    for _, instance in ipairs(CollectionService:GetTagged("LOD_Interior")) do
-        if instance:IsA("BasePart") then
-            local dist = (instance.Position - camPos).Magnitude
-            if dist > interiorRadius then
-                instance.Transparency = 1
-            else
-                instance.Transparency = instance:GetAttribute("BaseTransparency") or 0
-            end
-        end
+    for _, chunkId in ipairs(ChunkLoader.ListLoadedChunks()) do
+        local chunkEntry = ChunkLoader.GetChunkEntry(chunkId)
+        updateChunkEntryLodGroups(chunkEntry, camPos, highDetailRadius, interiorRadius)
     end
 end
 
@@ -358,6 +384,7 @@ function StreamingService.Update(focalPoint)
     local targetExitRadius = getExitRadius(targetRadius, nil)
     local highExitRadiusSq = highExitRadius * highExitRadius
     local targetExitRadiusSq = targetExitRadius * targetExitRadius
+    local interiorRadius = highRadius * 0.25
 
     local desiredChunkIds = {}
     for _, chunkEntry in ipairs(getCandidateChunkRefs(streamingChunkIndex, playerPos, targetExitRadius)) do
@@ -418,6 +445,11 @@ function StreamingService.Update(focalPoint)
             ChunkLoader.UnloadChunk(chunkId)
             loadedChunkLods[chunkId] = nil
         end
+    end
+
+    for _, chunkId in ipairs(ChunkLoader.ListLoadedChunks()) do
+        local chunkEntry = ChunkLoader.GetChunkEntry(chunkId)
+        updateChunkEntryLodGroups(chunkEntry, playerPos, highRadius, interiorRadius)
     end
 end
 

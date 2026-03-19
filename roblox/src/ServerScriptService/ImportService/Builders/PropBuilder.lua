@@ -312,11 +312,7 @@ local function buildRealisticCanopy(parent, trunkTop, canopyRadius, canopyColor,
         lobe.Anchored = true
         lobe.CanCollide = false
         lobe.CastShadow = true
-        lobe.CFrame = CFrame.new(
-            trunkTop.X + offsetX,
-            trunkTop.Y + canopyRadius * 0.5 + offsetY,
-            trunkTop.Z + offsetZ
-        )
+        lobe.CFrame = CFrame.new(trunkTop.X + offsetX, trunkTop.Y + canopyRadius * 0.5 + offsetY, trunkTop.Z + offsetZ)
         lobe.Parent = parent
     end
 end
@@ -478,22 +474,20 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         back.Size = Vector3.new(5, 1.2, 0.2)
         back.Material = Enum.Material.WoodPlanks
         back.Color = Color3.fromRGB(110, 72, 40)
-        back.CFrame = CFrame.new(wx, wy + 2.3, wz) * CFrame.Angles(0, yaw, 0)
-            * CFrame.new(0, 0, -0.65)
+        back.CFrame = CFrame.new(wx, wy + 2.3, wz) * CFrame.Angles(0, yaw, 0) * CFrame.new(0, 0, -0.65)
         back.Anchored = true
         back.CanCollide = false
         back.CastShadow = false
         back.Parent = model
 
         -- Two metal legs
-        for _, legOffset in ipairs({-2, 2}) do
+        for _, legOffset in ipairs({ -2, 2 }) do
             local leg = Instance.new("Part")
             leg.Name = "Leg"
             leg.Size = Vector3.new(0.3, 1.5, 1.5)
             leg.Material = Enum.Material.Metal
             leg.Color = Color3.fromRGB(60, 60, 65)
-            leg.CFrame = CFrame.new(wx, wy + 0.75, wz) * CFrame.Angles(0, yaw, 0)
-                * CFrame.new(legOffset, 0, 0)
+            leg.CFrame = CFrame.new(wx, wy + 0.75, wz) * CFrame.Angles(0, yaw, 0) * CFrame.new(legOffset, 0, 0)
             leg.Anchored = true
             leg.CanCollide = false
             leg.CastShadow = false
@@ -567,9 +561,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
 
         -- Three lights: red (top), yellow (middle), green (bottom)
         local lightDefs = {
-            { r = 255, g = 50,  b = 50  },
-            { r = 255, g = 200, b = 50  },
-            { r = 50,  g = 200, b = 80  },
+            { r = 255, g = 50, b = 50 },
+            { r = 255, g = 200, b = 50 },
+            { r = 50, g = 200, b = 80 },
         }
         for li, lc in ipairs(lightDefs) do
             local light = Instance.new("Part")

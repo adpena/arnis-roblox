@@ -1,21 +1,23 @@
 local Workspace = game:GetService("Workspace")
 
 local TerrainBuilder = {}
+local BUILD_PLAN_CACHE_KEY = "__terrainBuildPlan"
 
 TerrainBuilder.DEFAULT_CLEAR_HEIGHT = 512
 
-function TerrainBuilder.Clear(chunk)
+function TerrainBuilder.Clear(chunk, plan)
     local terrainGrid = chunk.terrain
     if not terrainGrid then
         return
     end
 
     local terrain = Workspace.Terrain
-    local cellSize = terrainGrid.cellSizeStuds
-    local origin = chunk.originStuds
+    local resolvedPlan = plan or rawget(chunk, BUILD_PLAN_CACHE_KEY)
+    local cellSize = if resolvedPlan then resolvedPlan.cellSize else terrainGrid.cellSizeStuds
+    local origin = if resolvedPlan then resolvedPlan.origin else chunk.originStuds
 
-    local footprintWidth = terrainGrid.width * cellSize
-    local footprintDepth = terrainGrid.depth * cellSize
+    local footprintWidth = if resolvedPlan then resolvedPlan.totalWidth else terrainGrid.width * cellSize
+    local footprintDepth = if resolvedPlan then resolvedPlan.totalDepth else terrainGrid.depth * cellSize
 
     local clearSize = Vector3.new(footprintWidth, TerrainBuilder.DEFAULT_CLEAR_HEIGHT, footprintDepth)
     local clearCFrame = CFrame.new(origin.x + footprintWidth * 0.5, origin.y, origin.z + footprintDepth * 0.5)
@@ -27,38 +29,36 @@ local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldCon
 local VOXEL_SIZE = WorldConfig.VoxelSize or 1
 local TERRAIN_THICKNESS = WorldConfig.TerrainThickness or 8
 
-function TerrainBuilder.Build(_parent, chunk)
+local function snap(v, down)
+    if down then
+        return math.floor(v / VOXEL_SIZE) * VOXEL_SIZE
+    else
+        return math.ceil(v / VOXEL_SIZE) * VOXEL_SIZE
+    end
+end
+
+local function buildChunkPlan(chunk)
     local terrainGrid = chunk.terrain
     if not terrainGrid then
-        return
+        return nil
     end
 
-    TerrainBuilder.Clear(chunk)
-
-    local terrain = Workspace.Terrain
     local cellSize = terrainGrid.cellSizeStuds
     local origin = chunk.originStuds
     local totalWidth = terrainGrid.width * cellSize
     local totalDepth = terrainGrid.depth * cellSize
+    local gridW = terrainGrid.width
+    local gridD = terrainGrid.depth
+    local heights = terrainGrid.heights
 
-    -- Find height bounds for region sizing
     local minH = 0
     local maxH = 0
-    for _, h in ipairs(terrainGrid.heights) do
+    for _, h in ipairs(heights) do
         if h < minH then
             minH = h
         end
         if h > maxH then
             maxH = h
-        end
-    end
-
-    -- Snap a value down or up to the nearest VOXEL_SIZE multiple
-    local function snap(v, down)
-        if down then
-            return math.floor(v / VOXEL_SIZE) * VOXEL_SIZE
-        else
-            return math.ceil(v / VOXEL_SIZE) * VOXEL_SIZE
         end
     end
 
@@ -69,7 +69,6 @@ function TerrainBuilder.Build(_parent, chunk)
     local rMaxY = snap(origin.y + maxH + VOXEL_SIZE, false)
     local rMaxZ = snap(origin.z + totalDepth, false)
 
-    -- Ensure positive region dimensions
     if rMaxX <= rMinX then
         rMaxX = rMinX + VOXEL_SIZE
     end
@@ -80,26 +79,17 @@ function TerrainBuilder.Build(_parent, chunk)
         rMaxZ = rMinZ + VOXEL_SIZE
     end
 
-    local vX = (rMaxX - rMinX) / VOXEL_SIZE
-    local vY = (rMaxY - rMinY) / VOXEL_SIZE
-    local vZ = (rMaxZ - rMinZ) / VOXEL_SIZE
+    local dimX = (rMaxX - rMinX) / VOXEL_SIZE
+    local dimY = (rMaxY - rMinY) / VOXEL_SIZE
+    local dimZ = (rMaxZ - rMinZ) / VOXEL_SIZE
 
-    local dimX = vX
-    local dimY = vY
-    local dimZ = vZ
-
-    local gridW = terrainGrid.width
-    local gridD = terrainGrid.depth
-    local heights = terrainGrid.heights
-
-    -- Bilinear interpolation of height at a fractional position within the grid.
-    -- cellX/cellZ are 0-indexed cell coordinates; fracX/fracZ are [0,1] within that cell.
     local function sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
         local function getH(cx, cz)
             cx = math.max(0, math.min(gridW - 1, cx))
             cz = math.max(0, math.min(gridD - 1, cz))
             return heights[cz * gridW + cx + 1] or 0
         end
+
         local h00 = getH(cellX, cellZ)
         local h10 = getH(cellX + 1, cellZ)
         local h01 = getH(cellX, cellZ + 1)
@@ -109,19 +99,18 @@ function TerrainBuilder.Build(_parent, chunk)
         return h0 + (h1 - h0) * fracZ
     end
 
-    -- Slope at a cell as a rise/run ratio (gradient magnitude via central differences).
     local function computeSlope(cx, cz)
         local function getH(x, z)
             x = math.max(0, math.min(gridW - 1, x))
             z = math.max(0, math.min(gridD - 1, z))
             return heights[z * gridW + x + 1] or 0
         end
+
         local dhdx = (getH(cx + 1, cz) - getH(cx - 1, cz)) / (2 * cellSize)
         local dhdz = (getH(cx, cz + 1) - getH(cx, cz - 1)) / (2 * cellSize)
         return math.sqrt(dhdx * dhdx + dhdz * dhdz)
     end
 
-    -- Resolve material for a given grid cell, with slope-based override.
     local function getMat(x, z)
         local baseMat
         if terrainGrid.materials then
@@ -149,13 +138,112 @@ function TerrainBuilder.Build(_parent, chunk)
         end
 
         local slope = computeSlope(x, z)
-        if slope > (WorldConfig.SlopeRockThreshold or 1.0) then -- > ~45°
+        if slope > (WorldConfig.SlopeRockThreshold or 1.0) then
             return Enum.Material.Rock
-        elseif slope > (WorldConfig.SlopeGroundThreshold or 0.47) then -- > ~25°
+        elseif slope > (WorldConfig.SlopeGroundThreshold or 0.47) then
             return Enum.Material.Ground
         end
         return baseMat
     end
+
+    local cellXRanges = table.create(gridW)
+    for cellX = 0, gridW - 1 do
+        local wx0 = origin.x + cellX * cellSize
+        local wx1 = wx0 + cellSize
+        cellXRanges[cellX + 1] = {
+            wx0 = wx0,
+            vx0 = math.max(1, math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1),
+            vx1 = math.min(dimX, math.ceil((wx1 - rMinX) / VOXEL_SIZE)),
+        }
+    end
+
+    local cellZRanges = table.create(gridD)
+    local cellMaterials = table.create(gridD)
+    for cellZ = 0, gridD - 1 do
+        local wz0 = origin.z + cellZ * cellSize
+        local wz1 = wz0 + cellSize
+        cellZRanges[cellZ + 1] = {
+            wz0 = wz0,
+            vz0 = math.max(1, math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1),
+            vz1 = math.min(dimZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE)),
+        }
+
+        local materialRow = table.create(gridW)
+        for cellX = 0, gridW - 1 do
+            materialRow[cellX + 1] = getMat(cellX, cellZ)
+        end
+        cellMaterials[cellZ + 1] = materialRow
+    end
+
+    return {
+        terrainGrid = terrainGrid,
+        origin = origin,
+        cellSize = cellSize,
+        totalWidth = totalWidth,
+        totalDepth = totalDepth,
+        heights = heights,
+        gridW = gridW,
+        gridD = gridD,
+        rMinX = rMinX,
+        rMinY = rMinY,
+        rMinZ = rMinZ,
+        rMaxX = rMaxX,
+        rMaxY = rMaxY,
+        rMaxZ = rMaxZ,
+        dimX = dimX,
+        dimY = dimY,
+        dimZ = dimZ,
+        cellXRanges = cellXRanges,
+        cellZRanges = cellZRanges,
+        cellMaterials = cellMaterials,
+        sampleInterpolatedHeight = sampleInterpolatedHeight,
+    }
+end
+
+function TerrainBuilder.PrepareChunk(chunk)
+    if not chunk or not chunk.terrain then
+        return nil
+    end
+
+    local cachedPlan = rawget(chunk, BUILD_PLAN_CACHE_KEY)
+    if cachedPlan ~= nil and cachedPlan.terrainGrid == chunk.terrain and cachedPlan.origin == chunk.originStuds then
+        return cachedPlan
+    end
+
+    local plan = buildChunkPlan(chunk)
+    rawset(chunk, BUILD_PLAN_CACHE_KEY, plan)
+    return plan
+end
+
+function TerrainBuilder.GetPreparedChunkPlan(chunk)
+    return rawget(chunk, BUILD_PLAN_CACHE_KEY)
+end
+
+function TerrainBuilder.Build(_parent, chunk, preparedPlan)
+    local plan = preparedPlan or TerrainBuilder.PrepareChunk(chunk)
+    if not plan then
+        return
+    end
+
+    TerrainBuilder.Clear(chunk, plan)
+
+    local terrain = Workspace.Terrain
+    local cellSize = plan.cellSize
+    local origin = plan.origin
+    local rMinX = plan.rMinX
+    local rMinY = plan.rMinY
+    local rMinZ = plan.rMinZ
+    local rMaxX = plan.rMaxX
+    local rMaxY = plan.rMaxY
+    local dimX = plan.dimX
+    local dimY = plan.dimY
+    local dimZ = plan.dimZ
+    local gridW = plan.gridW
+    local gridD = plan.gridD
+    local cellXRanges = plan.cellXRanges
+    local cellZRanges = plan.cellZRanges
+    local cellMaterials = plan.cellMaterials
+    local sampleInterpolatedHeight = plan.sampleInterpolatedHeight
 
     -- Strip-based WriteVoxels: process 16 Z-voxels at a time so peak memory is
     -- O(dimX * dimY * STRIP_DEPTH) instead of O(dimX * dimY * dimZ).
@@ -202,29 +290,22 @@ function TerrainBuilder.Build(_parent, chunk)
         -- Fill this strip by iterating over terrain cells that overlap the strip's Z range.
         -- Global voxel Z range covered by this strip: [izBase, izEnd] (1-indexed).
         for cellZ = 0, gridD - 1 do
-            local wz0 = origin.z + cellZ * cellSize
-            local wz1 = wz0 + cellSize
-
-            -- Global voxel Z range for this cell
-            local cellVz0 = math.max(1, math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1)
-            local cellVz1 = math.min(dimZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE))
+            local zRange = cellZRanges[cellZ + 1]
+            local wz0 = zRange.wz0
 
             -- Clamp to current strip window
-            local stripVz0 = math.max(cellVz0, izBase)
-            local stripVz1 = math.min(cellVz1, izEnd)
+            local stripVz0 = math.max(zRange.vz0, izBase)
+            local stripVz1 = math.min(zRange.vz1, izEnd)
             if stripVz0 > stripVz1 then
                 continue
             end
 
             for cellX = 0, gridW - 1 do
-                local mat = getMat(cellX, cellZ)
-
-                local wx0 = origin.x + cellX * cellSize
-                local wx1 = wx0 + cellSize
-
-                -- Voxel X range for this cell
-                local vx0 = math.max(1, math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1)
-                local vx1 = math.min(dimX, math.ceil((wx1 - rMinX) / VOXEL_SIZE))
+                local mat = cellMaterials[cellZ + 1][cellX + 1]
+                local xRange = cellXRanges[cellX + 1]
+                local wx0 = xRange.wx0
+                local vx0 = xRange.vx0
+                local vx1 = xRange.vx1
 
                 for ix = vx0, vx1 do
                     local voxelWorldX = rMinX + (ix - 0.5) * VOXEL_SIZE
@@ -303,11 +384,7 @@ function TerrainBuilder.ImprintRoads(roads, originStuds, _chunk)
         local startPos = Vector3.new(segment.p1.X, segment.p1.Y - 1, segment.p1.Z)
         local endPos = Vector3.new(segment.p2.X, segment.p2.Y - 1, segment.p2.Z)
         local midpoint = (startPos + endPos) * 0.5
-        terrain:FillBlock(
-            CFrame.lookAt(midpoint, endPos),
-            Vector3.new(segment.width, 2, segLen),
-            segment.material
-        )
+        terrain:FillBlock(CFrame.lookAt(midpoint, endPos), Vector3.new(segment.width, 2, segLen), segment.material)
     end
 
     for _, road in ipairs(roads) do

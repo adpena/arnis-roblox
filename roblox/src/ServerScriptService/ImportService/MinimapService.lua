@@ -1,3 +1,4 @@
+-- selene: allow(undefined_variable)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local AssetService = game:GetService("AssetService")
@@ -7,32 +8,32 @@ local MinimapService = {}
 local UserInputService = game:GetService("UserInputService")
 
 -- Minimap configuration
-local MAP_SIZE = 200          -- pixels (square)
-local MAP_DISPLAY_SIZE = 180  -- pixel size on screen (small mode)
+local MAP_SIZE = 200 -- pixels (square)
+local MAP_DISPLAY_SIZE = 180 -- pixel size on screen (small mode)
 local MAP_FULLSCREEN_SIZE = 600 -- pixel size on screen (fullscreen mode)
-local MAP_RADIUS = 400        -- world studs visible in minimap radius (small)
-local MAP_RADIUS_FULL = 1600  -- world studs visible (fullscreen)
-local UPDATE_INTERVAL = 0.2   -- seconds between minimap updates
+local MAP_RADIUS = 400 -- world studs visible in minimap radius (small)
+local MAP_RADIUS_FULL = 1600 -- world studs visible (fullscreen)
+local UPDATE_INTERVAL = 0.2 -- seconds between minimap updates
 local BORDER_WIDTH = 3
 local isFullscreen = false
 
 -- Colors (RGBA bytes)
 local COLORS = {
-    background = {30, 35, 45, 255},      -- dark blue-grey
-    road = {255, 255, 255, 255},          -- white roads (Google Maps style)
-    road_minor = {220, 220, 220, 255},    -- lighter for minor roads
-    building = {210, 200, 185, 255},      -- warm beige
-    water = {170, 210, 240, 255},         -- light blue
-    park = {180, 220, 170, 255},          -- light green
-    forest = {140, 190, 140, 255},        -- darker green
-    parking = {230, 225, 215, 255},       -- light grey
-    player = {65, 130, 240, 255},         -- bright blue dot
-    player_dir = {65, 130, 240, 200},     -- direction indicator
-    border = {50, 55, 65, 255},           -- border color
+    background = { 30, 35, 45, 255 }, -- dark blue-grey
+    road = { 255, 255, 255, 255 }, -- white roads (Google Maps style)
+    road_minor = { 220, 220, 220, 255 }, -- lighter for minor roads
+    building = { 210, 200, 185, 255 }, -- warm beige
+    water = { 170, 210, 240, 255 }, -- light blue
+    park = { 180, 220, 170, 255 }, -- light green
+    forest = { 140, 190, 140, 255 }, -- darker green
+    parking = { 230, 225, 215, 255 }, -- light grey
+    player = { 65, 130, 240, 255 }, -- bright blue dot
+    player_dir = { 65, 130, 240, 200 }, -- direction indicator
+    border = { 50, 55, 65, 255 }, -- border color
 }
 
 -- State
-local chunks = {}       -- stored chunk data for rendering
+local chunks = {} -- stored chunk data for rendering
 local editableImage = nil
 local screenGui = nil
 local imageLabel = nil
@@ -58,7 +59,9 @@ local function clearBuffer()
 end
 
 local function setPixel(x, y, color)
-    if x < 0 or x >= MAP_SIZE or y < 0 or y >= MAP_SIZE then return end
+    if x < 0 or x >= MAP_SIZE or y < 0 or y >= MAP_SIZE then
+        return
+    end
     local offset = (y * MAP_SIZE + x) * 4
     buffer.writeu8(pixelBuffer, offset, color[1])
     buffer.writeu8(pixelBuffer, offset + 1, color[2])
@@ -134,6 +137,7 @@ end
 -- Render all stored chunks to the pixel buffer
 local function renderMap(camX, camZ, camYaw)
     clearBuffer()
+    local activeRadius = isFullscreen and MAP_RADIUS_FULL or MAP_RADIUS
 
     for _, chunk in ipairs(chunks) do
         local ox = chunk.originStuds.x
@@ -202,14 +206,20 @@ local function renderMap(camX, camZ, camYaw)
                 end
                 local px1, py1 = worldToPixel(minX, minZ, camX, camZ, camYaw)
                 local px2, py2 = worldToPixel(maxX, maxZ, camX, camZ, camYaw)
-                drawRect(math.min(px1, px2), math.min(py1, py2), math.max(px1, px2), math.max(py1, py2), COLORS.building)
+                drawRect(
+                    math.min(px1, px2),
+                    math.min(py1, py2),
+                    math.max(px1, px2),
+                    math.max(py1, py2),
+                    COLORS.building
+                )
             end
         end
 
         -- Render roads (on top of everything else)
         for _, road in ipairs(chunk.roads or {}) do
             local color = COLORS.road
-            local majorKinds = {primary=true, secondary=true, tertiary=true, trunk=true, motorway=true}
+            local majorKinds = { primary = true, secondary = true, tertiary = true, trunk = true, motorway = true }
             if not majorKinds[road.kind] then
                 color = COLORS.road_minor
             end
@@ -253,7 +263,9 @@ end
 
 -- Create the ScreenGui minimap display
 function MinimapService.CreateGui(player)
-    if screenGui then screenGui:Destroy() end
+    if screenGui then
+        screenGui:Destroy()
+    end
 
     screenGui = Instance.new("ScreenGui")
     screenGui.Name = "MinimapGui"
@@ -290,7 +302,8 @@ function MinimapService.CreateGui(player)
     imageLabel.Parent = frame
 
     -- Create EditableImage
-    editableImage = AssetService:CreateEditableImage({Size = Vector2.new(MAP_SIZE, MAP_SIZE)})
+    editableImage = AssetService:CreateEditableImage({ Size = Vector2.new(MAP_SIZE, MAP_SIZE) })
+    -- selene: allow(undefined_variable)
     imageLabel.ImageContent = Content.fromObject(editableImage)
 
     -- "MAP" label
@@ -313,7 +326,9 @@ function MinimapService.CreateGui(player)
     local animating = false
 
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
+        if gameProcessed then
+            return
+        end
         if input.KeyCode == Enum.KeyCode.M and not animating then
             isFullscreen = not isFullscreen
             animating = true
@@ -370,14 +385,20 @@ function MinimapService.Start()
     -- Update loop
     RunService.Heartbeat:Connect(function(dt)
         lastUpdate = lastUpdate + dt
-        if lastUpdate < UPDATE_INTERVAL then return end
+        if lastUpdate < UPDATE_INTERVAL then
+            return
+        end
         lastUpdate = 0
 
-        if not editableImage then return end
+        if not editableImage then
+            return
+        end
 
         -- Get camera position and direction
         local camera = workspace.CurrentCamera
-        if not camera then return end
+        if not camera then
+            return
+        end
         local camPos = camera.CFrame.Position
         local camLook = camera.CFrame.LookVector
         local camYaw = math.atan2(camLook.X, camLook.Z)

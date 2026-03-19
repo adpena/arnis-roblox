@@ -37,4 +37,14 @@ return function()
         0.001,
         "expected exact sample at the far terrain corner"
     )
+
+    local sampler = GroundSampler.createSampler(chunk)
+    Assert.equal(
+        sampler,
+        GroundSampler.createSampler(chunk),
+        "expected sampler creation to reuse cached closure for the same chunk"
+    )
+    Assert.near(sampler(8, 8), 34, 0.001, "expected compiled sampler to match bilinear interpolation")
+
+    Assert.near(sampler(16, 16), 58, 0.001, "expected compiled sampler to match far-corner sample")
 end

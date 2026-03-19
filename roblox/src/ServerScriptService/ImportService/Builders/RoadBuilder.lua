@@ -25,37 +25,37 @@ local RoadBuilder = {}
 
 local SURFACE_PHYSICS = {
     -- Paved surfaces (high grip)
-    asphalt         = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1),
-    concrete        = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1),
-    asphalt_smooth  = PhysicalProperties.new(2.4, 0.70, 0.08, 1, 1),  -- newer asphalt
+    asphalt = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1),
+    concrete = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1),
+    asphalt_smooth = PhysicalProperties.new(2.4, 0.70, 0.08, 1, 1), -- newer asphalt
 
     -- Stone surfaces (medium-high grip, some bump)
-    paving_stones   = PhysicalProperties.new(2.4, 0.58, 0.12, 1, 1),
-    cobblestone     = PhysicalProperties.new(2.4, 0.50, 0.12, 1, 1),  -- uneven, bumpy
-    sett            = PhysicalProperties.new(2.4, 0.52, 0.10, 1, 1),  -- cut stone blocks
+    paving_stones = PhysicalProperties.new(2.4, 0.58, 0.12, 1, 1),
+    cobblestone = PhysicalProperties.new(2.4, 0.50, 0.12, 1, 1), -- uneven, bumpy
+    sett = PhysicalProperties.new(2.4, 0.52, 0.10, 1, 1), -- cut stone blocks
     unhewn_cobblestone = PhysicalProperties.new(2.4, 0.45, 0.14, 1, 1), -- rough, very bumpy
 
     -- Loose surfaces (low grip, vehicles slide)
-    gravel          = PhysicalProperties.new(1.8, 0.38, 0.04, 1, 1),
-    fine_gravel     = PhysicalProperties.new(1.8, 0.42, 0.04, 1, 1),
-    pebblestone     = PhysicalProperties.new(1.8, 0.35, 0.05, 1, 1),
-    compacted       = PhysicalProperties.new(2.0, 0.48, 0.05, 1, 1),  -- packed earth, decent grip
+    gravel = PhysicalProperties.new(1.8, 0.38, 0.04, 1, 1),
+    fine_gravel = PhysicalProperties.new(1.8, 0.42, 0.04, 1, 1),
+    pebblestone = PhysicalProperties.new(1.8, 0.35, 0.05, 1, 1),
+    compacted = PhysicalProperties.new(2.0, 0.48, 0.05, 1, 1), -- packed earth, decent grip
 
     -- Unpaved (low grip)
-    unpaved         = PhysicalProperties.new(1.6, 0.32, 0.04, 1, 1),
-    dirt            = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
-    earth           = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
-    mud             = PhysicalProperties.new(1.4, 0.18, 0.02, 1, 1),  -- very slippery
-    sand            = PhysicalProperties.new(1.4, 0.20, 0.02, 1, 1),  -- wheels sink + slide
-    grass           = PhysicalProperties.new(1.2, 0.30, 0.08, 1, 1),  -- damp grass, moderate grip
+    unpaved = PhysicalProperties.new(1.6, 0.32, 0.04, 1, 1),
+    dirt = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    earth = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    mud = PhysicalProperties.new(1.4, 0.18, 0.02, 1, 1), -- very slippery
+    sand = PhysicalProperties.new(1.4, 0.20, 0.02, 1, 1), -- wheels sink + slide
+    grass = PhysicalProperties.new(1.2, 0.30, 0.08, 1, 1), -- damp grass, moderate grip
 
     -- Special surfaces
-    wood            = PhysicalProperties.new(0.8, 0.45, 0.15, 1, 1),  -- boardwalk, slightly bouncy
-    metal           = PhysicalProperties.new(3.0, 0.35, 0.10, 1, 1),  -- bridge grating, slippery
-    rubber          = PhysicalProperties.new(1.2, 0.90, 0.20, 1, 1),  -- playground, high grip
-    tartan          = PhysicalProperties.new(1.2, 0.85, 0.15, 1, 1),  -- running track
-    ice             = PhysicalProperties.new(2.4, 0.12, 0.02, 1, 1),  -- future: winter mode
-    snow            = PhysicalProperties.new(1.0, 0.18, 0.05, 1, 1),  -- future: winter mode
+    wood = PhysicalProperties.new(0.8, 0.45, 0.15, 1, 1), -- boardwalk, slightly bouncy
+    metal = PhysicalProperties.new(3.0, 0.35, 0.10, 1, 1), -- bridge grating, slippery
+    rubber = PhysicalProperties.new(1.2, 0.90, 0.20, 1, 1), -- playground, high grip
+    tartan = PhysicalProperties.new(1.2, 0.85, 0.15, 1, 1), -- running track
+    ice = PhysicalProperties.new(2.4, 0.12, 0.02, 1, 1), -- future: winter mode
+    snow = PhysicalProperties.new(1.0, 0.18, 0.05, 1, 1), -- future: winter mode
 }
 
 -- Default for roads with no surface tag (treated as good asphalt).
@@ -66,9 +66,6 @@ local CONCRETE_PHYSICS = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1)
 
 -- Extra-grip physics for steps/stairs (textured concrete, anti-slip).
 local STEPS_PHYSICS = PhysicalProperties.new(2.4, 0.85, 0.08, 1, 1)
-
--- Sidewalk physics (smooth concrete, good walking grip).
-local SIDEWALK_PHYSICS = PhysicalProperties.new(2.4, 0.70, 0.10, 1, 1)
 
 -- Returns the appropriate physical properties for a road entry.
 local function getPhysicsProperties(road)

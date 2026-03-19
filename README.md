@@ -92,12 +92,13 @@ rojo serve
    - connect the Rojo plugin to `roblox/default.project.json`
    - make sure **Game Settings → Streaming** is disabled
 
-4. Press Play. `BootstrapAustin.server.lua` imports the checked-in Austin manifest automatically.
+4. Press Play. `BootstrapAustin.server.lua` imports the checked-in sharded Austin manifest automatically.
 
 Notes:
 
-- The Austin world currently loads from `roblox/src/ServerStorage/SampleData/AustinManifest.lua`.
-- Streaming should stay off for now because roads are painted into `Workspace.Terrain` and can disappear when Roblox streaming is enabled.
+- The Austin world now loads from `roblox/src/ServerStorage/SampleData/AustinManifestIndex.lua` plus `roblox/src/ServerStorage/SampleData/AustinManifestChunks/`.
+- Studio preview uses a separate sharded downtown subset under `roblox/src/ServerScriptService/StudioPreview/`.
+- Keep engine-level `Workspace.StreamingEnabled` off for this workflow. Austin runtime loading is currently driven by the importer/runtime services, and mixing Roblox engine streaming into the test place makes startup and spawn behavior unreliable.
 
 ## Hard guardrails
 

@@ -56,12 +56,7 @@ return function()
 
     local ray = Workspace:Raycast(Vector3.new(96, 100, 96), Vector3.new(0, -200, 0))
     Assert.truthy(ray, "expected raycast hit over lake")
-    Assert.near(
-        ray.Position.Y,
-        20,
-        1.5,
-        "expected water surface near terrain height instead of chunk origin"
-    )
+    Assert.near(ray.Position.Y, 20, 1.5, "expected water surface near terrain height instead of chunk origin")
 
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     if worldRoot then

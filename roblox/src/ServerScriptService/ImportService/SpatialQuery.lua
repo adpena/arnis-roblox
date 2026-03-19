@@ -201,8 +201,11 @@ function SpatialQuery.findNearestRoadSegment(roads, originStuds, worldX, worldZ)
     return scanSegments(index.segments, worldX, worldZ, false)
 end
 
-function SpatialQuery.isPointNearAnyRoad(roads, originStuds, worldX, worldZ)
-    local index = getOrCreateRoadIndex(roads, originStuds)
+function SpatialQuery.GetRoadIndex(roads, originStuds)
+    return getOrCreateRoadIndex(roads, originStuds)
+end
+
+function SpatialQuery.isPointNearRoadIndex(index, worldX, worldZ)
     if not index then
         return false, nil
     end
@@ -213,6 +216,10 @@ function SpatialQuery.isPointNearAnyRoad(roads, originStuds, worldX, worldZ)
     end
 
     return true, best
+end
+
+function SpatialQuery.isPointNearAnyRoad(roads, originStuds, worldX, worldZ)
+    return SpatialQuery.isPointNearRoadIndex(getOrCreateRoadIndex(roads, originStuds), worldX, worldZ)
 end
 
 return SpatialQuery

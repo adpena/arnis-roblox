@@ -29,19 +29,22 @@ local function getWaterDetailParent(parent)
     return detailFolder
 end
 
-local function createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, sizeZ, name)
+local function createWaterSurface(parent, cframe, size, name)
     local surface = Instance.new("Part")
     surface.Name = name or "WaterSurface"
-    surface.Size = Vector3.new(sizeX, 0.1, sizeZ)
-    surface.CFrame = CFrame.new(centerX, surfaceY + 0.05, centerZ)
+    surface.Size = size
+    surface.CFrame = cframe
     surface.Material = Enum.Material.Glass
     surface.Color = Color3.fromRGB(40, 80, 120)
     surface.Transparency = 0.4
+    surface:SetAttribute("BaseTransparency", surface.Transparency)
+    surface:SetAttribute("ArnisBaseTransparency", surface.Transparency)
     surface.Reflectance = 0.35
     surface.Anchored = true
     surface.CanCollide = false
     surface.CastShadow = false
     surface.Parent = parent
+    CollectionService:AddTag(surface, "LOD_Detail")
     return surface
 end
 
@@ -87,8 +90,8 @@ local function paintRibbonSegment(terrain, p1, p2, width, waterMaterial)
 
     -- Use per-vertex Y so FillBlock tilts to follow the river's slope.
     local startPos = Vector3.new(p1.X, p1.Y - WATER_DEPTH * 0.5, p1.Z)
-    local endPos   = Vector3.new(p2.X, p2.Y - WATER_DEPTH * 0.5, p2.Z)
-    local midPos   = (startPos + endPos) * 0.5
+    local endPos = Vector3.new(p2.X, p2.Y - WATER_DEPTH * 0.5, p2.Z)
+    local midPos = (startPos + endPos) * 0.5
     local cf = CFrame.lookAt(midPos, endPos)
     terrain:FillBlock(cf, Vector3.new(width, WATER_DEPTH, length), waterMaterial or Enum.Material.Water)
 end
@@ -103,8 +106,8 @@ local function carveRibbonChannel(terrain, p1, p2, width)
 
     -- Use per-vertex Y so the carved channel follows terrain slope.
     local startPos = Vector3.new(p1.X, p1.Y - WATER_DEPTH - CARVE_DEPTH * 0.5, p1.Z)
-    local endPos   = Vector3.new(p2.X, p2.Y - WATER_DEPTH - CARVE_DEPTH * 0.5, p2.Z)
-    local midPos   = (startPos + endPos) * 0.5
+    local endPos = Vector3.new(p2.X, p2.Y - WATER_DEPTH - CARVE_DEPTH * 0.5, p2.Z)
+    local midPos = (startPos + endPos) * 0.5
     local cf = CFrame.lookAt(midPos, endPos)
     terrain:FillBlock(cf, Vector3.new(width, CARVE_DEPTH, length), Enum.Material.Air)
 end
@@ -160,11 +163,8 @@ local function emitPolygonWaterSurfaces(detailParent, worldPts, surfaceY)
     for index, rect in ipairs(PolygonBatcher.BuildRects(worldPts, SCAN_STEP)) do
         createWaterSurface(
             detailParent,
-            rect.centerX,
-            surfaceY,
-            rect.centerZ,
-            rect.width,
-            rect.depth,
+            CFrame.new(rect.centerX, surfaceY + 0.05, rect.centerZ),
+            Vector3.new(rect.width, 0.1, rect.depth),
             string.format("PolygonWaterSurface_%d", index)
         )
     end
@@ -311,20 +311,14 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
                 if segmentLength >= 0.01 then
                     -- Use per-vertex Y so the surface Part tilts to follow river slope.
                     local startSurf = Vector3.new(resolvedP1.X, surfaceY1 + 0.05, resolvedP1.Z)
-                    local endSurf   = Vector3.new(resolvedP2.X, surfaceY2 + 0.05, resolvedP2.Z)
-                    local midSurf   = (startSurf + endSurf) * 0.5
-                    local surface = Instance.new("Part")
-                    surface.Name = "RibbonWaterSurface"
-                    surface.Size = Vector3.new(segment.width, 0.1, segmentLength)
-                    surface.CFrame = CFrame.lookAt(midSurf, endSurf)
-                    surface.Material = Enum.Material.Glass
-                    surface.Color = Color3.fromRGB(40, 80, 120)
-                    surface.Transparency = 0.4
-                    surface.Reflectance = 0.35
-                    surface.Anchored = true
-                    surface.CanCollide = false
-                    surface.CastShadow = false
-                    surface.Parent = detailParent
+                    local endSurf = Vector3.new(resolvedP2.X, surfaceY2 + 0.05, resolvedP2.Z)
+                    local midSurf = (startSurf + endSurf) * 0.5
+                    createWaterSurface(
+                        detailParent,
+                        CFrame.lookAt(midSurf, endSurf),
+                        Vector3.new(segment.width, 0.1, segmentLength),
+                        "RibbonWaterSurface"
+                    )
                 end
             end
         end

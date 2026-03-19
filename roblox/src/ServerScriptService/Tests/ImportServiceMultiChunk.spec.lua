@@ -1,10 +1,10 @@
 return function()
     local Workspace = game:GetService("Workspace")
-    local ServerStorage = game:GetService("ServerStorage")
     local ImportService = require(script.Parent.Parent.ImportService)
+    local ManifestLoader = require(script.Parent.Parent.ImportService.ManifestLoader)
     local Assert = require(script.Parent.Assert)
 
-    local manifest = require(ServerStorage.SampleData.SampleMultiChunkManifest)
+    local manifest = ManifestLoader.LoadNamedSample("SampleMultiChunkManifest")
 
     local stats = ImportService.ImportManifest(manifest, {
         clearFirst = true,
@@ -24,4 +24,3 @@ return function()
 
     worldRoot:Destroy()
 end
-

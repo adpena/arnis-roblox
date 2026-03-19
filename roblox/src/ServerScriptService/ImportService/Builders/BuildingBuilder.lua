@@ -14,12 +14,15 @@ local BuildingBuilder = {}
 local MeshAccumulator = {}
 MeshAccumulator.__index = MeshAccumulator
 
-function MeshAccumulator.new(parent, materialName, material, color)
+function MeshAccumulator.new(parent, materialName, material, color, options)
     local self = setmetatable({}, MeshAccumulator)
+    options = options or {}
     self.parent = parent
     self.materialName = materialName
     self.material = material
     self.color = color
+    self.canCollide = options.canCollide
+    self.castShadow = options.castShadow
     self.vertices = {} -- array of Vector3
     self.normals = {} -- array of Vector3
     self.triangles = {} -- array of {v1_idx, v2_idx, v3_idx} (1-indexed)
@@ -90,8 +93,8 @@ function MeshAccumulator:flush()
     part.Material = self.material
     part.Color = self.color
     part.Anchored = true
-    part.CanCollide = true
-    part.CastShadow = false
+    part.CanCollide = if self.canCollide == nil then true else self.canCollide
+    part.CastShadow = if self.castShadow == nil then false else self.castShadow
     part.Size = Vector3.new(1, 1, 1) -- overridden by ApplyMesh
     part.Parent = self.parent
     part:ApplyMesh(mesh)
@@ -100,6 +103,31 @@ function MeshAccumulator:flush()
     self.vertices = {}
     self.normals = {}
     self.triangles = {}
+end
+
+local function addOrientedBox(acc, center, rightAxis, upAxis, forwardAxis, size)
+    local hx = size.X * 0.5
+    local hy = size.Y * 0.5
+    local hz = size.Z * 0.5
+    local right = rightAxis * hx
+    local up = upAxis * hy
+    local forward = forwardAxis * hz
+
+    local leftBottomBack = center - right - up - forward
+    local leftBottomFront = center - right - up + forward
+    local leftTopBack = center - right + up - forward
+    local leftTopFront = center - right + up + forward
+    local rightBottomBack = center + right - up - forward
+    local rightBottomFront = center + right - up + forward
+    local rightTopBack = center + right + up - forward
+    local rightTopFront = center + right + up + forward
+
+    acc:addQuad(leftBottomFront, rightBottomFront, rightTopFront, leftTopFront, forwardAxis)
+    acc:addQuad(rightBottomBack, leftBottomBack, leftTopBack, rightTopBack, -forwardAxis)
+    acc:addQuad(rightBottomFront, rightBottomBack, rightTopBack, rightTopFront, rightAxis)
+    acc:addQuad(leftBottomBack, leftBottomFront, leftTopFront, leftTopBack, -rightAxis)
+    acc:addQuad(leftTopFront, rightTopFront, rightTopBack, leftTopBack, upAxis)
+    acc:addQuad(leftBottomBack, rightBottomBack, rightBottomFront, leftBottomFront, -upAxis)
 end
 
 local WALL_THICKNESS = 0.6 -- studs
@@ -133,7 +161,7 @@ local USAGE_MATERIAL = {
     courthouse = Enum.Material.Marble,
     -- Industrial
     industrial = Enum.Material.DiamondPlate,
-    warehouse = Enum.Material.CorrugatedSteel,
+    warehouse = Enum.Material.DiamondPlate,
     factory = Enum.Material.DiamondPlate,
     -- Religious
     religious = Enum.Material.Limestone,
@@ -142,7 +170,7 @@ local USAGE_MATERIAL = {
     mosque = Enum.Material.Marble,
     temple = Enum.Material.Sandstone,
     -- Utility
-    garage = Enum.Material.CorrugatedSteel,
+    garage = Enum.Material.DiamondPlate,
     shed = Enum.Material.WoodPlanks,
     barn = Enum.Material.WoodPlanks,
     -- Default
@@ -166,7 +194,7 @@ local MATERIAL_TAG_MAP = {
     plaster = Enum.Material.SmoothPlastic,
     stucco = Enum.Material.SmoothPlastic,
     render = Enum.Material.SmoothPlastic,
-    cladding = Enum.Material.CorrugatedSteel,
+    cladding = Enum.Material.DiamondPlate,
     timber_framing = Enum.Material.WoodPlanks,
 }
 
@@ -335,7 +363,7 @@ local MATERIAL_COLOR_RANGES = {
         { 155, 158, 162 },
         { 175, 178, 182 },
     },
-    [Enum.Material.CorrugatedSteel] = {
+    [Enum.Material.Metal] = {
         { 155, 155, 150 },
         { 145, 145, 140 },
         { 165, 165, 160 },
@@ -357,19 +385,6 @@ local function getMaterialColor(material, buildingId)
     local idx = (hashId(buildingId) % #ranges) + 1
     local c = ranges[idx]
     return Color3.fromRGB(c[1], c[2], c[3])
-end
-
--- For tall commercial/mixed-use buildings the ground floor uses a glazed
--- storefront material (Glass) while upper floors use the base wall material.
-local function getWallMaterialForFloor(building, floor, totalFloors)
-    local baseMat = getMaterial(building)
-    if floor == 0 and totalFloors >= 3 then
-        local usage = building.usage or building.kind or ""
-        if usage == "commercial" or usage == "retail" or usage == "mixed" then
-            return Enum.Material.Glass
-        end
-    end
-    return baseMat
 end
 
 local function getColor(building)
@@ -404,12 +419,12 @@ end
 
 local ROOF_MATERIAL_LOOKUP = {
     Asphalt = Enum.Material.Asphalt,
-    Metal = Enum.Material.CorrugatedSteel, -- corrugated for realism
+    Metal = Enum.Material.Metal,
     Brick = Enum.Material.Brick,
     WoodPlanks = Enum.Material.WoodPlanks,
     Slate = Enum.Material.Slate,
     Concrete = Enum.Material.Concrete,
-    tile = Enum.Material.Brick,    -- closest to clay/concrete roof tiles
+    tile = Enum.Material.Brick, -- closest to clay/concrete roof tiles
     thatch = Enum.Material.Grass,
     copper = Enum.Material.Metal,
     glass = Enum.Material.Glass,
@@ -1016,11 +1031,8 @@ local function buildPilasters(parent, worldPts, baseY, height, material, color)
         pilaster.Size = Vector3.new(0.4, height, 0.4)
         pilaster.Material = material
         -- Slightly lighter than wall for contrast
-        pilaster.Color = Color3.new(
-            math.min(1, color.R * 1.15),
-            math.min(1, color.G * 1.15),
-            math.min(1, color.B * 1.15)
-        )
+        pilaster.Color =
+            Color3.new(math.min(1, color.R * 1.15), math.min(1, color.G * 1.15), math.min(1, color.B * 1.15))
         pilaster.Anchored = true
         pilaster.CanCollide = false
         pilaster.CastShadow = true
@@ -1399,12 +1411,8 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
 
     -- Detail mesh accumulator: merges opaque concrete foundation and cornice quads
     -- across all buildings, replacing individual Part-based calls in this path.
-    local detailAcc = MeshAccumulator.new(
-        meshFolder,
-        "detail_concrete",
-        Enum.Material.Concrete,
-        Color3.fromRGB(180, 175, 168)
-    )
+    local detailAcc =
+        MeshAccumulator.new(meshFolder, "detail_concrete", Enum.Material.Concrete, Color3.fromRGB(180, 175, 168))
 
     local builtModelsById = {}
 
@@ -1433,6 +1441,11 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
         detailFolder.Parent = model
         detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
         CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+        local sillAcc =
+            MeshAccumulator.new(detailFolder, "window_sill", Enum.Material.Concrete, Color3.fromRGB(200, 195, 185), {
+                canCollide = false,
+                castShadow = false,
+            })
 
         local buildingId = building.id
         if model and type(buildingId) == "string" and buildingId ~= "" then
@@ -1653,19 +1666,16 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
                         band:SetAttribute("ArnisFacadePaneCount", numPanes)
                         band.Parent = detailFolder
 
-                        -- Window sill
-                        local paneW = bandLen
-                        local windowCFrame = band.CFrame
-                        local sill = Instance.new("Part")
-                        sill.Name = "WindowSill"
-                        sill.Size = Vector3.new(paneW + 0.4, 0.2, 0.5)
-                        sill.Material = Enum.Material.Concrete
-                        sill.Color = Color3.fromRGB(200, 195, 185)
-                        sill.Anchored = true
-                        sill.CanCollide = false
-                        sill.CastShadow = false
-                        sill.CFrame = windowCFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)
-                        sill.Parent = detailFolder
+                        local sillSize = Vector3.new(bandLen + 0.4, 0.2, 0.5)
+                        local sillCenter = (band.CFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)).Position
+                        addOrientedBox(
+                            sillAcc,
+                            sillCenter,
+                            band.CFrame.RightVector,
+                            band.CFrame.UpVector,
+                            band.CFrame.LookVector,
+                            sillSize
+                        )
                     end
                 end
             end
@@ -1737,6 +1747,8 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
 
             nameLabel.Parent = detailFolder
         end
+
+        sillAcc:flush()
     end
 
     -- Flush all remaining geometry in every accumulator

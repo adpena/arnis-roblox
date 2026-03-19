@@ -21,8 +21,17 @@ return function()
     Assert.truthy(nearMatch, "expected near-road query result")
     Assert.equal(nearMatch.road.id, "road_1", "expected matching road")
 
+    local roadIndex = SpatialQuery.GetRoadIndex(roads, originStuds)
+    Assert.truthy(roadIndex, "expected cached road index")
+    local indexedNearRoad, indexedNearMatch = SpatialQuery.isPointNearRoadIndex(roadIndex, 160, 223)
+    Assert.truthy(indexedNearRoad, "expected indexed point near road corridor")
+    Assert.truthy(indexedNearMatch, "expected indexed near-road query result")
+    Assert.equal(indexedNearMatch.road.id, "road_1", "expected indexed matching road")
+
     local farRoad = SpatialQuery.isPointNearAnyRoad(roads, originStuds, 160, 245)
     Assert.falsy(farRoad, "expected point outside road corridor")
+    local indexedFarRoad = SpatialQuery.isPointNearRoadIndex(roadIndex, 160, 245)
+    Assert.falsy(indexedFarRoad, "expected indexed point outside road corridor")
 
     local nearest = SpatialQuery.findNearestRoadSegment(roads, originStuds, 160, 223)
     Assert.truthy(nearest, "expected nearest road segment")

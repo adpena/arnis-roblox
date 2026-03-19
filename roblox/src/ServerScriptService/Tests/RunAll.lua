@@ -54,8 +54,13 @@ function RunAll.run()
         end
     end
 
-    Logger.info(("TestEZ tests complete. total=%d passed=%d failed=%d"):format(
-        allResults.total, allResults.passed, allResults.failed))
+    Logger.info(
+        ("TestEZ tests complete. total=%d passed=%d failed=%d"):format(
+            allResults.total,
+            allResults.passed,
+            allResults.failed
+        )
+    )
 
     if allResults.failed > 0 then
         error(("Tests failed: %d"):format(allResults.failed))

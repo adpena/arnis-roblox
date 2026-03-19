@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "0.2.0",
+  "schemaVersion": "0.3.0",
   "meta": {
     "worldName": "SampleAustinLikeBlock",
     "generator": "arbx_cli sample",
@@ -12,7 +12,11 @@
       "maxLat": 30.266,
       "maxLon": -97.748
     },
-    "totalFeatures": 5,
+    "totalFeatures": 7,
+    "canonicalAnchor": {
+      "positionStuds": { "x": 32, "y": 2, "z": 192 },
+      "lookDirectionStuds": { "x": 0, "y": 0, "z": 1 }
+    },
     "notes": [
       "Synthetic sample for importer scaffolding",
       "Replace with real chunk export later"
@@ -27,6 +31,7 @@
         "width": 4,
         "depth": 4,
         "heights": [0, 1, 2, 1, 1, 2, 3, 2, 0, 1, 2, 2, 0, 0, 1, 1],
+        "materials": ["Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass", "Grass"],
         "material": "Grass"
       },
       "roads": [
@@ -37,6 +42,8 @@
           "color": { "r": 68, "g": 68, "b": 68 },
           "lanes": 2,
           "widthStuds": 10,
+          "hasSidewalk": true,
+          "surface": "asphalt",
           "points": [
             { "x": 0, "y": 2, "z": 64 },
             { "x": 128, "y": 2, "z": 64 },
@@ -58,19 +65,30 @@
           ],
           "baseY": 2,
           "height": 36,
-          "roof": "flat"
+          "height_m": 11,
+          "levels": 3,
+          "roofLevels": 0,
+          "roof": "flat",
+          "facadeStyle": "midrise_mixed"
         }
       ],
       "water": [
         {
           "id": "water_1",
-          "kind": "stream",
+          "kind": "pond",
           "material": "Water",
-          "widthStuds": 8,
-          "points": [
-            { "x": 32, "y": 1, "z": 220 },
-            { "x": 96, "y": 1, "z": 190 },
-            { "x": 180, "y": 1, "z": 160 }
+          "footprint": [
+            { "x": 24, "z": 180 },
+            { "x": 112, "z": 180 },
+            { "x": 132, "z": 232 },
+            { "x": 18, "z": 240 }
+          ],
+          "holes": [
+            [
+              { "x": 62, "z": 199 },
+              { "x": 78, "z": 198 },
+              { "x": 74, "z": 214 }
+            ]
           ]
         }
       ],
@@ -80,7 +98,8 @@
           "kind": "tree",
           "position": { "x": 120, "y": 3, "z": 110 },
           "yawDegrees": 0,
-          "scale": 1
+          "scale": 1,
+          "species": "live_oak"
         },
         {
           "id": "light_1",
@@ -88,6 +107,30 @@
           "position": { "x": 150, "y": 3, "z": 68 },
           "yawDegrees": 90,
           "scale": 1
+        }
+      ],
+      "landuse": [
+        {
+          "id": "park_1",
+          "kind": "grass",
+          "material": "Grass",
+          "footprint": [
+            { "x": 96, "z": 96 },
+            { "x": 188, "z": 96 },
+            { "x": 188, "z": 156 },
+            { "x": 96, "z": 156 }
+          ]
+        }
+      ],
+      "barriers": [
+        {
+          "id": "hedge_1",
+          "kind": "hedge",
+          "points": [
+            { "x": 92, "y": 2, "z": 94 },
+            { "x": 192, "y": 2, "z": 94 },
+            { "x": 192, "y": 2, "z": 160 }
+          ]
         }
       ]
     }

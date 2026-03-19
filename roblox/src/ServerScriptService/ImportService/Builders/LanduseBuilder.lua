@@ -1,7 +1,9 @@
 local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
-local GeoUtils = require(script.Parent.Parent.GeoUtils)
+local PolygonBatcher = require(script.Parent.Parent.PolygonBatcher)
+local Profiler = require(script.Parent.Parent.Profiler)
 local SpatialQuery = require(script.Parent.Parent.SpatialQuery)
 
 local LanduseBuilder = {}
@@ -103,6 +105,20 @@ local function getMaterial(kind, materialName)
     return KIND_MATERIAL[kind] or Enum.Material.Ground
 end
 
+local function getLanduseDetailParent(parent)
+    local detailFolder = parent and parent:FindFirstChild("Detail")
+    if detailFolder then
+        return detailFolder
+    end
+
+    detailFolder = Instance.new("Folder")
+    detailFolder.Name = "Detail"
+    detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+    CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+    detailFolder.Parent = parent or Workspace
+    return detailFolder
+end
+
 local function hashSeed(value)
     local text = tostring(value)
     local h = 2166136261
@@ -127,7 +143,23 @@ local function nextRandomIndex(state, maxInclusive)
     return state, index
 end
 
-local function collectCells(landuse, originStuds, chunk)
+local function makePlanningContext(originStuds, chunk)
+    local planningContext = {
+        originStuds = originStuds,
+        chunk = chunk,
+        sampleGroundY = GroundSampler.createSampler(chunk),
+        roadIndex = nil,
+    }
+
+    if chunk and chunk.roads and #chunk.roads > 0 then
+        planningContext.roadIndex = SpatialQuery.GetRoadIndex(chunk.roads, originStuds)
+    end
+
+    return planningContext
+end
+
+local function collectCells(landuse, planningContext)
+    local originStuds = planningContext.originStuds
     local worldPoly = table.create(#landuse.footprint)
     local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
     for _, p in ipairs(landuse.footprint) do
@@ -141,52 +173,80 @@ local function collectCells(landuse, originStuds, chunk)
     end
 
     local cells = {}
-    local roadIndex = nil
-    local sampleGroundY = GroundSampler.createSampler(chunk)
-    if chunk and chunk.roads and #chunk.roads > 0 then
-        roadIndex = SpatialQuery.GetRoadIndex(chunk.roads, originStuds)
-    end
-    local x = minX + GRID_SIZE * 0.5
+    local roadIndex = planningContext.roadIndex
+    local sampleGroundY = planningContext.sampleGroundY
     local sampledCells = 0
-    while x <= maxX do
-        local z = minZ + GRID_SIZE * 0.5
-        while z <= maxZ do
-            sampledCells += 1
-            if sampledCells % CELL_COLLECTION_YIELD_INTERVAL == 0 then
-                task.wait()
-            end
-
-            if GeoUtils.pointInPolygon(x, z, worldPoly) then
-                local isNearRoad = false
-                if roadIndex then
-                    isNearRoad = SpatialQuery.isPointNearRoadIndex(roadIndex, x, z)
-                end
-
-                if not isNearRoad then
-                    cells[#cells + 1] = {
-                        x = x,
-                        z = z,
-                        y = sampleGroundY(x, z),
-                    }
-                end
-            end
-            z = z + GRID_SIZE
+    for _, cell in ipairs(PolygonBatcher.BuildGridCells(worldPoly, GRID_SIZE)) do
+        sampledCells += 1
+        if sampledCells % CELL_COLLECTION_YIELD_INTERVAL == 0 then
+            task.wait()
         end
-        x = x + GRID_SIZE
+
+        local isNearRoad = false
+        if roadIndex then
+            isNearRoad = SpatialQuery.isPointNearRoadIndex(roadIndex, cell.x, cell.z)
+        end
+
+        if not isNearRoad then
+            cells[#cells + 1] = {
+                x = cell.x,
+                z = cell.z,
+                y = sampleGroundY(cell.x, cell.z),
+            }
+        end
     end
 
     return cells
+end
+
+local function buildTerrainRects(cells)
+    local cellsByYKey = {}
+    for _, cell in ipairs(cells) do
+        local key = math.floor(cell.y * 1000 + 0.5)
+        local bucket = cellsByYKey[key]
+        if not bucket then
+            bucket = {
+                y = cell.y,
+                cells = {},
+            }
+            cellsByYKey[key] = bucket
+        end
+        bucket.cells[#bucket.cells + 1] = cell
+    end
+
+    local terrainRects = {}
+    local rectCount = 0
+    for _, bucket in pairs(cellsByYKey) do
+        local fillRects = PolygonBatcher.BuildRectsFromCells(bucket.cells, GRID_SIZE)
+        rectCount += #fillRects
+        terrainRects[#terrainRects + 1] = {
+            y = bucket.y,
+            rects = fillRects,
+        }
+    end
+
+    table.sort(terrainRects, function(a, b)
+        if a.y == b.y then
+            return #a.rects < #b.rects
+        end
+        return a.y < b.y
+    end)
+
+    return terrainRects, rectCount
 end
 
 local function placeParkingStalls(parent, cells, id)
     -- Place white line markings in a grid pattern, deterministically
     local stallDepth = 16 -- studs (~4.8m)
     local state = hashSeed((id or "") .. #cells)
+    local created = 0
     for _, cell in ipairs(cells) do
         -- Skip ~40% of cells to avoid overdoing it (deterministic)
         local unit
         state, unit = nextRandomUnit(state)
-        if unit > 0.6 then continue end
+        if unit > 0.6 then
+            continue
+        end
 
         local line = Instance.new("Part")
         line.Name = "ParkingLine"
@@ -198,17 +258,21 @@ local function placeParkingStalls(parent, cells, id)
         line.CastShadow = false
         line.CFrame = CFrame.new(cell.x, cell.y + 0.1, cell.z)
         line.Parent = parent
+        created += 1
     end
+
+    return created
 end
 
 local function placeParkFurniture(cells, parent)
     local area = #cells * GRID_SIZE * GRID_SIZE
     local count = math.min(8, math.floor(area / 400))
     if count <= 0 then
-        return
+        return 0
     end
     local state = hashSeed(#cells * 7919)
     local used = {}
+    local created = 0
     for _ = 1, count do
         local idx
         state, idx = nextRandomIndex(state, #cells)
@@ -231,7 +295,10 @@ local function placeParkFurniture(cells, parent)
         bench.Color = Color3.fromRGB(139, 90, 43)
         bench.CastShadow = false
         bench.Parent = parent
+        created += 1
     end
+
+    return created
 end
 
 -- Tree density per square stud by kind
@@ -258,16 +325,17 @@ local FOREST_CANOPY = {
 local function placeVegetation(kind, cells, parent)
     local density = TREE_DENSITY[kind]
     if not density then
-        return
+        return 0
     end
     local area = #cells * GRID_SIZE * GRID_SIZE
     local count = math.min(60, math.floor(area * density))
     if count <= 0 then
-        return
+        return 0
     end
     local canopyColor = FOREST_CANOPY[kind] or BrickColor.new("Bright green")
 
     local state = hashSeed(#cells * 997 + kind:byte(1, 1))
+    local created = 0
     for _ = 1, count do
         local cellIndex
         state, cellIndex = nextRandomIndex(state, #cells)
@@ -312,56 +380,161 @@ local function placeVegetation(kind, cells, parent)
         canopy.Parent = model
 
         model.Parent = parent
+        created += 1
     end
+
+    return created
 end
 
-function LanduseBuilder.BuildOne(landuse, originStuds, parent, chunk)
+function LanduseBuilder.PlanOne(landuse, planningContext)
     if not landuse.footprint or #landuse.footprint < 3 then
-        return
+        return nil
+    end
+
+    local mat = getMaterial(landuse.kind, landuse.material)
+    local cells = collectCells(landuse, planningContext)
+    if #cells == 0 then
+        return nil
+    end
+    local terrainRects, rectCount = buildTerrainRects(cells)
+
+    return {
+        id = landuse.id,
+        kind = landuse.kind,
+        material = mat,
+        cells = cells,
+        terrainRects = terrainRects,
+        wantsParkingStalls = landuse.kind == "parking",
+        wantsParkFurniture = landuse.kind == "park" or landuse.kind == "garden",
+        vegetationKind = landuse.kind,
+        stats = {
+            cellCount = #cells,
+            rectCount = rectCount,
+        },
+    }
+end
+
+function LanduseBuilder.ExecutePlan(plan, parent)
+    if not plan or not plan.items or #plan.items == 0 then
+        return {
+            terrainFillRects = 0,
+            detailInstances = 0,
+        }
     end
 
     local terrain = Workspace.Terrain
-    local mat = getMaterial(landuse.kind, landuse.material)
-    local cells = collectCells(landuse, originStuds, chunk)
-    if #cells == 0 then
-        return
+    local detailParent = nil
+    local filledRects = 0
+    local detailInstances = 0
+
+    local function ensureDetailParent()
+        if not detailParent then
+            detailParent = getLanduseDetailParent(parent)
+        end
+        return detailParent
     end
 
-    local filledCells = 0
-    for _, cell in ipairs(cells) do
-        terrain:FillBlock(
-            CFrame.new(cell.x, cell.y - FILL_DEPTH * 0.5, cell.z),
-            Vector3.new(GRID_SIZE, FILL_DEPTH, GRID_SIZE),
-            mat
-        )
+    for _, item in ipairs(plan.items) do
+        for _, bucket in ipairs(item.terrainRects) do
+            for _, rect in ipairs(bucket.rects) do
+                terrain:FillBlock(
+                    CFrame.new(rect.centerX, bucket.y - FILL_DEPTH * 0.5, rect.centerZ),
+                    Vector3.new(rect.width, FILL_DEPTH, rect.depth),
+                    item.material
+                )
 
-        filledCells += 1
-        if filledCells % FILL_YIELD_INTERVAL == 0 then
-            task.wait()
+                filledRects += 1
+                if filledRects % FILL_YIELD_INTERVAL == 0 then
+                    task.wait()
+                end
+            end
+        end
+
+        if item.wantsParkingStalls then
+            detailInstances += placeParkingStalls(ensureDetailParent(), item.cells, item.id)
+        end
+        if item.wantsParkFurniture then
+            detailInstances += placeParkFurniture(item.cells, ensureDetailParent())
+        end
+        detailInstances += placeVegetation(item.vegetationKind, item.cells, ensureDetailParent())
+    end
+
+    return {
+        terrainFillRects = filledRects,
+        detailInstances = detailInstances,
+    }
+end
+
+function LanduseBuilder.PlanAll(landuseList, originStuds, chunk)
+    if not landuseList or #landuseList == 0 then
+        return {
+            items = {},
+            stats = {
+                featureCount = 0,
+                cellCount = 0,
+                rectCount = 0,
+            },
+        }
+    end
+
+    local planningContext = makePlanningContext(originStuds, chunk)
+    local items = {}
+    local stats = {
+        featureCount = 0,
+        cellCount = 0,
+        rectCount = 0,
+    }
+
+    for _, landuse in ipairs(landuseList) do
+        local plan = LanduseBuilder.PlanOne(landuse, planningContext)
+        if plan then
+            items[#items + 1] = plan
+            stats.featureCount += 1
+            stats.cellCount += plan.stats.cellCount
+            stats.rectCount += plan.stats.rectCount
         end
     end
 
-    -- Parking stall markings
-    if landuse.kind == "parking" then
-        placeParkingStalls(parent or Workspace, cells, landuse.id)
-    end
+    table.sort(items, function(a, b)
+        local aId = a.id or ""
+        local bId = b.id or ""
+        if aId == bId then
+            return (a.kind or "") < (b.kind or "")
+        end
+        return aId < bId
+    end)
 
-    -- Scatter benches in parks
-    if landuse.kind == "park" or landuse.kind == "garden" then
-        placeParkFurniture(cells, parent or Workspace)
-    end
-
-    -- Scatter trees in vegetation areas
-    placeVegetation(landuse.kind, cells, parent or Workspace)
+    return {
+        items = items,
+        stats = stats,
+    }
 end
 
-function LanduseBuilder.BuildAll(landuseList, originStuds, parent, chunk)
+function LanduseBuilder.BuildOne(landuse, originStuds, parent, chunk)
+    local plan = LanduseBuilder.PlanAll({ landuse }, originStuds, chunk)
+    return LanduseBuilder.ExecutePlan(plan, parent)
+end
+
+function LanduseBuilder.BuildAll(landuseList, originStuds, parent, chunk, preparedPlan)
     if not landuseList or #landuseList == 0 then
         return
     end
-    for _, landuse in ipairs(landuseList) do
-        LanduseBuilder.BuildOne(landuse, originStuds, parent, chunk)
-    end
+
+    local planProfile = Profiler.begin("PlanLanduse")
+    local plan = preparedPlan or LanduseBuilder.PlanAll(landuseList, originStuds, chunk)
+    Profiler.finish(planProfile, plan.stats)
+
+    local executeProfile = Profiler.begin("ExecuteLanduse")
+    local executionStats = LanduseBuilder.ExecutePlan(plan, parent)
+    Profiler.finish(executeProfile, {
+        featureCount = plan.stats.featureCount,
+        cellCount = plan.stats.cellCount,
+        rectCount = plan.stats.rectCount,
+        terrainFillRects = executionStats.terrainFillRects,
+        detailInstances = executionStats.detailInstances,
+    })
+
+    return executionStats
 end
 
 return LanduseBuilder

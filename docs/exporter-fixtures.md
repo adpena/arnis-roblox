@@ -5,7 +5,7 @@ This repository keeps a loose but intentional contract between the Rust exporter
 - **Rust side (source of truth for shape)**:
   - `rust/crates/arbx_roblox_export/src/lib.rs` exposes `build_sample_multi_chunk(count_x, count_z)`.
   - `rust/crates/arbx_cli/src/main.rs` wires the `sample` command:
-    - `arbx_cli sample --grid X,Z` → emits a schema `0.2.0` manifest JSON with an `X × Z` grid of chunks.
+    - `arbx_cli sample --grid X,Z` → emits a schema `0.3.0` manifest JSON with an `X × Z` grid of chunks.
   - `arbx_cli sample --grid 2,2` is the reference command for a small, multi-chunk sample manifest.
 
 - **Roblox side (fixtures used by tests)**:
@@ -33,6 +33,17 @@ For quick end-to-end tests with real OSM data, you can use the helper scripts un
     - `bash scripts/export_austin_from_osm.sh`
   - Output:
     - `rust/out/austin-manifest.json` – ready to validate with `ChunkSchema` and import into Roblox.
+- `scripts/export_austin_to_lua.sh`:
+  - Converts `rust/out/austin-manifest.json` into sharded Roblox fixture modules.
+  - If `specs/generated/austin-preview-downtown.json` exists, it also regenerates the Studio preview shards.
+  - Usage (from repo root):
+    - `bash scripts/export_austin_to_lua.sh`
+  - Output:
+    - `roblox/src/ServerStorage/SampleData/AustinManifestIndex.lua`
+    - `roblox/src/ServerStorage/SampleData/AustinManifestChunks/`
+    - `roblox/src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua`
+    - `roblox/src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/`
+  - Each shard currently contains one chunk so no generated `ModuleScript` exceeds Roblox's `Source` size cap during sync.
 
 You can swap the bbox or output paths in these scripts as needed, or use them as templates for other cities.
 
@@ -44,7 +55,7 @@ You can swap the bbox or output paths in these scripts as needed, or use them as
      - `roblox/src/ServerStorage/SampleData/SampleManifest.lua`
      - `roblox/src/ServerStorage/SampleData/SampleMultiChunkManifest.lua`
   3. Manually update the Lua fixtures to keep:
-     - The same schema version (`0.2.0` unless bumped with migrations).
+     - The same schema version (`0.3.0` unless bumped with migrations).
      - A compatible field layout for `ChunkSchema.validateManifest`.
      - A small but representative set of features (roads/buildings/terrain) that exercise importer behavior.
   4. Re-run:
@@ -52,4 +63,3 @@ You can swap the bbox or output paths in these scripts as needed, or use them as
      - Roblox test runner (`RunAll` in `ServerScriptService.Tests`) in Studio/CI.
 
 This keeps the Rust sample exporter and Roblox fixtures aligned, while still allowing fixtures to remain small, readable, and hand-tuned for importer tests.
-

@@ -141,8 +141,8 @@ local function updateReactiveVisibility(reactiveKind, lightsOn)
                     -- Deterministic warm tone derived from position hash
                     local pos = part.Position
                     local warmHash = math.floor(math.abs(pos.X * 17 + pos.Z * 31)) % 100
-                    local g = 200 + math.floor(warmHash * 0.30)  -- 200-230
-                    local b = 140 + math.floor(warmHash * 0.30)  -- 140-170
+                    local g = 200 + math.floor(warmHash * 0.30) -- 200-230
+                    local b = 140 + math.floor(warmHash * 0.30) -- 140-170
                     part.Color = Color3.fromRGB(255, g, b)
                     part.Transparency = 0.1
                 else
@@ -173,11 +173,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function lerpColor(a, b, t)
-    return Color3.new(
-        a.R + (b.R - a.R) * t,
-        a.G + (b.G - a.G) * t,
-        a.B + (b.B - a.B) * t
-    )
+    return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
 end
 
 -- ---------------------------------------------------------------------------
@@ -287,7 +283,7 @@ function DayNightCycle.Configure(latitude, longitude, datetime)
         -- Solar time approximation: UTC + longitude/15
         local utcTime = os.date("!*t")
         local utcHour = utcTime.hour + utcTime.min / 60
-        local solarOffset = longitude / 15  -- rough solar time offset
+        local solarOffset = longitude / 15 -- rough solar time offset
         hour = (utcHour + solarOffset) % 24
     end
 

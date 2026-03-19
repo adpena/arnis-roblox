@@ -250,6 +250,7 @@ function ImportService.ImportChunk(chunk, options)
         layerSignatures = options.layerSignatures,
         layers = layers,
     })
+    local prepared = plan.prepared or {}
     local selectiveLayers = plan.selectiveLayers
     local _nonBlocking, maybeYield = makePacingController(options)
     local shouldCancel = if type(options.shouldCancel) == "function" then options.shouldCancel else nil
@@ -405,7 +406,7 @@ function ImportService.ImportChunk(chunk, options)
     maybeYield()
 
     if plan.actionSet.terrain then
-        local terrainPlan = TerrainBuilder.PrepareChunk(chunk)
+        local terrainPlan = prepared.terrain or TerrainBuilder.PrepareChunk(chunk)
         if selectiveLayers then
             TerrainBuilder.Clear(chunk, terrainPlan)
         end
@@ -424,7 +425,7 @@ function ImportService.ImportChunk(chunk, options)
     -- Landuse fills go BEFORE roads so roads paint over them
     if plan.actionSet.landuse then
         local pLanduse = Profiler.begin("BuildLanduse")
-        LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds, landuseFolder, chunk)
+        LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds, landuseFolder, chunk, prepared.landuse)
         Profiler.finish(pLanduse)
         if checkpoint() then
             Profiler.finish(profile, {
@@ -437,20 +438,21 @@ function ImportService.ImportChunk(chunk, options)
 
     if plan.actionSet.roads then
         local pRoads = Profiler.begin("BuildRoads")
+        local roadChunkPlan = prepared.roads
         if config.RoadMode == "mesh" then
             -- Merge all ground-level road surfaces into EditableMesh objects
             -- grouped by material/colour to minimise draw calls.
-            RoadBuilder.MeshBuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk)
+            RoadBuilder.MeshBuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk, roadChunkPlan)
             maybeYield(false)
             -- Decorations (centerlines, arrows, lights, crosswalks, steps, tunnels)
             -- cannot be merged into the surface mesh; render them as separate Parts.
-            RoadBuilder.MeshBuildDecorations(roadsFolder, chunk.roads, chunk.originStuds, chunk)
+            RoadBuilder.MeshBuildDecorations(roadsFolder, chunk.roads, chunk.originStuds, chunk, roadChunkPlan)
             maybeYield(false)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.Build(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
         else
-            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk, maybeYield)
+            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk, maybeYield, roadChunkPlan)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.FallbackBuild(railsFolder, rail, chunk.originStuds)
             end, maybeYield)

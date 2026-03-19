@@ -53,6 +53,7 @@ return function()
                     {
                         id = "park_1",
                         kind = "park",
+                        material = "Grass",
                         footprint = {
                             { x = 16, z = 16 },
                             { x = 240, z = 16 },
@@ -81,17 +82,26 @@ return function()
     local landuseFolder = chunkFolder:FindFirstChild("Landuse")
     Assert.truthy(landuseFolder, "expected landuse folder")
     Assert.truthy(#landuseFolder:GetChildren() > 0, "expected landuse props to stay chunk-owned")
+    local landuseDetailFolder = landuseFolder:FindFirstChild("Detail")
+    Assert.truthy(landuseDetailFolder, "expected grouped landuse detail folder")
+    local hasParkDetail = false
+    for _, child in ipairs(landuseDetailFolder:GetDescendants()) do
+        if child.Name == "ParkBench" or child.Name == "park_tree" then
+            hasParkDetail = true
+            break
+        end
+    end
+    Assert.truthy(hasParkDetail, "expected park detail to live under grouped landuse detail")
 
     local propsFolder = chunkFolder:FindFirstChild("Props")
     Assert.truthy(propsFolder, "expected props folder")
-    local lamp = propsFolder:FindFirstChild("StreetLamp")
+    local detailFolder = propsFolder:FindFirstChild("Detail")
+    Assert.truthy(detailFolder, "expected grouped props detail folder")
+    local lamp = detailFolder:FindFirstChild("StreetLamp")
     Assert.truthy(lamp, "expected street lamp model")
     local pole = lamp:FindFirstChild("Pole")
     Assert.truthy(pole, "expected street lamp pole")
-    Assert.truthy(
-        math.abs(pole.Position.Z - 128) > 1,
-        "expected street lamp to shift off road centerline"
-    )
+    Assert.truthy(math.abs(pole.Position.Z - 128) > 1, "expected street lamp to shift off road centerline")
 
     worldRoot:Destroy()
 end

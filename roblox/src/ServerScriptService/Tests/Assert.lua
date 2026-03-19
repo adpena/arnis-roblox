@@ -13,9 +13,9 @@ function Assert.truthy(value, message)
 end
 
 function Assert.falsy(value, message)
-	if value then
-		error(message or "expected falsy value", 2)
-	end
+    if value then
+        error(message or "expected falsy value", 2)
+    end
 end
 
 function Assert.near(actual, expected, epsilon, message)

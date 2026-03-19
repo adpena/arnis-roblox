@@ -54,8 +54,7 @@ return function()
         worldRootName = worldRootName,
     })
 
-    local roadsFolder =
-        Workspace:FindFirstChild(worldRootName):FindFirstChild("0_0"):FindFirstChild("Roads")
+    local roadsFolder = Workspace:FindFirstChild(worldRootName):FindFirstChild("0_0"):FindFirstChild("Roads")
     Assert.truthy(roadsFolder, "expected roads folder for elevated bridge geometry")
 
     local deck = roadsFolder:FindFirstChildWhichIsA("Part")
@@ -66,10 +65,7 @@ return function()
     for _, child in ipairs(roadsFolder:GetChildren()) do
         if child.Name == "BridgeSupport" then
             supportCount += 1
-            Assert.truthy(
-                child.Size.Y > 2,
-                "expected bridge support pillar to reach toward terrain"
-            )
+            Assert.truthy(child.Size.Y > 2, "expected bridge support pillar to reach toward terrain")
         elseif child.Name == "BridgeRailPost" then
             railPostCount += 1
         end

@@ -77,11 +77,7 @@ return function()
 
     local roadsFolder = chunkFolder:FindFirstChild("Roads")
     Assert.truthy(roadsFolder, "expected roads folder")
-    Assert.equal(
-        #roadsFolder:GetChildren(),
-        0,
-        "expected terrain-following roads to avoid accidental bridge parts"
-    )
+    Assert.equal(#roadsFolder:GetChildren(), 0, "expected terrain-following roads to avoid accidental bridge parts")
 
     local buildingModel = chunkFolder:FindFirstChild("Buildings"):FindFirstChild("ground_building")
     Assert.truthy(buildingModel, "expected ground building model")

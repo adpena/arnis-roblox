@@ -26,10 +26,18 @@ function GeoUtils.polygonBounds(poly)
     local minX, minZ = math.huge, math.huge
     local maxX, maxZ = -math.huge, -math.huge
     for _, pt in ipairs(poly) do
-        if pt.x < minX then minX = pt.x end
-        if pt.z < minZ then minZ = pt.z end
-        if pt.x > maxX then maxX = pt.x end
-        if pt.z > maxZ then maxZ = pt.z end
+        if pt.x < minX then
+            minX = pt.x
+        end
+        if pt.z < minZ then
+            minZ = pt.z
+        end
+        if pt.x > maxX then
+            maxX = pt.x
+        end
+        if pt.z > maxZ then
+            maxZ = pt.z
+        end
     end
     return minX, minZ, maxX, maxZ
 end
@@ -46,10 +54,18 @@ function GeoUtils.toWorldFootprint(footprint, originStuds)
         local wx = pt.x + originStuds.x
         local wz = pt.z + originStuds.z
         worldPoly[i] = { x = wx, z = wz }
-        if wx < minX then minX = wx end
-        if wz < minZ then minZ = wz end
-        if wx > maxX then maxX = wx end
-        if wz > maxZ then maxZ = wz end
+        if wx < minX then
+            minX = wx
+        end
+        if wz < minZ then
+            minZ = wz
+        end
+        if wx > maxX then
+            maxX = wx
+        end
+        if wz > maxZ then
+            maxZ = wz
+        end
     end
     return worldPoly, minX, minZ, maxX, maxZ
 end
