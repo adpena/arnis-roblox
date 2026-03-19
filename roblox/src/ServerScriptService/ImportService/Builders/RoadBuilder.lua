@@ -70,6 +70,28 @@ local CURB_SURFACE_LIFT = 0.45
 local BRIDGE_PILLAR_SPACING = 24
 local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
 local BRIDGE_GUARDRAIL_OFFSET = 0.15
+local LANE_WIDTH = 12 -- studs (~3.6 m at 0.3 m/stud)
+local STREET_LIGHT_INTERVAL = 50 -- studs between lamp posts
+local STREET_LIGHT_RANGE = 40
+local STREET_LIGHT_BRIGHTNESS = 1
+local STREET_LIGHT_COLOR = Color3.fromRGB(255, 244, 214) -- warm white
+
+-- Returns "both", "left", "right", or "no".
+local function getSidewalkMode(road)
+    if road.sidewalk then
+        return road.sidewalk -- explicit manifest value takes priority
+    end
+    return road.hasSidewalk and "both" or "no"
+end
+
+-- Returns the effective road-surface width in studs.
+-- When lane count is available it overrides the raw widthStuds estimate.
+local function getEffectiveWidth(road, profileWidth)
+    if road.lanes and road.lanes > 0 then
+        return road.lanes * LANE_WIDTH
+    end
+    return profileWidth
+end
 
 local function getMaterial(road)
     -- 1. OSM surface tag takes priority (most specific physical description)
@@ -96,7 +118,7 @@ local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
 end
 
-local function classifySegment(road, p1, p2, chunk)
+local function classifySegment(road, p1, p2, _chunk)
     if road.elevated then
         return "bridge", p1, p2
     elseif road.tunnel then
@@ -126,51 +148,44 @@ local function paintStrip(terrain, p1, p2, width, thickness, material, surfaceLi
 end
 
 -- Paint one road segment into terrain using FillBlock (ground-level roads).
-local function paintSegment(terrain, p1, p2, road, width, material)
+-- sidewalkMode: "both" | "left" | "right" | "no"
+-- Left side  → negative sideOffset (CFrame local X < 0)
+-- Right side → positive sideOffset (CFrame local X > 0)
+local function paintSegment(terrain, p1, p2, road, width, material, sidewalkMode)
     local sidewalkWidth = RoadProfile.getSidewalkWidth(road, width)
     local edgeBuffer = RoadProfile.getEdgeBufferWidth(road, width)
-    local totalPavedWidth = width + (sidewalkWidth + edgeBuffer) * 2
-    local pavementMaterial = sidewalkWidth > 0 and Enum.Material.Pavement or material
 
-    paintStrip(
-        terrain,
-        p1,
-        p2,
-        totalPavedWidth,
-        PAVEMENT_THICKNESS,
-        pavementMaterial,
-        PAVEMENT_SURFACE_LIFT
-    )
+    local hasSidewalkLeft  = (sidewalkMode == "both" or sidewalkMode == "left")  and sidewalkWidth > 0
+    local hasSidewalkRight = (sidewalkMode == "both" or sidewalkMode == "right") and sidewalkWidth > 0
+
+    -- Base pavement slab spans the full kerb-to-kerb width for the sides that
+    -- have a sidewalk; if both, it's symmetric; if one-sided, expand only that way.
+    local leftExtra  = hasSidewalkLeft  and (sidewalkWidth + edgeBuffer) or 0
+    local rightExtra = hasSidewalkRight and (sidewalkWidth + edgeBuffer) or 0
+    local totalPavedWidth = width + leftExtra + rightExtra
+    local pavementMaterial = (hasSidewalkLeft or hasSidewalkRight) and Enum.Material.Pavement or material
+
+    -- When one-sided the base slab needs to be off-centre by half the asymmetry.
+    local baseOffset = (rightExtra - leftExtra) * 0.5
+    paintStrip(terrain, p1, p2, totalPavedWidth, PAVEMENT_THICKNESS, pavementMaterial, PAVEMENT_SURFACE_LIFT, baseOffset ~= 0 and baseOffset or nil)
     paintStrip(terrain, p1, p2, width, ROAD_THICKNESS, material, ROAD_SURFACE_LIFT)
 
-    if sidewalkWidth > 0 then
+    -- Curb on left side (negative offset)
+    if hasSidewalkLeft then
+        local curbOffset = -(width * 0.5 + CURB_THICKNESS * 0.5)
+        paintStrip(terrain, p1, p2, CURB_THICKNESS, CURB_THICKNESS, Enum.Material.Concrete, CURB_SURFACE_LIFT, curbOffset)
+    end
+
+    -- Curb on right side (positive offset)
+    if hasSidewalkRight then
         local curbOffset = width * 0.5 + CURB_THICKNESS * 0.5
-        paintStrip(
-            terrain,
-            p1,
-            p2,
-            CURB_THICKNESS,
-            CURB_THICKNESS,
-            Enum.Material.Concrete,
-            CURB_SURFACE_LIFT,
-            -curbOffset
-        )
-        paintStrip(
-            terrain,
-            p1,
-            p2,
-            CURB_THICKNESS,
-            CURB_THICKNESS,
-            Enum.Material.Concrete,
-            CURB_SURFACE_LIFT,
-            curbOffset
-        )
+        paintStrip(terrain, p1, p2, CURB_THICKNESS, CURB_THICKNESS, Enum.Material.Concrete, CURB_SURFACE_LIFT, curbOffset)
     end
 end
 
 -- Build an elevated bridge/tunnel segment as a Part slab (not terrain).
 -- Bridges use a concrete deck Part; tunnels are skipped (underground).
-local function paintBridgeSegment(parent, p1, p2, width, material, chunk)
+local function paintBridgeSegment(parent, p1, p2, width, material, chunk, sampleGroundY)
     local delta = p2 - p1
     local length = delta.Magnitude
     if length < 0.01 then
@@ -209,8 +224,7 @@ local function paintBridgeSegment(parent, p1, p2, width, material, chunk)
             post.Size = Vector3.new(0.3, 3, 0.3)
             post.Material = Enum.Material.Concrete
             post.Color = Color3.fromRGB(180, 180, 190)
-            post.CFrame =
-                CFrame.new(centerPos + right * (width * 0.5 + BRIDGE_GUARDRAIL_OFFSET) * side)
+            post.CFrame = CFrame.new(centerPos + right * (width * 0.5 + BRIDGE_GUARDRAIL_OFFSET) * side)
             post.Parent = parent
         end
     end
@@ -225,7 +239,7 @@ local function paintBridgeSegment(parent, p1, p2, width, material, chunk)
         local sx = p1.X + (p2.X - p1.X) * t
         local sz = p1.Z + (p2.Z - p1.Z) * t
         local deckY = p1.Y + (p2.Y - p1.Y) * t
-        local groundY = GroundSampler.sampleWorldHeight(chunk, sx, sz)
+        local groundY = sampleGroundY(sx, sz)
         local clearance = deckY - groundY - ROAD_THICKNESS * 0.5
         if clearance > BRIDGE_MIN_PILLAR_CLEARANCE then
             local support = Instance.new("Part")
@@ -234,8 +248,7 @@ local function paintBridgeSegment(parent, p1, p2, width, material, chunk)
             support.CastShadow = true
             support.Material = Enum.Material.Concrete
             support.Color = Color3.fromRGB(150, 150, 160)
-            support.Size =
-                Vector3.new(math.max(1.2, width * 0.12), clearance, math.max(1.2, width * 0.12))
+            support.Size = Vector3.new(math.max(1.2, width * 0.12), clearance, math.max(1.2, width * 0.12))
             support.CFrame = CFrame.new(sx, groundY + clearance * 0.5, sz)
             support.Parent = parent
         end
@@ -275,6 +288,59 @@ local function paintCenterline(parent, p1, p2, width)
     end
 end
 
+-- Place PointLight lamp posts along a ground-level segment at fixed intervals.
+local function placeStreetLights(parent, p1, p2, width)
+    local delta = p2 - p1
+    local length = delta.Magnitude
+    if length < 1 then
+        return
+    end
+
+    local midY = (p1.Y + p2.Y) * 0.5
+    local cf = CFrame.lookAt(Vector3.new(p1.X, midY, p1.Z), Vector3.new(p2.X, midY, p2.Z))
+    local right = cf.RightVector
+
+    local numLights = math.max(1, math.floor(length / STREET_LIGHT_INTERVAL))
+    for k = 0, numLights - 1 do
+        local t = (k + 0.5) / numLights
+        local lx = p1.X + (p2.X - p1.X) * t
+        local lz = p1.Z + (p2.Z - p1.Z) * t
+        local ly = p1.Y + (p2.Y - p1.Y) * t + 8 -- pole height above road
+
+        -- Alternate sides for a staggered look
+        local side = (k % 2 == 0) and 1 or -1
+        local lampPos = Vector3.new(lx, ly, lz) + right * (width * 0.5 + 1) * side
+
+        local pole = Instance.new("Part")
+        pole.Name = "StreetLight"
+        pole.Anchored = true
+        pole.CastShadow = false
+        pole.CanCollide = false
+        pole.Size = Vector3.new(0.3, 8, 0.3)
+        pole.Material = Enum.Material.SmoothPlastic
+        pole.Color = Color3.fromRGB(80, 80, 85)
+        pole.CFrame = CFrame.new(Vector3.new(lx, p1.Y + (p2.Y - p1.Y) * t + 4, lz) + right * (width * 0.5 + 1) * side)
+        pole.Parent = parent
+
+        local head = Instance.new("Part")
+        head.Name = "StreetLightHead"
+        head.Anchored = true
+        head.CastShadow = false
+        head.CanCollide = false
+        head.Size = Vector3.new(0.6, 0.3, 0.6)
+        head.Material = Enum.Material.SmoothPlastic
+        head.Color = Color3.fromRGB(220, 220, 220)
+        head.CFrame = CFrame.new(lampPos)
+        head.Parent = parent
+
+        local light = Instance.new("PointLight")
+        light.Range = STREET_LIGHT_RANGE
+        light.Brightness = STREET_LIGHT_BRIGHTNESS
+        light.Color = STREET_LIGHT_COLOR
+        light.Parent = head
+    end
+end
+
 -- Build ALL roads in a chunk by painting them into the terrain.
 function RoadBuilder.BuildAll(parent, roads, originStuds, chunk)
     if not roads or #roads == 0 then
@@ -292,7 +358,10 @@ end
 function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
     local terrain = Workspace.Terrain
     local material = getMaterial(road)
-    local width = RoadProfile.getRoadWidth(road)
+    local profileWidth = RoadProfile.getRoadWidth(road)
+    local width = getEffectiveWidth(road, profileWidth)
+    local sidewalkMode = getSidewalkMode(road)
+    local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
 
     for i = 1, #road.points - 1 do
         local p1 = offsetPoint(road.points[i], originStuds)
@@ -300,10 +369,13 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
 
         local segmentMode, resolvedP1, resolvedP2 = classifySegment(road, p1, p2, chunk)
         if segmentMode == "bridge" then
-            paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material, chunk)
+            paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material, chunk, sampleGroundY)
         elseif segmentMode == "ground" then
-            paintSegment(terrain, resolvedP1, resolvedP2, road, width, material)
+            paintSegment(terrain, resolvedP1, resolvedP2, road, width, material, sidewalkMode)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
+            if road.lit then
+                placeStreetLights(parent, resolvedP1, resolvedP2, width)
+            end
         end
     end
 end
