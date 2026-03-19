@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
+local CollectionService = game:GetService("CollectionService")
 
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 local ChunkLoader = require(script.Parent.ChunkLoader)
@@ -33,6 +34,15 @@ local function forEachReactive(reactiveKind, visitor)
     end
 end
 
+-- Deterministic per-window lit/dark decision based on world position.
+-- Same windows will always be lit or dark across server restarts.
+-- ~65% of windows are lit, ~35% are dark, matching a real office district at night.
+local function isWindowLit(part)
+    local pos = part.Position
+    local hash = math.floor(math.abs(pos.X * 7 + pos.Z * 13)) % 100
+    return hash < 65
+end
+
 local function updateReactiveVisibility(reactiveKind, night)
     if reactiveKind == "streetLights" then
         forEachReactive("streetLights", function(part)
@@ -47,13 +57,34 @@ local function updateReactiveVisibility(reactiveKind, night)
     if reactiveKind == "nightWindows" then
         forEachReactive("nightWindows", function(part)
             if night then
-                part.Color = Color3.fromRGB(255, 220, 150)
-                part.Transparency = 0.1
+                if isWindowLit(part) then
+                    -- Deterministic warm tone derived from position hash
+                    local pos = part.Position
+                    local warmHash = math.floor(math.abs(pos.X * 17 + pos.Z * 31)) % 100
+                    local g = 200 + math.floor(warmHash * 0.30)  -- 200-230
+                    local b = 140 + math.floor(warmHash * 0.30)  -- 140-170
+                    part.Color = Color3.fromRGB(255, g, b)
+                    part.Transparency = 0.1
+                else
+                    -- Dark window: slightly reflective glass, no glow
+                    part.Color = Color3.fromRGB(30, 35, 45)
+                    part.Transparency = 0.6
+                end
             else
                 part.Color = Color3.fromRGB(40, 50, 70)
                 part.Transparency = part:GetAttribute("BaseTransparency") or 0.35
             end
         end)
+    end
+
+    -- Toggle interior room lights
+    for _, part in ipairs(CollectionService:GetTagged("InteriorLight")) do
+        if part:IsDescendantOf(game) then
+            local light = part:FindFirstChildOfClass("PointLight")
+            if light then
+                light.Enabled = night
+            end
+        end
     end
 end
 

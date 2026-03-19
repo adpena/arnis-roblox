@@ -134,6 +134,25 @@ local function getRectExtents(poly)
     return minX, minZ, maxX, maxZ
 end
 
+local function planSurfaceGeometry(footprint, originStuds)
+    local worldPoly, minX, minZ, maxX, maxZ = buildWorldFootprint(footprint, originStuds)
+    local rectMinX, rectMinZ, rectMaxX, rectMaxZ = getRectExtents(worldPoly)
+
+    return {
+        footprint = footprint,
+        originStuds = originStuds,
+        worldPoly = worldPoly,
+        minX = minX,
+        minZ = minZ,
+        maxX = maxX,
+        maxZ = maxZ,
+        rectMinX = rectMinX,
+        rectMinZ = rectMinZ,
+        rectMaxX = rectMaxX,
+        rectMaxZ = rectMaxZ,
+    }
+end
+
 local function quantizeEdgeCoord(value)
     if value >= 0 then
         return math.floor(value * EDGE_KEY_SCALE + 0.5)
@@ -233,7 +252,6 @@ local function emitSurfacePart(
     part.Color = color
     part.Size = Vector3.new(width, thickness, depth)
     part.CFrame = CFrame.new(centerX, centerY, centerZ)
-    CollectionService:AddTag(part, "LOD_Interior")
     part.Parent = parent
 end
 
@@ -331,18 +349,7 @@ local function makeSurfaceBatchKey(centerY, thickness, material, color, canColli
     }, "|")
 end
 
-local function addSurfaceBatch(
-    batches,
-    parent,
-    partLabel,
-    footprint,
-    originStuds,
-    centerY,
-    thickness,
-    material,
-    color,
-    canCollide
-)
+local function addSurfaceBatch(batches, parent, partLabel, geometry, centerY, thickness, material, color, canCollide)
     local key = makeSurfaceBatchKey(centerY, thickness, material, color, canCollide)
     local batch = batches[key]
     if not batch then
@@ -360,8 +367,7 @@ local function addSurfaceBatch(
     end
 
     batch.surfaces[#batch.surfaces + 1] = {
-        footprint = footprint,
-        originStuds = originStuds,
+        geometry = geometry,
     }
 end
 
@@ -373,19 +379,20 @@ local function buildMergedSurfaceBatch(batch)
     local allRectangles = true
 
     for index, surface in ipairs(batch.surfaces) do
-        local worldPoly, polyMinX, polyMinZ, polyMaxX, polyMaxZ =
-            buildWorldFootprint(surface.footprint, surface.originStuds)
+        local geometry = surface.geometry
+        local worldPoly = geometry.worldPoly
         worldPolys[index] = worldPoly
-        minX = math.min(minX, polyMinX)
-        minZ = math.min(minZ, polyMinZ)
-        maxX = math.max(maxX, polyMaxX)
-        maxZ = math.max(maxZ, polyMaxZ)
-        stripSize =
-            math.min(stripSize, math.max(ROOM_MIN_STRIP_DEPTH, math.min(polyMaxX - polyMinX, polyMaxZ - polyMinZ)))
+        minX = math.min(minX, geometry.minX)
+        minZ = math.min(minZ, geometry.minZ)
+        maxX = math.max(maxX, geometry.maxX)
+        maxZ = math.max(maxZ, geometry.maxZ)
+        stripSize = math.min(
+            stripSize,
+            math.max(ROOM_MIN_STRIP_DEPTH, math.min(geometry.maxX - geometry.minX, geometry.maxZ - geometry.minZ))
+        )
 
-        local rectMinX, rectMinZ, rectMaxX, rectMaxZ = getRectExtents(worldPoly)
-        if rectMinX then
-            totalRectArea += (rectMaxX - rectMinX) * (rectMaxZ - rectMinZ)
+        if geometry.rectMinX then
+            totalRectArea += (geometry.rectMaxX - geometry.rectMinX) * (geometry.rectMaxZ - geometry.rectMinZ)
         else
             allRectangles = false
         end
@@ -411,7 +418,7 @@ local function buildMergedSurfaceBatch(batch)
         end
     end
 
-    local mergedCount = 0
+    local stripSegments = table.create(0)
     local x = minX + stripSize * 0.5
     while x <= maxX do
         local z = minZ + stripSize * 0.5
@@ -437,20 +444,12 @@ local function buildMergedSurfaceBatch(batch)
             elseif runStartZ and runEndZ then
                 local depth = runEndZ - runStartZ + stripSize
                 if depth >= ROOM_MIN_STRIP_DEPTH then
-                    mergedCount += 1
-                    emitSurfacePart(
-                        batch.parent,
-                        string.format("%s_%d", batch.partLabel, mergedCount),
-                        x,
-                        batch.centerY,
-                        (runStartZ + runEndZ) * 0.5,
-                        stripSize,
-                        depth,
-                        batch.thickness,
-                        batch.material,
-                        batch.color,
-                        batch.canCollide
-                    )
+                    stripSegments[#stripSegments + 1] = {
+                        centerX = x,
+                        centerZ = (runStartZ + runEndZ) * 0.5,
+                        width = stripSize,
+                        depth = depth,
+                    }
                 end
                 runStartZ = nil
                 runEndZ = nil
@@ -462,17 +461,56 @@ local function buildMergedSurfaceBatch(batch)
         x += stripSize
     end
 
-    if mergedCount > 0 then
+    if #stripSegments > 0 then
+        local mergedCount = 0
+        local active = stripSegments[1]
+
+        local function flushActive()
+            mergedCount += 1
+            emitSurfacePart(
+                batch.parent,
+                string.format("%s_%d", batch.partLabel, mergedCount),
+                active.centerX,
+                batch.centerY,
+                active.centerZ,
+                active.width,
+                active.depth,
+                batch.thickness,
+                batch.material,
+                batch.color,
+                batch.canCollide
+            )
+        end
+
+        for index = 2, #stripSegments do
+            local segment = stripSegments[index]
+            local expectedCenterX = active.centerX + (active.width + segment.width) * 0.5
+            if
+                math.abs(segment.centerZ - active.centerZ) <= 1e-6
+                and math.abs(segment.depth - active.depth) <= 1e-6
+                and math.abs(segment.centerX - expectedCenterX) <= 1e-6
+            then
+                local combinedWidth = active.width + segment.width
+                active.centerX = (active.centerX * active.width + segment.centerX * segment.width) / combinedWidth
+                active.width += segment.width
+            else
+                flushActive()
+                active = segment
+            end
+        end
+
+        flushActive()
         return mergedCount
     end
 
     local fallbackIndex = 0
     for _, surface in ipairs(batch.surfaces) do
+        local geometry = surface.geometry
         fallbackIndex += buildRoomSurface(
             batch.parent,
             batch.partLabel,
-            surface.footprint,
-            surface.originStuds,
+            geometry.footprint,
+            geometry.originStuds,
             batch.centerY,
             batch.thickness,
             batch.material,
@@ -484,24 +522,35 @@ local function buildMergedSurfaceBatch(batch)
     return fallbackIndex
 end
 
-local function buildRoomFloor(parent, room, originStuds, buildingBaseY)
+local function buildRoomPlan(room, originStuds, buildingBaseY, floorHeight)
     if not room.footprint or #room.footprint < 3 then
         return nil
     end
 
     local material = getRoomFloorMaterial(room)
-    local floorHeight = room.height or 0.2
-    local centerY = buildingBaseY + (room.floorY or 0) + floorHeight * 0.5
+    local floorThickness = room.height or 0.2
+    local floorCenterY = buildingBaseY + (room.floorY or 0) + floorThickness * 0.5
+    local geometry = planSurfaceGeometry(room.footprint, originStuds)
+
     return {
-        parent = parent,
-        partLabel = "floor",
-        footprint = room.footprint,
-        originStuds = originStuds,
-        centerY = centerY,
-        thickness = 0.2,
-        material = material,
-        color = DEFAULT_ROOM_FLOOR_COLOR,
-        canCollide = false,
+        room = room,
+        geometry = geometry,
+        floor = {
+            partLabel = "floor",
+            centerY = floorCenterY,
+            thickness = 0.2,
+            material = material,
+            color = DEFAULT_ROOM_FLOOR_COLOR,
+            canCollide = false,
+        },
+        ceiling = {
+            partLabel = "ceiling",
+            centerY = buildingBaseY + (room.floorY or 0) + floorHeight,
+            thickness = 0.2,
+            material = Enum.Material.SmoothPlastic,
+            color = DEFAULT_CEILING_COLOR,
+            canCollide = true,
+        },
     }
 end
 
@@ -567,7 +616,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         aboveDoor.CanCollide = true
         aboveDoor.CFrame = CFrame.new(midX, slabTop + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) * 0.5, midZ)
             * CFrame.Angles(0, angle, 0)
-        CollectionService:AddTag(aboveDoor, "LOD_Interior")
         aboveDoor.Parent = parent
 
         if leftLen > MIN_EDGE then
@@ -581,7 +629,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             leftWall.CFrame = CFrame.new(midX, midY, midZ)
                 * CFrame.Angles(0, angle, 0)
                 * CFrame.new(-(edgeLen * 0.5 - leftLen * 0.5), 0, 0)
-            CollectionService:AddTag(leftWall, "LOD_Interior")
             leftWall.Parent = parent
         end
 
@@ -596,7 +643,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             rightWall.CFrame = CFrame.new(midX, midY, midZ)
                 * CFrame.Angles(0, angle, 0)
                 * CFrame.new(edgeLen * 0.5 - rightLen * 0.5, 0, 0)
-            CollectionService:AddTag(rightWall, "LOD_Interior")
             rightWall.Parent = parent
         end
     elseif partition.hasWindow and edgeLen > WINDOW_WIDTH * 2 then
@@ -612,7 +658,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             belowWin.Anchored = true
             belowWin.CanCollide = true
             belowWin.CFrame = CFrame.new(midX, slabTop + WINDOW_SILL_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
-            CollectionService:AddTag(belowWin, "LOD_Interior")
             belowWin.Parent = parent
         end
 
@@ -626,7 +671,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             aboveWin.Anchored = true
             aboveWin.CanCollide = true
             aboveWin.CFrame = CFrame.new(midX, lintelY + aboveHeight * 0.5, midZ) * CFrame.Angles(0, angle, 0)
-            CollectionService:AddTag(aboveWin, "LOD_Interior")
             aboveWin.Parent = parent
         end
 
@@ -640,7 +684,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         windowPane.CanCollide = false
         windowPane.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
         windowPane:SetAttribute("BaseTransparency", 0.4)
-        CollectionService:AddTag(windowPane, "LOD_Interior")
         windowPane.Parent = parent
 
         local sideWidth = (edgeLen - WINDOW_WIDTH) * 0.5
@@ -656,7 +699,6 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
                 sidePart.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ)
                     * CFrame.Angles(0, angle, 0)
                     * CFrame.new(sign * (WINDOW_WIDTH * 0.5 + sideWidth * 0.5), 0, 0)
-                CollectionService:AddTag(sidePart, "LOD_Interior")
                 sidePart.Parent = parent
             end
         end
@@ -669,30 +711,44 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         wall.Anchored = true
         wall.CanCollide = true
         wall.CFrame = CFrame.new(midX, midY, midZ) * CFrame.Angles(0, angle, 0)
-        CollectionService:AddTag(wall, "LOD_Interior")
         wall.Parent = parent
     end
 end
 
--- Build a ceiling slab (thin part at the top of the room)
-local function buildCeiling(parent, room, originStuds, buildingBaseY, floorHeight)
-    local fp = room.footprint
-    if not fp or #fp < 3 then
-        return nil
-    end
+local function addPlannedSurfaceBatch(batches, parent, geometry, plannedSurface)
+    addSurfaceBatch(
+        batches,
+        parent,
+        plannedSurface.partLabel,
+        geometry,
+        plannedSurface.centerY,
+        plannedSurface.thickness,
+        plannedSurface.material,
+        plannedSurface.color,
+        plannedSurface.canCollide
+    )
+end
 
-    local ceilingY = buildingBaseY + (room.floorY or 0) + floorHeight
-    return {
-        parent = parent,
-        partLabel = "ceiling",
-        footprint = fp,
-        originStuds = originStuds,
-        centerY = ceilingY,
-        thickness = 0.2,
-        material = Enum.Material.SmoothPlastic,
-        color = DEFAULT_CEILING_COLOR,
-        canCollide = true,
-    }
+local function buildRoomPlans(rooms, originStuds, buildingBaseY, floorHeight)
+    local plans = table.create(#rooms)
+    for _, room in ipairs(rooms) do
+        local plan = buildRoomPlan(room, originStuds, buildingBaseY, floorHeight)
+        if plan then
+            plans[#plans + 1] = plan
+        end
+    end
+    return plans
+end
+
+local function emitSortedBatches(batches)
+    local batchKeys = table.create(0)
+    for batchKey in pairs(batches) do
+        batchKeys[#batchKeys + 1] = batchKey
+    end
+    table.sort(batchKeys)
+    for _, batchKey in ipairs(batchKeys) do
+        buildMergedSurfaceBatch(batches[batchKey])
+    end
 end
 
 function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
@@ -715,6 +771,8 @@ function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
                 local roomsFolder = Instance.new("Folder")
                 roomsFolder.Name = "Rooms"
                 roomsFolder.Parent = buildingModel
+                roomsFolder:SetAttribute("ArnisLodGroupKind", "interior")
+                CollectionService:AddTag(roomsFolder, "LOD_InteriorGroup")
                 local floorsFolder = Instance.new("Folder")
                 floorsFolder.Name = "Floors"
                 floorsFolder.Parent = roomsFolder
@@ -730,6 +788,7 @@ function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
                 -- Compute floor height from building dimensions
                 local levels = building.levels or #rooms
                 local floorHeight = buildingHeight / math.max(1, levels)
+                local roomPlans = buildRoomPlans(rooms, originStuds, buildingBaseY, floorHeight)
 
                 local partitionKeys = table.create(0)
                 for edgeId in pairs(partitionEdges) do
@@ -743,56 +802,28 @@ function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
                     end
                 end
 
-                for _, room in ipairs(rooms) do
-                    local floorSurface = buildRoomFloor(floorsFolder, room, originStuds, buildingBaseY)
-                    if floorSurface then
-                        addSurfaceBatch(
-                            floorBatches,
-                            floorSurface.parent,
-                            floorSurface.partLabel,
-                            floorSurface.footprint,
-                            floorSurface.originStuds,
-                            floorSurface.centerY,
-                            floorSurface.thickness,
-                            floorSurface.material,
-                            floorSurface.color,
-                            floorSurface.canCollide
-                        )
+                for _, roomPlan in ipairs(roomPlans) do
+                    addPlannedSurfaceBatch(floorBatches, floorsFolder, roomPlan.geometry, roomPlan.floor)
+                    addPlannedSurfaceBatch(ceilingBatches, ceilingsFolder, roomPlan.geometry, roomPlan.ceiling)
+                end
+
+                emitSortedBatches(floorBatches)
+                emitSortedBatches(ceilingBatches)
+
+                -- Add a warm PointLight to every ceiling part so DayNightCycle
+                -- can illuminate rooms at night.  Lights start disabled and are
+                -- toggled by the "InteriorLight" CollectionService tag.
+                for _, ceilingPart in ipairs(ceilingsFolder:GetDescendants()) do
+                    if ceilingPart:IsA("BasePart") then
+                        local light = Instance.new("PointLight")
+                        light.Name = "InteriorLight"
+                        light.Range = 20
+                        light.Brightness = 0.8
+                        light.Color = Color3.fromRGB(255, 230, 180)
+                        light.Enabled = false
+                        light.Parent = ceilingPart
+                        CollectionService:AddTag(ceilingPart, "InteriorLight")
                     end
-
-                    local ceilingSurface = buildCeiling(ceilingsFolder, room, originStuds, buildingBaseY, floorHeight)
-                    if ceilingSurface then
-                        addSurfaceBatch(
-                            ceilingBatches,
-                            ceilingSurface.parent,
-                            ceilingSurface.partLabel,
-                            ceilingSurface.footprint,
-                            ceilingSurface.originStuds,
-                            ceilingSurface.centerY,
-                            ceilingSurface.thickness,
-                            ceilingSurface.material,
-                            ceilingSurface.color,
-                            ceilingSurface.canCollide
-                        )
-                    end
-                end
-
-                local floorBatchKeys = table.create(0)
-                for batchKey in pairs(floorBatches) do
-                    floorBatchKeys[#floorBatchKeys + 1] = batchKey
-                end
-                table.sort(floorBatchKeys)
-                for _, batchKey in ipairs(floorBatchKeys) do
-                    buildMergedSurfaceBatch(floorBatches[batchKey])
-                end
-
-                local ceilingBatchKeys = table.create(0)
-                for batchKey in pairs(ceilingBatches) do
-                    ceilingBatchKeys[#ceilingBatchKeys + 1] = batchKey
-                end
-                table.sort(ceilingBatchKeys)
-                for _, batchKey in ipairs(ceilingBatchKeys) do
-                    buildMergedSurfaceBatch(ceilingBatches[batchKey])
                 end
             end
         end
