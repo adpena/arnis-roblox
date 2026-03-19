@@ -30,6 +30,12 @@ fn build_query(bbox: BoundingBox) -> String {
   way["building"]({bb});
   way["building:part"]({bb});
   way["highway"]({bb});
+  way["highway"="footway"]({bb});
+  way["highway"="path"]({bb});
+  way["highway"="pedestrian"]({bb});
+  way["highway"="steps"]({bb});
+  way["highway"="cycleway"]({bb});
+  way["man_made"="bridge"]({bb});
   way["railway"]({bb});
   way["waterway"]({bb});
   way["natural"="water"]({bb});
@@ -46,7 +52,14 @@ fn build_query(bbox: BoundingBox) -> String {
   node["highway"="street_lamp"]({bb});
   node["highway"="traffic_signals"]({bb});
   node["highway"="bus_stop"]({bb});
+  node["highway"="crossing"]({bb});
   node["emergency"="fire_hydrant"]({bb});
+  node["tourism"="information"]({bb});
+  node["amenity"="fountain"]({bb});
+  node["amenity"="drinking_water"]({bb});
+  node["amenity"="telephone"]({bb});
+  node["amenity"="post_box"]({bb});
+  node["amenity"="vending_machine"]({bb});
 );
 out body;
 >;
@@ -212,6 +225,21 @@ mod tests {
         assert!(q.contains("30.26,-97.75,30.27,-97.74"), "query should embed bbox: {}", q);
         assert!(q.contains("way[\"building\"]"));
         assert!(q.contains("node[\"natural\"=\"tree\"]"));
+        // pedestrian infrastructure
+        assert!(q.contains("way[\"highway\"=\"footway\"]"), "missing footway: {}", q);
+        assert!(q.contains("way[\"highway\"=\"path\"]"), "missing path: {}", q);
+        assert!(q.contains("way[\"highway\"=\"pedestrian\"]"), "missing pedestrian: {}", q);
+        assert!(q.contains("way[\"highway\"=\"steps\"]"), "missing steps: {}", q);
+        assert!(q.contains("way[\"highway\"=\"cycleway\"]"), "missing cycleway: {}", q);
+        assert!(q.contains("way[\"man_made\"=\"bridge\"]"), "missing bridge: {}", q);
+        // crosswalks and urban furniture nodes
+        assert!(q.contains("node[\"highway\"=\"crossing\"]"), "missing crossing node: {}", q);
+        assert!(q.contains("node[\"tourism\"=\"information\"]"), "missing tourism info: {}", q);
+        assert!(q.contains("node[\"amenity\"=\"fountain\"]"), "missing fountain: {}", q);
+        assert!(q.contains("node[\"amenity\"=\"drinking_water\"]"), "missing drinking_water: {}", q);
+        assert!(q.contains("node[\"amenity\"=\"telephone\"]"), "missing telephone: {}", q);
+        assert!(q.contains("node[\"amenity\"=\"post_box\"]"), "missing post_box: {}", q);
+        assert!(q.contains("node[\"amenity\"=\"vending_machine\"]"), "missing vending_machine: {}", q);
     }
 
     #[test]
