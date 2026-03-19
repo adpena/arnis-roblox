@@ -410,7 +410,7 @@ fn cmd_config(args: &[String]) -> Result<(), String> {
     }
 
     let config_json = r#"{
-  "metersPerStud": 1.0,
+  "metersPerStud": 0.3,
   "chunkSizeStuds": 256,
   "terrainMode": "voxel",
   "roadMode": "mesh",

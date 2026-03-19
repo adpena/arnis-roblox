@@ -39,6 +39,8 @@ local BARRIER_MATERIAL = {
 function BarrierBuilder.BuildAll(chunk, _parent)
 	local barriers = chunk.barriers
 	if not barriers or #barriers == 0 then return 0 end
+	local origin = chunk.originStuds
+	local ox, oy, oz = origin.x, origin.y, origin.z
 	local count = 0
 	for _, barrier in ipairs(barriers) do
 		local kind      = barrier.kind or "fence"
@@ -48,8 +50,8 @@ function BarrierBuilder.BuildAll(chunk, _parent)
 		local pts       = barrier.points
 		if pts and #pts >= 2 then
 			for i = 1, #pts - 1 do
-				local p1  = Vector3.new(pts[i].x,   pts[i].y,   pts[i].z)
-				local p2  = Vector3.new(pts[i+1].x, pts[i+1].y, pts[i+1].z)
+				local p1  = Vector3.new(pts[i].x + ox,   pts[i].y + oy,   pts[i].z + oz)
+				local p2  = Vector3.new(pts[i+1].x + ox, pts[i+1].y + oy, pts[i+1].z + oz)
 				local mid = (p1 + p2) * 0.5
 				local len = (p2 - p1).Magnitude
 				if len > 0.1 then

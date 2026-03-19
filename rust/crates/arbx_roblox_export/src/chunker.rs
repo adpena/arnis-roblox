@@ -636,22 +636,6 @@ impl Chunker {
     }
 }
 
-#[allow(dead_code)]
-fn point_in_poly(p: Vec2, poly: &[Vec2]) -> bool {
-    let mut inside = false;
-    let mut j = poly.len() - 1;
-    for i in 0..poly.len() {
-        if ((poly[i].y > p.y) != (poly[j].y > p.y))
-            && (p.x
-                < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
-        {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
