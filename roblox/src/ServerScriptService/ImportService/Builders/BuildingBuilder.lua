@@ -690,6 +690,10 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         wall.Material = mat
         wall.Color = color
         wall.CastShadow = false
+        if mat == Enum.Material.Glass then
+            wall.Transparency = 0.3
+            wall.Reflectance = 0.15
+        end
         wall.Parent = model
 
         -- Corner post at p1 vertex to seal the joint between this wall and the previous
@@ -725,7 +729,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     local maxWindows = windowBudget and windowBudget.max
         or (WorldConfig.InstanceBudget and WorldConfig.InstanceBudget.MaxWindowsPerChunk)
         or 10000
-    if numFloors >= 3 and #worldPts <= 8 and (#worldPts * numFloors * 2) <= 100 then
+    if numFloors >= 1 and #worldPts <= 8 and (#worldPts * numFloors * 2) <= 100 then
         local budgetExceeded = false
         for floor = 1, math.min(numFloors - 1, 10) do
             if budgetExceeded then break end
@@ -779,6 +783,28 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
 
     buildRoof(building, worldPts, footprintData, baseY, height, color, mat, model)
+
+    -- Building name label (from OSM name tag)
+    if building.name and building.name ~= "" then
+        local nameLabel = Instance.new("BillboardGui")
+        nameLabel.Name = "BuildingName"
+        nameLabel.Size = UDim2.new(0, 200, 0, 30)
+        nameLabel.StudsOffset = Vector3.new(0, height + 5, 0)
+        nameLabel.AlwaysOnTop = false
+        nameLabel.MaxDistance = 200
+
+        local text = Instance.new("TextLabel")
+        text.Size = UDim2.new(1, 0, 1, 0)
+        text.BackgroundTransparency = 1
+        text.Text = building.name
+        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+        text.TextStrokeTransparency = 0.5
+        text.TextScaled = true
+        text.Font = Enum.Font.GothamBold
+        text.Parent = nameLabel
+
+        nameLabel.Parent = model
+    end
 
     return model
 end
