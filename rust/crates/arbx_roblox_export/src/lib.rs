@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn sample_manifest_serializes() {
         let json = build_sample_manifest().to_json_pretty();
-        assert!(json.contains("\"schemaVersion\": \"0.3.0\""));
+        assert!(json.contains("\"schemaVersion\": \"0.4.0\""));
         assert!(json.contains("\"buildings\""));
         assert!(json.contains("\"roads\""));
     }

@@ -23,7 +23,7 @@ fn full_pipeline_produces_valid_manifest() {
     let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation);
 
     // Verify manifest structure
-    assert_eq!(manifest.schema_version, "0.2.0");
+    assert_eq!(manifest.schema_version, "0.4.0");
     assert!(!manifest.chunks.is_empty());
     assert!(manifest.meta.total_features > 0);
 
