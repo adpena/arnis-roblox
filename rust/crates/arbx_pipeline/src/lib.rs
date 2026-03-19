@@ -767,6 +767,188 @@ impl SourceAdapter for OverpassAdapter {
                     }));
                     continue;
                 }
+                // Fountains
+                if tags.get("amenity") == Some(&"fountain".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("fountain_{}", el.id),
+                        kind: "fountain".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Post boxes / mailboxes
+                if tags.get("amenity") == Some(&"post_box".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("postbox_{}", el.id),
+                        kind: "post_box".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Drinking water fountains
+                if tags.get("amenity") == Some(&"drinking_water".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("water_{}", el.id),
+                        kind: "drinking_water".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Bollards
+                if tags.get("barrier") == Some(&"bollard".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("bollard_{}", el.id),
+                        kind: "bollard".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Vending machines
+                if tags.get("amenity") == Some(&"vending_machine".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("vending_{}", el.id),
+                        kind: "vending_machine".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Telephone booths
+                if tags.get("amenity") == Some(&"telephone".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("phone_{}", el.id),
+                        kind: "telephone".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Parking meters
+                if tags.get("amenity") == Some(&"parking_meter".to_string())
+                    || tags.get("amenity") == Some(&"parking_entrance".to_string())
+                {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("pmeter_{}", el.id),
+                        kind: "parking_meter".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Bicycle parking
+                if tags.get("amenity") == Some(&"bicycle_parking".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("bikepark_{}", el.id),
+                        kind: "bicycle_parking".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Power towers
+                if tags.get("power") == Some(&"tower".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("ptower_{}", el.id),
+                        kind: "power_tower".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: tags.get("height").and_then(|h| h.parse().ok()),
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Power poles
+                if tags.get("power") == Some(&"pole".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("ppole_{}", el.id),
+                        kind: "power_pole".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: tags.get("height").and_then(|h| h.parse().ok()),
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Surveillance cameras
+                if tags.get("man_made") == Some(&"surveillance".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("camera_{}", el.id),
+                        kind: "surveillance".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: None,
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
+                // Flag poles
+                if tags.get("man_made") == Some(&"flagpole".to_string()) {
+                    features.push(Feature::Prop(PropFeature {
+                        id: format!("flag_{}", el.id),
+                        kind: "flagpole".to_string(),
+                        position: pos,
+                        yaw_degrees: 0.0,
+                        scale: 1.0,
+                        species: None,
+                        height: tags.get("height").and_then(|h| h.parse().ok()),
+                        leaf_type: None,
+                        circumference: None,
+                    }));
+                    continue;
+                }
                 if tags.get("natural") == Some(&"tree".to_string())
                     || tags.get("amenity") == Some(&"tree".to_string())
                 {
