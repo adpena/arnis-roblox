@@ -154,6 +154,13 @@ local customCamActive = false
 local camTargetFOV = DEFAULT_FOV
 local camCurrentPos = nil
 
+-- Anti-fall-through safety net
+local lastSafePosition = Vector3.new(0, 100, 0)
+
+-- Cinematic orbit camera
+local cinematicMode = false
+local cinematicAngle = 0
+
 -- Transition state
 local transitionLock = false
 
@@ -186,19 +193,20 @@ local function tweenProperty(obj, props, duration, style, direction)
     return tween
 end
 
+-- Sound assets from Roblox library
+local SOUND_ENGINE_LOOP     = "rbxassetid://9112854440"
+local SOUND_TIRE_SCREECH    = "rbxassetid://9114368685"
+local SOUND_HORN            = "rbxassetid://9113651830"
+local SOUND_JET_THRUST      = "rbxassetid://9112798601"
+local SOUND_WIND_RUSH       = "rbxassetid://9113543029"
+local SOUND_CHUTE_DEPLOY    = "rbxassetid://9113636898"
+local SOUND_CHUTE_FLUTTER   = "rbxassetid://9113543029"
+
 local function makeSound(parent, name, looped, volume, soundId)
     local s = Instance.new("Sound")
     s.Name = name
     s.Looped = looped or false
     s.Volume = volume or 0.5
-    -- Placeholder IDs: replace with real asset IDs
-    -- Search terms for Roblox library:
-    --   Engine loop: "car engine loop", "vehicle engine"
-    --   Tire screech: "tire screech", "drift sound"
-    --   Horn: "car horn"
-    --   Jet thrust: "rocket thrust", "jet engine"
-    --   Wind: "wind rushing", "wind ambient"
-    --   Parachute flutter: "fabric flapping", "canvas wind"
     s.SoundId = soundId or ""
     s.Parent = parent
     return s
@@ -344,7 +352,7 @@ local function setHUDMode(newMode)
         modeIcon.Text = "JET"
         controlHints.Text = "[WASD] Move   [Space] Up   [Shift] Down   [J] Off"
     elseif isChute then
-        modeIcon.Text = "GLI"
+        modeIcon.Text = "CHUTE"
         controlHints.Text = "[A/D] Steer   [S] Flare   [P] Cut away"
     else
         modeIcon.Text = ""
@@ -386,7 +394,8 @@ local function updateHUDValues(dt)
     -- Fuel bar
     if mode == "jetpack" then
         local frac = math.clamp(jetpackFuel / JETPACK_FUEL_MAX, 0, 1)
-        fuelBarFill.Size = UDim2.new(frac, -4 * (1 - frac), 1, -4)
+        local barWidth = math.max(0, frac)
+        fuelBarFill.Size = UDim2.new(barWidth, 0, 1, -4)
         if frac < 0.2 then
             fuelBarFill.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
         elseif frac < 0.5 then
@@ -668,12 +677,9 @@ local function createCarBody(spawnCF)
     exhaust.Parent = exhaustAttach
 
     -- Sounds
-    local engineSnd = makeSound(chassis, "Engine", true, 0.4)
-    -- Search: "car engine idle loop"
-    local screechSnd = makeSound(chassis, "TireScreech", false, 0.3)
-    -- Search: "tire screech drift"
-    local hornSnd = makeSound(chassis, "Horn", false, 0.6)
-    -- Search: "car horn honk"
+    local engineSnd = makeSound(chassis, "Engine", true, 0.4, SOUND_ENGINE_LOOP)
+    local screechSnd = makeSound(chassis, "TireScreech", false, 0.3, SOUND_TIRE_SCREECH)
+    local hornSnd = makeSound(chassis, "Horn", false, 0.6, SOUND_HORN)
 
     model.PrimaryPart = chassis
 
@@ -1209,19 +1215,16 @@ local function deployJetpack()
     tagPart(jetpackForce, JETPACK_TAG)
 
     -- Sounds
-    jetpackThrustSound = makeSound(hrp, "JetThrust", true, 0.3)
-    -- Search: "rocket engine loop", "jet thrust loop"
+    jetpackThrustSound = makeSound(hrp, "JetThrust", true, 0.3, SOUND_JET_THRUST)
     jetpackThrustSound:Play()
     tagPart(jetpackThrustSound, JETPACK_TAG)
 
-    jetpackWindSound = makeSound(hrp, "JetWind", true, 0)
-    -- Search: "wind rushing loop", "high speed wind"
+    jetpackWindSound = makeSound(hrp, "JetWind", true, 0, SOUND_WIND_RUSH)
     jetpackWindSound:Play()
     tagPart(jetpackWindSound, JETPACK_TAG)
 
     -- Startup whoosh
-    local startupSnd = makeSound(hrp, "JetStart", false, 0.5)
-    -- Search: "whoosh", "jet startup"
+    local startupSnd = makeSound(hrp, "JetStart", false, 0.5, SOUND_JET_THRUST)
     startupSnd:Play()
     Debris:AddItem(startupSnd, 2)
 
@@ -1237,7 +1240,7 @@ local function cleanupJetpack()
     -- Shutdown sound
     local hrp = getHRP()
     if hrp then
-        local shutdownSnd = makeSound(hrp, "JetStop", false, 0.4)
+        local shutdownSnd = makeSound(hrp, "JetStop", false, 0.4, SOUND_JET_THRUST)
         shutdownSnd:Play()
         Debris:AddItem(shutdownSnd, 2)
     end
@@ -1424,8 +1427,23 @@ local function deployParachute()
     local char = getCharacter()
     if not hrp or not hum or not char then return end
 
-    -- Only deploy when falling
-    if hrp.AssemblyLinearVelocity.Y > -5 then return end
+    -- Only deploy when falling fast enough
+    if hrp.AssemblyLinearVelocity.Y > -5 then
+        -- Flash HUD red to show deploy failed
+        local originalColor = controlHints.TextColor3
+        controlHints.TextColor3 = Color3.fromRGB(255, 80, 80)
+        controlHints.Text = "Need more altitude to deploy!"
+        controlHintTimer = HUD_FADE_DELAY
+        if not controlHintsVisible then
+            controlHintsVisible = true
+            tweenProperty(controlHints, { TextTransparency = 0, BackgroundTransparency = 0.4 }, 0.3)
+        end
+        task.delay(1.5, function()
+            controlHints.TextColor3 = originalColor
+            setHUDMode(mode)
+        end)
+        return
+    end
 
     chuteActive = true
     chuteStalled = false
@@ -1551,18 +1569,16 @@ local function deployParachute()
     tagPart(chuteGyro, PARACHUTE_TAG)
 
     -- Sounds
-    chuteWindSound = makeSound(hrp, "ChuteWind", true, 0.3)
-    -- Search: "wind rushing loop"
+    chuteWindSound = makeSound(hrp, "ChuteWind", true, 0.3, SOUND_WIND_RUSH)
     chuteWindSound:Play()
     tagPart(chuteWindSound, PARACHUTE_TAG)
 
-    chuteFlutterSound = makeSound(hrp, "ChuteFlutter", true, 0.15)
-    -- Search: "fabric flapping wind", "canvas wind"
+    chuteFlutterSound = makeSound(hrp, "ChuteFlutter", true, 0.15, SOUND_CHUTE_FLUTTER)
     chuteFlutterSound:Play()
     tagPart(chuteFlutterSound, PARACHUTE_TAG)
 
     -- Deploy whoosh
-    local deploySnd = makeSound(hrp, "ChuteDeploy", false, 0.5)
+    local deploySnd = makeSound(hrp, "ChuteDeploy", false, 0.5, SOUND_CHUTE_DEPLOY)
     deploySnd:Play()
     Debris:AddItem(deploySnd, 2)
 
@@ -1579,7 +1595,7 @@ local function deployParachute()
     setHUDMode("parachute")
 end
 
-function retractParachute()
+local function retractParachute()
     if not chuteActive then return end
     chuteActive = false
 
@@ -1840,6 +1856,7 @@ local function fullCleanup()
 
     mode = "none"
     customCamActive = false
+    cinematicMode = false
     camCurrentPos = nil
     jetpackFuel = JETPACK_FUEL_MAX
 
@@ -1910,6 +1927,21 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if carHornSound and not carHornSound.IsPlaying then
             carHornSound:Play()
         end
+
+    elseif keyCode == Enum.KeyCode.C then
+        cinematicMode = not cinematicMode
+        if cinematicMode then
+            controlHints.Text = "[C] Exit cinematic view"
+            controlHintTimer = HUD_FADE_DELAY
+            if not controlHintsVisible then
+                controlHintsVisible = true
+                tweenProperty(controlHints, { TextTransparency = 0, BackgroundTransparency = 0.4 }, 0.3)
+            end
+        else
+            camera.CameraType = Enum.CameraType.Custom
+            camera.FieldOfView = DEFAULT_FOV
+            setHUDMode(mode)
+        end
     end
 end)
 
@@ -1945,6 +1977,33 @@ RunService.RenderStepped:Connect(function(dt)
             camera.FieldOfView = DEFAULT_FOV
             setHUDMode("none")
         end
+    end
+
+    -- Anti-fall-through safety net for car
+    if mode == "car" and carBody then
+        if carBody.Position.Y < -50 then
+            carBody.CFrame = CFrame.new(lastSafePosition + Vector3.new(0, 5, 0))
+            carBody.AssemblyLinearVelocity = Vector3.zero
+            carBody.AssemblyAngularVelocity = Vector3.zero
+        else
+            lastSafePosition = carBody.Position
+        end
+    end
+
+    -- Cinematic orbit camera
+    if cinematicMode then
+        cinematicAngle = cinematicAngle + dt * 0.3
+        local radius = 150
+        local height = 80
+        local target = hrp.Position
+        local camPos = target + Vector3.new(
+            math.cos(cinematicAngle) * radius,
+            height,
+            math.sin(cinematicAngle) * radius
+        )
+        camera.CameraType = Enum.CameraType.Scriptable
+        camera.CFrame = CFrame.lookAt(camPos, target)
+        camera.FieldOfView = 60
     end
 
     -- Camera transition smoothing when switching modes
