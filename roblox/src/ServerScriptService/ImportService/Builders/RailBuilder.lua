@@ -16,9 +16,11 @@ local function paintSegment(terrain, p1, p2, width)
 	local length = delta.Magnitude
 	if length < 0.01 then return end
 
-	local midY   = p1.Y - RAIL_THICKNESS * 0.5
-	local midPos = Vector3.new((p1.X + p2.X) * 0.5, midY, (p1.Z + p2.Z) * 0.5)
-	local cf     = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
+	-- Use per-vertex Y so FillBlock tilts to follow terrain slope.
+	local startPos = Vector3.new(p1.X, p1.Y - RAIL_THICKNESS * 0.5, p1.Z)
+	local endPos   = Vector3.new(p2.X, p2.Y - RAIL_THICKNESS * 0.5, p2.Z)
+	local midPos   = (startPos + endPos) * 0.5
+	local cf       = CFrame.lookAt(midPos, endPos)
 	terrain:FillBlock(cf, Vector3.new(width, RAIL_THICKNESS, length), Enum.Material.Cobblestone)
 end
 

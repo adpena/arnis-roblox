@@ -15,8 +15,20 @@ local WATER_DEPTH = 2
 -- How many studs below the water surface to carve terrain.
 local CARVE_DEPTH = WorldConfig.WaterCarveDepth or 4
 
--- Creates a thin Glass Part on top of terrain water for reflections.
--- Tagged LOD_Detail so the distance culling system can hide it at range.
+local function getWaterDetailParent(parent)
+    local detailFolder = parent:FindFirstChild("Detail")
+    if detailFolder then
+        return detailFolder
+    end
+
+    detailFolder = Instance.new("Folder")
+    detailFolder.Name = "Detail"
+    detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+    CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+    detailFolder.Parent = parent
+    return detailFolder
+end
+
 local function createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, sizeZ, name)
     local surface = Instance.new("Part")
     surface.Name = name or "WaterSurface"
@@ -30,7 +42,6 @@ local function createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, siz
     surface.CanCollide = false
     surface.CastShadow = false
     surface.Parent = parent
-    CollectionService:AddTag(surface, "LOD_Detail")
     return surface
 end
 
@@ -74,9 +85,11 @@ local function paintRibbonSegment(terrain, p1, p2, width, waterMaterial)
         return
     end
 
-    local midY = p1.Y - WATER_DEPTH * 0.5
-    local midPos = Vector3.new((p1.X + p2.X) * 0.5, midY, (p1.Z + p2.Z) * 0.5)
-    local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
+    -- Use per-vertex Y so FillBlock tilts to follow the river's slope.
+    local startPos = Vector3.new(p1.X, p1.Y - WATER_DEPTH * 0.5, p1.Z)
+    local endPos   = Vector3.new(p2.X, p2.Y - WATER_DEPTH * 0.5, p2.Z)
+    local midPos   = (startPos + endPos) * 0.5
+    local cf = CFrame.lookAt(midPos, endPos)
     terrain:FillBlock(cf, Vector3.new(width, WATER_DEPTH, length), waterMaterial or Enum.Material.Water)
 end
 
@@ -88,16 +101,75 @@ local function carveRibbonChannel(terrain, p1, p2, width)
         return
     end
 
-    -- Carve starts just below the water surface and goes down CARVE_DEPTH studs.
-    local carveY = p1.Y - WATER_DEPTH - CARVE_DEPTH * 0.5
-    local midPos = Vector3.new((p1.X + p2.X) * 0.5, carveY, (p1.Z + p2.Z) * 0.5)
-    local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, carveY, p2.Z))
+    -- Use per-vertex Y so the carved channel follows terrain slope.
+    local startPos = Vector3.new(p1.X, p1.Y - WATER_DEPTH - CARVE_DEPTH * 0.5, p1.Z)
+    local endPos   = Vector3.new(p2.X, p2.Y - WATER_DEPTH - CARVE_DEPTH * 0.5, p2.Z)
+    local midPos   = (startPos + endPos) * 0.5
+    local cf = CFrame.lookAt(midPos, endPos)
     terrain:FillBlock(cf, Vector3.new(width, CARVE_DEPTH, length), Enum.Material.Air)
+end
+
+local function mergeRibbonSegments(points, width, material)
+    local merged = {}
+    local active = nil
+
+    local function canMerge(current, nextSegment)
+        local currentDir = (current.p2 - current.p1).Unit
+        local nextDir = (nextSegment.p2 - nextSegment.p1).Unit
+        if currentDir:Dot(nextDir) < 0.999 then
+            return false
+        end
+        if math.abs(current.width - nextSegment.width) > 1e-6 or current.material ~= nextSegment.material then
+            return false
+        end
+        return (current.p2 - nextSegment.p1).Magnitude <= 1e-6
+    end
+
+    for i = 1, #points - 1 do
+        local nextSegment = {
+            p1 = points[i],
+            p2 = points[i + 1],
+            width = width,
+            material = material,
+        }
+        if (nextSegment.p2 - nextSegment.p1).Magnitude < 0.01 then
+            continue
+        end
+        if active and canMerge(active, nextSegment) then
+            active.p2 = nextSegment.p2
+        else
+            if active then
+                merged[#merged + 1] = active
+            end
+            active = nextSegment
+        end
+    end
+
+    if active then
+        merged[#merged + 1] = active
+    end
+
+    return merged
 end
 
 -- Scanline polygon rasterisation: fills the actual polygon shape row by row.
 -- material defaults to Water; pass Enum.Material.LeafyGrass etc. to cut islands.
 local SCAN_STEP = 4 -- studs resolution per scanline row
+
+local function emitPolygonWaterSurfaces(detailParent, worldPts, surfaceY)
+    for index, rect in ipairs(PolygonBatcher.BuildRects(worldPts, SCAN_STEP)) do
+        createWaterSurface(
+            detailParent,
+            rect.centerX,
+            surfaceY,
+            rect.centerZ,
+            rect.width,
+            rect.depth,
+            string.format("PolygonWaterSurface_%d", index)
+        )
+    end
+end
+
 local function paintPolygonScanline(terrain, worldPts, cy, material)
     material = material or Enum.Material.Water
     for _, rect in ipairs(PolygonBatcher.BuildRects(worldPts, SCAN_STEP)) do
@@ -128,6 +200,7 @@ local function carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
     local carveHeight = CARVE_DEPTH
     local carveCenterY = carveSurfaceY - carveHeight * 0.5
 
+    local rows = {}
     local z = minZ + SCAN_STEP * 0.5
     while z <= maxZ do
         local xs = {}
@@ -142,6 +215,7 @@ local function carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
         end
         table.sort(xs)
         local i = 1
+        local segments = {}
         while i + 1 <= #xs do
             local x0, x1 = xs[i], xs[i + 1]
             if x1 - x0 > 0.1 then
@@ -159,16 +233,29 @@ local function carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
                 end
 
                 if not inHole then
-                    terrain:FillBlock(
-                        CFrame.new(cx, carveCenterY, z),
-                        Vector3.new(x1 - x0, carveHeight, SCAN_STEP),
-                        Enum.Material.Air
-                    )
+                    segments[#segments + 1] = {
+                        x0 = x0,
+                        x1 = x1,
+                    }
                 end
             end
             i = i + 2
         end
+        if #segments > 0 then
+            rows[#rows + 1] = {
+                z = z,
+                segments = segments,
+            }
+        end
         z = z + SCAN_STEP
+    end
+
+    for _, rect in ipairs(PolygonBatcher.BuildRectsFromRows(rows, SCAN_STEP)) do
+        terrain:FillBlock(
+            CFrame.new(rect.centerX, carveCenterY, rect.centerZ),
+            Vector3.new(rect.width, carveHeight, rect.depth),
+            Enum.Material.Air
+        )
     end
 end
 
@@ -196,26 +283,48 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
     end
     if water.points then
         local width = water.widthStuds or 8
-        for i = 1, #water.points - 1 do
-            local p1 = offsetPoint(water.points[i], originStuds)
-            local p2 = offsetPoint(water.points[i + 1], originStuds)
+        local resolvedPoints = table.create(#water.points)
+        for i = 1, #water.points do
+            local point = offsetPoint(water.points[i], originStuds)
+            local surfaceY = resolveWaterSurfaceY(water, point.Y, chunk, point.X, point.Z)
+            resolvedPoints[i] = Vector3.new(point.X, surfaceY, point.Z)
+        end
+
+        local detailParent = nil
+        if not water.intermittent then
+            detailParent = getWaterDetailParent(parent)
+        end
+
+        for _, segment in ipairs(mergeRibbonSegments(resolvedPoints, width, waterMaterial)) do
+            local p1 = segment.p1
+            local p2 = segment.p2
             local surfaceY1 = resolveWaterSurfaceY(water, p1.Y, chunk, p1.X, p1.Z)
             local surfaceY2 = resolveWaterSurfaceY(water, p2.Y, chunk, p2.X, p2.Z)
             local resolvedP1 = Vector3.new(p1.X, surfaceY1, p1.Z)
             local resolvedP2 = Vector3.new(p2.X, surfaceY2, p2.Z)
-            paintRibbonSegment(terrain, resolvedP1, resolvedP2, width, waterMaterial)
+            paintRibbonSegment(terrain, resolvedP1, resolvedP2, segment.width, segment.material)
             -- Carve terrain below the ribbon channel after placing water material.
-            carveRibbonChannel(terrain, resolvedP1, resolvedP2, width)
-            -- Reflective Glass overlay on top of terrain water.
-            -- Only added for real water, not intermittent sand streambeds.
-            if not water.intermittent then
+            carveRibbonChannel(terrain, resolvedP1, resolvedP2, segment.width)
+            if detailParent then
                 local delta = resolvedP2 - resolvedP1
                 local segmentLength = delta.Magnitude
                 if segmentLength >= 0.01 then
-                    local midSurfaceY = (surfaceY1 + surfaceY2) * 0.5
-                    local midX = (resolvedP1.X + resolvedP2.X) * 0.5
-                    local midZ = (resolvedP1.Z + resolvedP2.Z) * 0.5
-                    createWaterSurface(parent, midX, midSurfaceY, midZ, width, segmentLength, "RibbonWaterSurface")
+                    -- Use per-vertex Y so the surface Part tilts to follow river slope.
+                    local startSurf = Vector3.new(resolvedP1.X, surfaceY1 + 0.05, resolvedP1.Z)
+                    local endSurf   = Vector3.new(resolvedP2.X, surfaceY2 + 0.05, resolvedP2.Z)
+                    local midSurf   = (startSurf + endSurf) * 0.5
+                    local surface = Instance.new("Part")
+                    surface.Name = "RibbonWaterSurface"
+                    surface.Size = Vector3.new(segment.width, 0.1, segmentLength)
+                    surface.CFrame = CFrame.lookAt(midSurf, endSurf)
+                    surface.Material = Enum.Material.Glass
+                    surface.Color = Color3.fromRGB(40, 80, 120)
+                    surface.Transparency = 0.4
+                    surface.Reflectance = 0.35
+                    surface.Anchored = true
+                    surface.CanCollide = false
+                    surface.CastShadow = false
+                    surface.Parent = detailParent
                 end
             end
         end
@@ -253,21 +362,8 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
         -- Carve terrain below water surface after placing water material.
         -- Island polygons (holes) are excluded so they stay solid.
         carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
-        -- Reflective Glass overlay covering the bounding box of the polygon.
-        -- Only added for real water bodies, not intermittent sand channels.
         if not water.intermittent then
-            local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
-            for _, p in ipairs(worldPts) do
-                minX = math.min(minX, p.X)
-                maxX = math.max(maxX, p.X)
-                minZ = math.min(minZ, p.Z)
-                maxZ = math.max(maxZ, p.Z)
-            end
-            local centerX = (minX + maxX) * 0.5
-            local centerZ = (minZ + maxZ) * 0.5
-            local sizeX = maxX - minX
-            local sizeZ = maxZ - minZ
-            createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, sizeZ, "PolygonWaterSurface")
+            emitPolygonWaterSurfaces(getWaterDetailParent(parent), worldPts, surfaceY)
         end
     end
 end

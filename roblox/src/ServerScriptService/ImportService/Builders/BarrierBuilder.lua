@@ -50,20 +50,18 @@ function BarrierBuilder.BuildAll(chunk, parent)
 			for i = 1, #pts - 1 do
 				local p1  = Vector3.new(pts[i].x + ox,   pts[i].y + oy,   pts[i].z + oz)
 				local p2  = Vector3.new(pts[i+1].x + ox, pts[i+1].y + oy, pts[i+1].z + oz)
-				local mid = (p1 + p2) * 0.5
 				local len = (p2 - p1).Magnitude
 				if len > 0.1 then
-					local dir  = (p2 - p1).Unit
+					local startPos = p1 + Vector3.new(0, height * 0.5, 0)
+					local endPos   = p2 + Vector3.new(0, height * 0.5, 0)
+					local midPos   = (startPos + endPos) * 0.5
 					local part = Instance.new("Part")
 					part.Name      = kind
 					part.Size      = Vector3.new(thickness, height, len)
 					part.Material  = mat
 					part.Anchored  = true
 					part.CanCollide = true
-					part.CFrame    = CFrame.lookAt(
-						mid + Vector3.new(0, height * 0.5, 0),
-						mid + Vector3.new(0, height * 0.5, 0) + dir
-					)
+					part.CFrame    = CFrame.lookAt(midPos, endPos)
 					part.Parent = parent
 					count = count + 1
 				end
