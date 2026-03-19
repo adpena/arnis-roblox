@@ -20,6 +20,7 @@ local PropBuilder = require(script.Builders.PropBuilder)
 local RoomBuilder = require(script.Builders.RoomBuilder)
 local LanduseBuilder = require(script.Builders.LanduseBuilder)
 local BarrierBuilder = require(script.Builders.BarrierBuilder)
+local AmbientLife = require(script.AmbientLife)
 local MinimapService = require(script.MinimapService)
 
 local ImportService = {}
@@ -556,6 +557,20 @@ function ImportService.ImportChunk(chunk, options)
             PropBuilder.Build(propsFolder, prop, chunk.originStuds, chunk)
         end, maybeYield)
         Profiler.finish(pProps)
+        if checkpoint() then
+            Profiler.finish(profile, {
+                chunkId = chunk.id,
+                cancelled = true,
+            })
+            return nil
+        end
+    end
+
+    if config.EnableAmbientLife ~= false and propsFolder then
+        local pAmbient = Profiler.begin("BuildAmbientLife")
+        AmbientLife.PlaceParkedCars(propsFolder, chunk.roads, chunk.originStuds)
+        AmbientLife.SpawnNPCs(propsFolder, chunk.roads, chunk.originStuds)
+        Profiler.finish(pAmbient)
         if checkpoint() then
             Profiler.finish(profile, {
                 chunkId = chunk.id,

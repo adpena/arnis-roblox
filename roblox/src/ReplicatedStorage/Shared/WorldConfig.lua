@@ -90,6 +90,13 @@ local WorldConfig = {
     MinimapSize = 200,           -- pixel resolution
 
     -- ═══════════════════════════════════════════════════════════════
+    -- AMBIENT CITY LIFE
+    -- ═══════════════════════════════════════════════════════════════
+    EnableAmbientLife = true,
+    MaxParkedCarsPerChunk = 30,
+    MaxNPCsPerChunk = 8,
+
+    -- ═══════════════════════════════════════════════════════════════
     -- INSTANCE BUDGETS (set high for powerful hardware)
     -- ═══════════════════════════════════════════════════════════════
     InstanceBudget = {
