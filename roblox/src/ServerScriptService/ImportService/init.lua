@@ -22,6 +22,72 @@ local ImportService = {}
 
 local DEFAULT_WORLD_ROOT_NAME = "GeneratedWorld"
 
+-- Set up atmospheric and cinematic lighting effects.
+-- Called once after all chunks have been imported.
+local function setupAtmosphere(manifest)
+    local Lighting = game:GetService("Lighting")
+
+    -- Atmosphere
+    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+    if not atmosphere then
+        atmosphere = Instance.new("Atmosphere")
+        atmosphere.Parent = Lighting
+    end
+
+    atmosphere.Density = 0.3
+    atmosphere.Offset = 0.25
+    atmosphere.Glare = 0
+    atmosphere.Haze = 1
+    atmosphere.Color = Color3.fromRGB(199, 210, 225)   -- cool blue-grey
+    atmosphere.Decay = Color3.fromRGB(106, 112, 125)   -- distance fade
+
+    -- Sky / sun position
+    Lighting.ClockTime = 14              -- 2 PM
+    Lighting.GeographicLatitude = 30     -- default: Austin TX
+    Lighting.Brightness = 2
+    Lighting.EnvironmentDiffuseScale = 1
+    Lighting.EnvironmentSpecularScale = 1
+    Lighting.GlobalShadows = true
+    Lighting.ShadowSoftness = 0.2
+
+    -- Derive latitude from manifest bbox when available
+    if manifest and manifest.meta and manifest.meta.bbox then
+        local bbox = manifest.meta.bbox
+        local lat = (bbox.minLat + bbox.maxLat) / 2
+        Lighting.GeographicLatitude = lat
+    end
+
+    -- Bloom for a cinematic look
+    local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
+    if not bloom then
+        bloom = Instance.new("BloomEffect")
+        bloom.Parent = Lighting
+    end
+    bloom.Intensity = 0.5
+    bloom.Size = 24
+    bloom.Threshold = 2
+
+    -- Color correction for warmth
+    local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+    if not cc then
+        cc = Instance.new("ColorCorrectionEffect")
+        cc.Parent = Lighting
+    end
+    cc.Brightness = 0.02
+    cc.Contrast = 0.05
+    cc.Saturation = 0.1
+    cc.TintColor = Color3.fromRGB(255, 248, 240)   -- warm white
+
+    -- Sun rays for god rays through buildings
+    local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
+    if not sunRays then
+        sunRays = Instance.new("SunRaysEffect")
+        sunRays.Parent = Lighting
+    end
+    sunRays.Intensity = 0.15
+    sunRays.Spread = 0.8
+end
+
 local function normalizePositiveNumber(value)
     if type(value) ~= "number" or value <= 0 then
         return nil
@@ -622,6 +688,10 @@ function ImportService.ImportManifest(manifest, options)
 
     if options.printReport then
         Profiler.printReport()
+    end
+
+    if config.EnableAtmosphere ~= false then
+        setupAtmosphere(validated)
     end
 
     return stats

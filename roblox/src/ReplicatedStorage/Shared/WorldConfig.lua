@@ -75,6 +75,11 @@ local WorldConfig = {
     HighDetailRadius = 2048,
 
     -- ═══════════════════════════════════════════════════════════════
+    -- ATMOSPHERE & LIGHTING
+    -- ═══════════════════════════════════════════════════════════════
+    EnableAtmosphere = true,     -- set false to skip cinematic lighting setup
+
+    -- ═══════════════════════════════════════════════════════════════
     -- INSTANCE BUDGETS (set high for powerful hardware)
     -- ═══════════════════════════════════════════════════════════════
     InstanceBudget = {

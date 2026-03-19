@@ -523,6 +523,219 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         return crosswalkModel
     end
 
+    if prop.kind == "fountain" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        -- Circular basin + water center
+        local basin = Instance.new("Part")
+        basin.Shape = Enum.PartType.Cylinder
+        basin.Size = Vector3.new(1, 10, 10)  -- cylinder: height, diameter, diameter
+        basin.Material = Enum.Material.Marble
+        basin.Color = Color3.fromRGB(200, 195, 185)
+        basin.CFrame = CFrame.new(wx, wy + 0.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        basin.Anchored = true
+        basin.Parent = parent
+        -- Water inside
+        local water = Instance.new("Part")
+        water.Shape = Enum.PartType.Cylinder
+        water.Size = Vector3.new(0.3, 8, 8)
+        water.Material = Enum.Material.Glass
+        water.Color = Color3.fromRGB(100, 150, 200)
+        water.Transparency = 0.3
+        water.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, 0, math.pi/2)
+        water.Anchored = true
+        water.Parent = parent
+        return basin
+    end
+
+    if prop.kind == "post_box" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local box = Instance.new("Part")
+        box.Size = Vector3.new(2, 4, 2)
+        box.Material = Enum.Material.Metal
+        box.Color = Color3.fromRGB(30, 60, 180)  -- blue USPS style
+        box.CFrame = CFrame.new(wx, wy + 2, wz)
+        box.Anchored = true
+        box.Parent = parent
+        return box
+    end
+
+    if prop.kind == "drinking_water" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local fountain = Instance.new("Part")
+        fountain.Size = Vector3.new(1.5, 3, 1.5)
+        fountain.Material = Enum.Material.Metal
+        fountain.Color = Color3.fromRGB(140, 140, 150)
+        fountain.CFrame = CFrame.new(wx, wy + 1.5, wz)
+        fountain.Anchored = true
+        fountain.Parent = parent
+        return fountain
+    end
+
+    if prop.kind == "bollard" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local bollard = Instance.new("Part")
+        bollard.Shape = Enum.PartType.Cylinder
+        bollard.Size = Vector3.new(3, 1.5, 1.5)
+        bollard.Material = Enum.Material.Metal
+        bollard.Color = Color3.fromRGB(80, 80, 85)
+        bollard.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        bollard.Anchored = true
+        bollard.Parent = parent
+        return bollard
+    end
+
+    if prop.kind == "vending_machine" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local machine = Instance.new("Part")
+        machine.Size = Vector3.new(3, 6, 2.5)
+        machine.Material = Enum.Material.Metal
+        machine.Color = Color3.fromRGB(180, 30, 30)
+        machine.CFrame = CFrame.new(wx, wy + 3, wz)
+        machine.Anchored = true
+        machine.Parent = parent
+        return machine
+    end
+
+    if prop.kind == "telephone" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local booth = Instance.new("Part")
+        booth.Size = Vector3.new(3, 7, 3)
+        booth.Material = Enum.Material.Glass
+        booth.Color = Color3.fromRGB(180, 180, 190)
+        booth.Transparency = 0.3
+        booth.CFrame = CFrame.new(wx, wy + 3.5, wz)
+        booth.Anchored = true
+        booth.Parent = parent
+        return booth
+    end
+
+    if prop.kind == "parking_meter" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        -- Thin pole + head
+        local model = Instance.new("Model")
+        model.Name = "ParkingMeter"
+        local pole = Instance.new("Part")
+        pole.Size = Vector3.new(0.3, 4, 0.3)
+        pole.Material = Enum.Material.Metal
+        pole.Color = Color3.fromRGB(80, 80, 85)
+        pole.CFrame = CFrame.new(wx, wy + 2, wz)
+        pole.Anchored = true
+        pole.Parent = model
+        local head = Instance.new("Part")
+        head.Size = Vector3.new(1, 1.5, 0.8)
+        head.Material = Enum.Material.Metal
+        head.Color = Color3.fromRGB(60, 60, 65)
+        head.CFrame = CFrame.new(wx, wy + 4.5, wz)
+        head.Anchored = true
+        head.Parent = model
+        model.Parent = parent
+        return model
+    end
+
+    if prop.kind == "bicycle_parking" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        -- U-rack shape
+        local rack = Instance.new("Part")
+        rack.Shape = Enum.PartType.Cylinder
+        rack.Size = Vector3.new(3, 0.3, 0.3)
+        rack.Material = Enum.Material.Metal
+        rack.Color = Color3.fromRGB(120, 120, 125)
+        rack.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        rack.Anchored = true
+        rack.Parent = parent
+        return rack
+    end
+
+    if prop.kind == "power_tower" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        -- Lattice tower approximation: large semi-transparent box
+        local towerHeight = (prop.height or 25) * METERS_TO_STUDS
+        local base = Instance.new("Part")
+        base.Size = Vector3.new(6, towerHeight, 6)
+        base.Material = Enum.Material.Metal
+        base.Color = Color3.fromRGB(140, 140, 145)
+        base.Transparency = 0.4
+        base.CFrame = CFrame.new(wx, wy + towerHeight/2, wz)
+        base.Anchored = true
+        base.Parent = parent
+        return base
+    end
+
+    if prop.kind == "power_pole" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local poleHeight = (prop.height or 10) * METERS_TO_STUDS
+        local pole = Instance.new("Part")
+        pole.Shape = Enum.PartType.Cylinder
+        pole.Size = Vector3.new(poleHeight, 1, 1)
+        pole.Material = Enum.Material.WoodPlanks
+        pole.Color = Color3.fromRGB(100, 75, 50)
+        pole.CFrame = CFrame.new(wx, wy + poleHeight/2, wz) * CFrame.Angles(0, 0, math.pi/2)
+        pole.Anchored = true
+        pole.Parent = parent
+        return pole
+    end
+
+    if prop.kind == "flagpole" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        local fpHeight = (prop.height or 8) * METERS_TO_STUDS
+        local pole = Instance.new("Part")
+        pole.Shape = Enum.PartType.Cylinder
+        pole.Size = Vector3.new(fpHeight, 0.3, 0.3)
+        pole.Material = Enum.Material.Metal
+        pole.Color = Color3.fromRGB(180, 180, 185)
+        pole.CFrame = CFrame.new(wx, wy + fpHeight/2, wz) * CFrame.Angles(0, 0, math.pi/2)
+        pole.Anchored = true
+        pole.Parent = parent
+        return pole
+    end
+
+    if prop.kind == "surveillance" then
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+        -- Small box on pole
+        local model = Instance.new("Model")
+        model.Name = "Surveillance"
+        local pole = Instance.new("Part")
+        pole.Size = Vector3.new(0.3, 5, 0.3)
+        pole.Material = Enum.Material.Metal
+        pole.Color = Color3.fromRGB(80, 80, 85)
+        pole.CFrame = CFrame.new(wx, wy + 2.5, wz)
+        pole.Anchored = true
+        pole.Parent = model
+        local cam = Instance.new("Part")
+        cam.Size = Vector3.new(0.8, 0.5, 1.2)
+        cam.Material = Enum.Material.SmoothPlastic
+        cam.Color = Color3.fromRGB(40, 40, 45)
+        cam.CFrame = CFrame.new(wx + 0.5, wy + 5.2, wz)
+        cam.Anchored = true
+        cam.Parent = model
+        model.Parent = parent
+        return model
+    end
+
     local pool = getOrCreatePool(prop.kind)
     local instance = pool:Acquire()
 
