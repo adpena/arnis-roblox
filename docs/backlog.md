@@ -45,3 +45,17 @@
 - [x] SP-2: Data source fusion (z15 DEM, live Overpass tags, satellite tile classification, expanded OSM fields maxspeed/lit/oneway/layer/roofHeight/name/width/intermittent/circumference, Lua schema validation, JSON schema and docs updated)
 - [x] SP-3: Builder fidelity (bilinear terrain interpolation, slope-aware materials, roof colors/materials from satellite, glass window panes, usage-aware window density, lane-aware road width, directional sidewalks, street lighting, water terrain carving, island preservation, height-based tree scaling, leaf type canopy shapes, palm tree rendering, 25+ tree species)
 - [x] SP-4: Material & texture pipeline (integrated into SP-2 satellite classification + SP-3 builder consumption — roof materials from satellite, per-cell terrain materials, ground cover classification)
+
+## Epic G — AAA Polish
+
+- [x] EditableMesh merging: buildings (walls+roofs merged per material), roads (surface quads merged)
+- [x] Day/night cycle: Heartbeat clock, street light toggle, window warm glow, atmosphere shifts
+- [x] Procedural facade details: window sills, foundations, cornices, rooftop AC equipment
+- [x] 25+ prop types: fountain, bollard, power tower/pole, mailbox, vending machine, bike parking, etc.
+- [x] Crosswalks (zebra stripe rendering), stairways (highway=steps), tunnel geometry
+- [x] Atmospheric effects: Bloom, ColorCorrection, SunRays, geographic latitude from manifest
+- [x] LOD system: CollectionService tagging, distance-based Heartbeat culling
+- [x] WorldConfig fully wired: all builder parameters configurable from central hub
+- [x] Table-driven OSM extraction: 330→50 lines, clean architecture
+- [x] Window budget enforcement in ImportService
+- [x] --profile presets (insane/high/balanced/fast), --yolo mode, worldwide SRTM
