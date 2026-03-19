@@ -50,7 +50,7 @@ This keeps chunk moves, reloads, and local editing much cleaner.
 ### 0.4.0 (Current)
 - Canonical scale: `metersPerStud = 0.3` (1 stud ≈ 0.3m, matching Roblox humanoid proportions).
 - Rust exporter is the single elevation authority — all Y positions are authoritative from DEM sampling.
-- Terrain resolution increased: `cellSizeStuds = 4`, grid 64x64 (4,096 cells per chunk), voxel size 2.
+- Terrain resolution configurable: default `cellSizeStuds = 2` (128x128 grid, 16,384 cells), configurable 1-32 via CLI `--terrain-cell-size`. Voxel size configurable via WorldConfig (default 1).
 - New road fields: `elevated` (bool), `tunnel` (bool), `sidewalk` (string).
 - Building `color` renamed to `wallColor`; new fields: `roofColor`, `roofShape`, `roofMaterial`, `usage`, `minHeight`.
 - New water field: `surfaceY` (authoritative surface elevation for polygon water).
@@ -160,13 +160,23 @@ Point instances with:
 
 Polygon shells for broad ground-treatment ownership such as parks, grass, sand, or paved civic areas.
 
+## Implemented extensions (from planned)
+
+- [x] instance-merged road strips (EditableMesh merging in RoadBuilder)
+- [x] instance-merged building geometry (EditableMesh merging in BuildingBuilder)
+- [x] LOD metadata (CollectionService tagging: LOD_Detail, LOD_Interior, StreetLight, Road)
+- [x] light sources (PointLights on street lamps, interior ceiling lights, car headlights)
+- [x] power layers (power_tower, power_pole props from OSM)
+- [x] satellite-derived material palettes (per-cell terrain, per-building roof)
+- [x] surface physics properties (26 surface types with friction coefficients)
+- [x] road AI metadata (Oneway, MaxSpeed, Lanes attributes on road Parts)
+
 ## Planned future extensions
 
-- chunk-local material palettes
-- instance-merged road strips
-- mesh references
-- LOD metadata
-- instancing/prefab keys
-- light sources and POIs
-- power layers
-- migration metadata
+- Mapbox Vector Tile integration (MVT geometry + OSM semantics fusion)
+- Custom mesh tree models (replace procedural Part trees)
+- SurfaceAppearance textures (normal maps for brick, asphalt, etc.)
+- Traffic simulation (moving vehicles along road splines)
+- Interior furniture generation (from room type inference)
+- Real-time collaborative editing via Studio MCP
+- Multiplayer chunk streaming

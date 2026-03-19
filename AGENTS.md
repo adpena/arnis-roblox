@@ -31,21 +31,29 @@ the data compiler and the Roblox runtime/editor responsibilities separate.
 6. **Deterministic output**
    - The same source input and config should produce the same manifest and equivalent scene graph.
 
-## Default sequence of work for Kodex
+## Current state (post-HD Pipeline)
 
-1. Stabilize the JSON schema in `specs/`.
-2. Improve Rust manifest generation.
-3. Improve Roblox schema validation.
-4. Make chunk import deterministic and re-runnable.
-5. Replace placeholder builders with optimized ones in this order:
-   - terrain
-   - roads
-   - buildings
-   - water
-   - props
-6. Add chunk unload/reload.
-7. Add profiling and regression harnesses.
-8. Only then expand art fidelity.
+The pipeline is complete and demo-ready. All builders are production-quality:
+
+- **Schema 0.4.0** with full migration chain (0.1.0 → 0.4.0)
+- **ElevationEnrichmentStage** — DEM-derived Y for all features
+- **EditableMesh merging** for buildings and roads
+- **26 surface physics types** with real-world friction coefficients
+- **5-phase day/night cycle** with lerped atmospheric transitions
+- **25+ prop types**, **20+ building materials**, **25+ tree species**
+- **Car + jetpack + parachute** gameplay with full physics and sound
+- **Live minimap**, **loading screen**, **ambient soundscape**
+- **Worldwide support** — any lat/lon bbox, auto-downloads elevation
+
+## Sequence of work for agents
+
+1. Read `docs/chunk_schema.md` for the manifest contract.
+2. Read `roblox/src/ReplicatedStorage/Shared/WorldConfig.lua` for all config knobs.
+3. Use `arbx_cli explain` for the full pipeline architecture.
+4. Use `arbx_cli compile --help` for CLI options.
+5. Run `cargo test --workspace` in `rust/` to verify the pipeline.
+6. Builders are in `roblox/src/ServerScriptService/ImportService/Builders/`.
+7. Gameplay is in `roblox/src/StarterPlayer/StarterPlayerScripts/`.
 
 ## Change discipline
 
@@ -55,6 +63,10 @@ For every meaningful code change:
 - update docs if the contract changed
 - avoid introducing new dependencies without a concrete payoff
 - prefer small, reviewable steps over giant speculative rewrites
+- zero per-frame allocations in render loops
+- all lerps must be dt-scaled (frame-rate independent)
+- all sounds must fade (no audio pops)
+- all UI transitions must use TweenService (no snaps)
 
 ## Roblox-specific guardrails
 
@@ -69,12 +81,14 @@ For every meaningful code change:
 - Avoid entangling domain types with source-adapter specifics.
 - Keep upstream Arnis integration behind an adapter boundary instead of smearing it across the repo.
 
-## Done criteria for the first “real” milestone
+## Done criteria
 
-A change is milestone-worthy when all of the following are true:
+A change is production-ready when all of the following are true:
 
-- the Rust sample exporter emits schema-valid chunk manifests
-- the Roblox importer consumes them without manual hand-editing
-- sample roads, terrain, and building shells appear in Studio
-- repeated imports are clean
-- smoke tests and repo checks pass
+- `cargo test --workspace` passes (31+ tests)
+- the Roblox importer consumes the manifest without errors
+- all features render correctly at the configured quality profile
+- repeated imports are idempotent (no duplicate content)
+- no per-frame allocations in any render loop
+- all transitions smooth (TweenService, dt-scaled lerps)
+- no TODO/placeholder comments in shipped code
