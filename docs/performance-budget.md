@@ -107,3 +107,12 @@ ImportService.ImportManifest(manifest, {
 
 ### Regression Testing
 The smoke test suite includes a `Performance.spec.lua` that validates that these metrics are correctly captured. In production CI or manual benchmarking, these JSON reports should be compared against a baseline to detect regressions in instance count or import latency.
+
+For repeated Austin import/runtime checks, use:
+
+```bash
+python3 scripts/run_austin_stress.py --iterations 3 --json-out tmp/austin-stress.json
+```
+
+That script aggregates preview and runtime Austin markers from the Studio harness and is the
+preferred real-world throughput check before large fidelity or importer changes.

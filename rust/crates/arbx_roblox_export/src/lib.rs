@@ -7,11 +7,11 @@ use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::chunker::Chunker;
 use crate::materials::StyleMapper;
+pub use arbx_geo::satellite::SatelliteTileProvider;
 pub use manifest::{
     BarrierSegment, BuildingShell, Chunk, ChunkManifest, Color, GroundPoint, LanduseShell,
     ManifestMeta, PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
 };
-pub use arbx_geo::satellite::SatelliteTileProvider;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportConfig {
@@ -29,7 +29,7 @@ impl Default for ExportConfig {
             world_name: "ExportedWorld".to_string(),
             chunk_size_studs: 256,
             meters_per_stud: 0.3,
-            terrain_cell_size: 2,  // 2-stud cells = 128×128 grid = sub-meter precision
+            terrain_cell_size: 2, // 2-stud cells = 128×128 grid = sub-meter precision
             include_props: true,
             style: StyleMapper::default(),
         }
@@ -141,7 +141,12 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
     }
 
     // Since we want realistic terrain in the sample, let's actually run it through the chunker logic
-    let mut chunker = Chunker::new(config.chunk_size_studs, config.meters_per_stud, config.terrain_cell_size, center);
+    let mut chunker = Chunker::new(
+        config.chunk_size_studs,
+        config.meters_per_stud,
+        config.terrain_cell_size,
+        center,
+    );
 
     // Ingest the sample features
     for chunk in chunks {
@@ -403,20 +408,17 @@ pub fn export_to_chunks(
                 let world_z = fp_center_z + origin.z;
 
                 let lat = center.lat - (world_z * mps / 111_111.0);
-                let lon = center.lon
-                    + (world_x * mps / (111_111.0 * center.lat.to_radians().cos()));
+                let lon =
+                    center.lon + (world_x * mps / (111_111.0 * center.lat.to_radians().cos()));
 
-                if let Some(rgb) =
-                    sat.sample_pixel(arbx_geo::LatLon::new(lat, lon))
-                {
+                if let Some(rgb) = sat.sample_pixel(arbx_geo::LatLon::new(lat, lon)) {
                     let (r, g, b) = arbx_geo::satellite::roof_pixel_to_color(rgb);
                     building.roof_color = Some(Color::new(r, g, b));
 
                     // Also set roof material if not supplied by OSM
                     if building.roof_material.is_none() {
-                        building.roof_material = Some(
-                            arbx_geo::satellite::classify_roof_material(rgb).to_string(),
-                        );
+                        building.roof_material =
+                            Some(arbx_geo::satellite::classify_roof_material(rgb).to_string());
                     }
                 }
             }
@@ -441,11 +443,9 @@ pub fn export_to_chunks(
                             let lon = center.lon
                                 + (world_x * mps / (111_111.0 * center.lat.to_radians().cos()));
 
-                            if let Some(rgb) =
-                                sat.sample_pixel(arbx_geo::LatLon::new(lat, lon))
-                            {
-                                materials[idx] = arbx_geo::satellite::classify_ground_material(rgb)
-                                    .to_string();
+                            if let Some(rgb) = sat.sample_pixel(arbx_geo::LatLon::new(lat, lon)) {
+                                materials[idx] =
+                                    arbx_geo::satellite::classify_ground_material(rgb).to_string();
                             }
                         }
                     }
@@ -528,5 +528,90 @@ mod tests {
         let manifest = export_features(&features, &ExportConfig::default(), &elevation);
         assert_eq!(manifest.chunks.len(), 1);
         assert_eq!(manifest.chunks[0].buildings.len(), 1);
+    }
+
+    #[test]
+    fn building_export_does_not_synthesize_whole_footprint_rooms() {
+        let features = vec![Feature::Building(BuildingFeature {
+            id: "osm_test_building".to_string(),
+            footprint: Footprint::new(vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(20.0, 0.0),
+                Vec2::new(20.0, 10.0),
+                Vec2::new(0.0, 10.0),
+            ]),
+            indices: None,
+            base_y: 0.0,
+            height: 12.0,
+            height_m: None,
+            levels: Some(3),
+            roof_levels: None,
+            min_height: None,
+            usage: Some("residential".to_string()),
+            roof: "flat".to_string(),
+            colour: None,
+            material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: Some("Regression Test Building".to_string()),
+        })];
+
+        let elevation = PerlinElevationProvider::default();
+        let manifest = export_features(&features, &ExportConfig::default(), &elevation);
+        let building = &manifest.chunks[0].buildings[0];
+
+        assert!(
+            building.rooms.is_empty(),
+            "exporter should not fabricate room slabs from the outer building footprint"
+        );
+    }
+
+    #[test]
+    fn building_export_uses_usage_palette_without_forcing_facade_style() {
+        let features = vec![Feature::Building(BuildingFeature {
+            id: "osm_usage_test".to_string(),
+            footprint: Footprint::new(vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(16.0, 0.0),
+                Vec2::new(16.0, 16.0),
+                Vec2::new(0.0, 16.0),
+            ]),
+            indices: None,
+            base_y: 0.0,
+            height: 8.0,
+            height_m: None,
+            levels: Some(2),
+            roof_levels: None,
+            min_height: None,
+            usage: Some("residential".to_string()),
+            roof: "flat".to_string(),
+            colour: None,
+            material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
+        })];
+
+        let elevation = PerlinElevationProvider::default();
+        let manifest = export_features(&features, &ExportConfig::default(), &elevation);
+        let building = &manifest.chunks[0].buildings[0];
+
+        assert_eq!(
+            building.material, "Concrete",
+            "usage-driven palette should determine the default shell material"
+        );
+        assert_eq!(
+            building.wall_color,
+            ExportConfig::default()
+                .style
+                .get_building_color("residential"),
+            "usage-driven palette should determine the default shell color"
+        );
+        assert_eq!(
+            building.facade_style, None,
+            "exporter should not force a procedural facade style for generic OSM buildings"
+        );
     }
 }

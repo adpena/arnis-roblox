@@ -629,6 +629,24 @@ wait_for_playing() {
   python3 "$STUDIO_WORKFLOW" ensure-playing --timeout "$timeout" >/dev/null 2>&1
 }
 
+attached_session_is_really_playing() {
+  local state=""
+  state="$(python3 "$STUDIO_UI_CONTROL" get-state-value state 2>/dev/null || true)"
+  if [[ "$state" != "playing" ]]; then
+    return 1
+  fi
+
+  if [[ -z "$ACTIVE_LOG" || ! -f "$ACTIVE_LOG" ]]; then
+    return 1
+  fi
+
+  if rg -q "PlaceStateTransitionStatus becomes StartingPlayTest|\\[BootstrapAustin\\]|\\[RunAustin\\]|ARNIS_MCP_PLAY|StudioGameStateType_Client" "$ACTIVE_LOG"; then
+    return 0
+  fi
+
+  return 1
+}
+
 switch_to_log() {
   local log_file="$1"
   stop_log_pipe
@@ -869,7 +887,16 @@ run_play_probe_via_mcp() {
     return 1
   fi
 
-  MCP_BINARY_PATH="$MCP_BINARY" MCP_PLAY_WAIT="$PLAY_WAIT_SECONDS" python3 - <<'PY'
+  local mcp_wall_timeout=$((PLAY_WAIT_SECONDS + 25))
+  if [[ $mcp_wall_timeout -lt 35 ]]; then
+    mcp_wall_timeout=35
+  fi
+  if [[ $mcp_wall_timeout -gt 75 ]]; then
+    mcp_wall_timeout=75
+  fi
+
+  (
+    MCP_BINARY_PATH="$MCP_BINARY" MCP_PLAY_WAIT="$PLAY_WAIT_SECONDS" python3 - <<'PY'
 import json
 import os
 import signal
@@ -959,6 +986,10 @@ print("ARNIS_MCP_PLAY_LATE " .. HttpService:JSONEncode(sample()))
 
 try:
     client.initialize()
+    try:
+        client.call_tool("start_stop_play", {"mode": "stop"}, allow_is_error=True)
+    except Exception:
+        pass
     result = client.call_tool(
         "run_script_in_play_mode",
         {"mode": "start_play", "code": luau, "timeout": max(wait_seconds + 30, 60)},
@@ -966,6 +997,18 @@ try:
         timeout_seconds=max(wait_seconds + 35, 70),
     )
     print(f"[harness-mcp] phase=play run_script={json.dumps(result, separators=(',', ':'))}")
+    text_fragments = []
+    if isinstance(result, dict):
+        if result.get("isError"):
+            text_fragments.append("tool isError=true")
+        for item in result.get("content", []):
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_fragments.append(text)
+    joined = "\n".join(text_fragments)
+    if "Failed to run script in play mode" in joined or "Previous call to start play session has not been completed" in joined:
+        raise RuntimeError(joined)
 finally:
     signal.alarm(0)
     try:
@@ -974,6 +1017,24 @@ finally:
         pass
     client.close()
 PY
+  ) &
+  local probe_pid=$!
+  local waited=0
+
+  while kill -0 "$probe_pid" >/dev/null 2>&1; do
+    if [[ $waited -ge $mcp_wall_timeout ]]; then
+      log "play-mode MCP probe exceeded ${mcp_wall_timeout}s; falling back to direct play control"
+      kill -TERM "$probe_pid" >/dev/null 2>&1 || true
+      sleep 1
+      kill -KILL "$probe_pid" >/dev/null 2>&1 || true
+      wait "$probe_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  wait "$probe_pid"
 }
 
 summarize_log() {
@@ -1055,12 +1116,16 @@ else
 fi
 
 CURRENT_STUDIO_STATE="$(python3 "$STUDIO_UI_CONTROL" get-state-value state 2>/dev/null || true)"
-if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && "$CURRENT_STUDIO_STATE" == "playing" ]]; then
+ATTACHED_SESSION_ALREADY_PLAYING=0
+if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 ]] && attached_session_is_really_playing; then
+  ATTACHED_SESSION_ALREADY_PLAYING=1
   log "attached Studio session is already in play; skipping edit-mode setup"
   DO_PLAY=0
+elif [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && "$CURRENT_STUDIO_STATE" == "playing" ]]; then
+  log "Studio reported playing on attach, but the current log has no play-session markers; continuing with edit-mode setup"
 fi
 
-if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || "$CURRENT_STUDIO_STATE" != "playing" ]]; then
+if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || $ATTACHED_SESSION_ALREADY_PLAYING -eq 0 ]]; then
   log "waiting for edit-mode harness output"
   if wait_for_edit_completion; then
     sleep "$EDIT_WAIT_SECONDS"
@@ -1073,7 +1138,7 @@ if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || "$CURRENT_STUDIO_STATE" != "playing"
   run_probe_best_effort "edit" 5
 fi
 
-if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && "$CURRENT_STUDIO_STATE" == "playing" ]]; then
+if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && $ATTACHED_SESSION_ALREADY_PLAYING -eq 1 ]]; then
   log "capturing attached play screenshot"
   capture_studio_screenshot "play"
   run_probe_best_effort "play" 8

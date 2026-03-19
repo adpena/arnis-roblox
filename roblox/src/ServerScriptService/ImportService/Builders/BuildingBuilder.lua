@@ -6,6 +6,22 @@ local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldCon
 local GeoUtils = require(script.Parent.Parent.GeoUtils)
 
 local BuildingBuilder = {}
+local editableMeshSetVertexNormalSupported = nil
+
+local function trySetVertexNormal(mesh, vertexId, normal)
+    if editableMeshSetVertexNormalSupported == false then
+        return
+    end
+
+    local ok = pcall(function()
+        mesh:SetVertexNormal(vertexId, normal)
+    end)
+    if ok then
+        editableMeshSetVertexNormalSupported = true
+    else
+        editableMeshSetVertexNormalSupported = false
+    end
+end
 
 -------------------------------------------------------------------------------
 -- MeshAccumulator: batches quads/triangles and flushes to EditableMesh when
@@ -78,7 +94,7 @@ function MeshAccumulator:flush()
     local vertexIds = table.create(#self.vertices)
     for i, pos in ipairs(self.vertices) do
         vertexIds[i] = mesh:AddVertex(pos)
-        mesh:SetVertexNormal(vertexIds[i], self.normals[i])
+        trySetVertexNormal(mesh, vertexIds[i], self.normals[i])
     end
 
     -- Add all triangles
@@ -88,16 +104,14 @@ function MeshAccumulator:flush()
 
     -- Create host MeshPart and apply the mesh
     self.meshCount += 1
-    local part = Instance.new("MeshPart")
+    local part = AssetService:CreateMeshPartAsync(Content.fromObject(mesh))
     part.Name = string.format("%s_mesh_%d", self.materialName, self.meshCount)
     part.Material = self.material
     part.Color = self.color
     part.Anchored = true
     part.CanCollide = if self.canCollide == nil then true else self.canCollide
     part.CastShadow = if self.castShadow == nil then false else self.castShadow
-    part.Size = Vector3.new(1, 1, 1) -- overridden by ApplyMesh
     part.Parent = self.parent
-    part:ApplyMesh(mesh)
 
     -- Reset buffers for next batch
     self.vertices = {}

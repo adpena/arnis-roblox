@@ -7,6 +7,22 @@ local RoadProfile = require(script.Parent.Parent.RoadProfile)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 local RoadBuilder = {}
+local editableMeshSetVertexNormalSupported = nil
+
+local function trySetVertexNormal(mesh, vertexId, normal)
+    if editableMeshSetVertexNormalSupported == false then
+        return
+    end
+
+    local ok = pcall(function()
+        mesh:SetVertexNormal(vertexId, normal)
+    end)
+    if ok then
+        editableMeshSetVertexNormalSupported = true
+    else
+        editableMeshSetVertexNormalSupported = false
+    end
+end
 
 -- Maps OSM surface tag → physical properties for road Parts and MeshParts.
 -- Surface physics tuned for realistic vehicle handling.
@@ -217,6 +233,14 @@ local ROAD_COLOR = {
 
 local function getRoadColor(road)
     return ROAD_COLOR[road.kind] or ROAD_COLOR.default
+end
+
+local function resolvePlannedRoadMaterial(material)
+    return material or Enum.Material.Asphalt
+end
+
+local function resolvePlannedRoadColor(color)
+    return color or ROAD_COLOR.default
 end
 
 local function classifySegment(road, p1, p2, _chunk)
@@ -789,7 +813,7 @@ end
 local function executeRoadPlan(parent, detailParent, roadPlan)
     local road = roadPlan.road
     local width = roadPlan.width
-    local material = roadPlan.material
+    local material = resolvePlannedRoadMaterial(roadPlan.material)
     local sidewalkMode = roadPlan.sidewalkMode
 
     if road.kind == "steps" then
@@ -876,8 +900,8 @@ function RoadMeshAccumulator.new(parent, name, material, color, physicsProps)
     local self = setmetatable({}, RoadMeshAccumulator)
     self.parent = parent
     self.name = name
-    self.material = material
-    self.color = color
+    self.material = resolvePlannedRoadMaterial(material)
+    self.color = resolvePlannedRoadColor(color)
     self.physicsProps = physicsProps or DEFAULT_ROAD_PHYSICS
     self.vertices = {}
     self.normals = {}
@@ -940,23 +964,21 @@ function RoadMeshAccumulator:flush()
     local vids = {}
     for i, pos in ipairs(self.vertices) do
         vids[i] = mesh:AddVertex(pos)
-        mesh:SetVertexNormal(vids[i], self.normals[i])
+        trySetVertexNormal(mesh, vids[i], self.normals[i])
     end
     for _, tri in ipairs(self.triangles) do
         mesh:AddTriangle(vids[tri[1]], vids[tri[2]], vids[tri[3]])
     end
 
     self.meshCount = self.meshCount + 1
-    local part = Instance.new("MeshPart")
+    local part = AssetService:CreateMeshPartAsync(Content.fromObject(mesh))
     part.Name = string.format("%s_mesh_%d", self.name, self.meshCount)
     part.Material = self.material
     part.Color = self.color
     part.Anchored = true
     part.CanCollide = true
-    part.Size = Vector3.new(1, 1, 1)
     part.CustomPhysicalProperties = self.physicsProps
     CollectionService:AddTag(part, "Road")
-    part:ApplyMesh(mesh)
     part.Parent = self.parent
 
     self.vertices = {}
@@ -977,6 +999,8 @@ function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk, preparedChu
     local accumulators = {}
 
     local function getAccumulator(material, color, physicsProps)
+        material = resolvePlannedRoadMaterial(material)
+        color = resolvePlannedRoadColor(color)
         -- Include physics identity in the key so roads with different grip
         -- levels are not merged into the same MeshPart.
         local key = tostring(material) .. "_" .. tostring(color) .. "_" .. tostring(physicsProps)

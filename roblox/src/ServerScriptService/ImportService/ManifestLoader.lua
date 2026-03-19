@@ -78,13 +78,16 @@ local function finalizeManifest(index, chunksById, chunkOrder)
 end
 
 local function resolveSampleDataFolder(timeoutSeconds)
+    print("[ManifestLoader] Resolving ServerStorage.SampleData")
     local sampleData = ServerStorage:FindFirstChild("SampleData")
     if sampleData then
+        print("[ManifestLoader] Resolved ServerStorage.SampleData via FindFirstChild")
         return sampleData
     end
 
     sampleData = ServerStorage:WaitForChild("SampleData", timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if sampleData then
+        print("[ManifestLoader] Resolved ServerStorage.SampleData via WaitForChild")
         return sampleData
     end
 
@@ -93,13 +96,16 @@ end
 
 local function resolveSampleModule(name, timeoutSeconds)
     local sampleData = resolveSampleDataFolder(timeoutSeconds)
+    print(("[ManifestLoader] Resolving sample module %s"):format(name))
     local module = sampleData:FindFirstChild(name)
     if module then
+        print(("[ManifestLoader] Resolved sample module %s via FindFirstChild"):format(name))
         return module
     end
 
     module = sampleData:WaitForChild(name, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if module then
+        print(("[ManifestLoader] Resolved sample module %s via WaitForChild"):format(name))
         return module
     end
 
@@ -180,7 +186,9 @@ end
 
 function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeoutSeconds, options)
     local freshRequire = type(options) == "table" and options.freshRequire == true
+    print(("[ManifestLoader] Requiring sharded index %s"):format(indexModule:GetFullName()))
     local index = requireModule(indexModule, freshRequire)
+    print(("[ManifestLoader] Required sharded index %s"):format(indexModule.Name))
     if type(index) ~= "table" then
         error("Sharded manifest index must return a table")
     end
@@ -193,8 +201,11 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     local chunkFingerprintCache = {}
     local chunkRefs = index.chunkRefs
     if type(chunkRefs) ~= "table" or #chunkRefs == 0 then
+        print(("[ManifestLoader] Building chunkRefs from shards for %s"):format(indexModule.Name))
         chunkRefs = buildChunkRefsFromShards(index, shardFolder, timeoutSeconds)
+        print(("[ManifestLoader] Built %d chunkRefs from shards for %s"):format(#chunkRefs, indexModule.Name))
     end
+    print(("[ManifestLoader] Prepared handle for %s with %d chunkRefs"):format(indexModule.Name, #chunkRefs))
 
     local chunkRefById = {}
     for _, chunkRef in ipairs(chunkRefs) do
@@ -378,15 +389,19 @@ function ManifestLoader.LoadNamedShardedSample(indexName, timeoutSeconds)
 end
 
 function ManifestLoader.LoadNamedShardedSampleHandle(indexName, timeoutSeconds, options)
+    print(("[ManifestLoader] Loading named sharded sample handle %s"):format(indexName))
     local indexModule = resolveSampleModule(indexName, timeoutSeconds)
     local sampleData = resolveSampleDataFolder(timeoutSeconds)
+    print(("[ManifestLoader] Requiring named sharded sample index %s"):format(indexName))
     local index = require(indexModule)
+    print(("[ManifestLoader] Required named sharded sample index %s"):format(indexName))
     local shardFolderName = index.shardFolder or (indexModule.Name .. "Chunks")
     local shardFolder = sampleData:FindFirstChild(shardFolderName)
         or sampleData:WaitForChild(shardFolderName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if not shardFolder then
         error(("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(shardFolderName))
     end
+    print(("[ManifestLoader] Resolved shard folder %s for %s"):format(shardFolderName, indexName))
 
     return ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeoutSeconds, options)
 end

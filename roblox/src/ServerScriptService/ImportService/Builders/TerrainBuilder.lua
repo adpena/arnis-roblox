@@ -2,6 +2,7 @@ local Workspace = game:GetService("Workspace")
 
 local TerrainBuilder = {}
 local BUILD_PLAN_CACHE_KEY = "__terrainBuildPlan"
+local TERRAIN_WRITE_RESOLUTION = 4
 
 TerrainBuilder.DEFAULT_CLEAR_HEIGHT = 512
 
@@ -26,14 +27,14 @@ end
 
 -- Configurable via WorldConfig; defaults favor maximum fidelity
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
-local VOXEL_SIZE = WorldConfig.VoxelSize or 1
+local REQUESTED_SAMPLE_RESOLUTION = WorldConfig.VoxelSize or 1
 local TERRAIN_THICKNESS = WorldConfig.TerrainThickness or 8
 
 local function snap(v, down)
     if down then
-        return math.floor(v / VOXEL_SIZE) * VOXEL_SIZE
+        return math.floor(v / TERRAIN_WRITE_RESOLUTION) * TERRAIN_WRITE_RESOLUTION
     else
-        return math.ceil(v / VOXEL_SIZE) * VOXEL_SIZE
+        return math.ceil(v / TERRAIN_WRITE_RESOLUTION) * TERRAIN_WRITE_RESOLUTION
     end
 end
 
@@ -66,22 +67,22 @@ local function buildChunkPlan(chunk)
     local rMinY = snap(origin.y + minH - TERRAIN_THICKNESS, true)
     local rMinZ = snap(origin.z, true)
     local rMaxX = snap(origin.x + totalWidth, false)
-    local rMaxY = snap(origin.y + maxH + VOXEL_SIZE, false)
+    local rMaxY = snap(origin.y + maxH + TERRAIN_WRITE_RESOLUTION, false)
     local rMaxZ = snap(origin.z + totalDepth, false)
 
     if rMaxX <= rMinX then
-        rMaxX = rMinX + VOXEL_SIZE
+        rMaxX = rMinX + TERRAIN_WRITE_RESOLUTION
     end
     if rMaxY <= rMinY then
-        rMaxY = rMinY + VOXEL_SIZE
+        rMaxY = rMinY + TERRAIN_WRITE_RESOLUTION
     end
     if rMaxZ <= rMinZ then
-        rMaxZ = rMinZ + VOXEL_SIZE
+        rMaxZ = rMinZ + TERRAIN_WRITE_RESOLUTION
     end
 
-    local dimX = (rMaxX - rMinX) / VOXEL_SIZE
-    local dimY = (rMaxY - rMinY) / VOXEL_SIZE
-    local dimZ = (rMaxZ - rMinZ) / VOXEL_SIZE
+    local dimX = (rMaxX - rMinX) / TERRAIN_WRITE_RESOLUTION
+    local dimY = (rMaxY - rMinY) / TERRAIN_WRITE_RESOLUTION
+    local dimZ = (rMaxZ - rMinZ) / TERRAIN_WRITE_RESOLUTION
 
     local function sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
         local function getH(cx, cz)
@@ -113,6 +114,7 @@ local function buildChunkPlan(chunk)
 
     local function getMat(x, z)
         local baseMat
+        local hasExplicitCellMaterial = false
         if terrainGrid.materials then
             local idx = z * gridW + x + 1
             local name = terrainGrid.materials[idx]
@@ -122,6 +124,7 @@ local function buildChunkPlan(chunk)
                 end)
                 if ok and m then
                     baseMat = m
+                    hasExplicitCellMaterial = true
                 end
             end
         end
@@ -135,6 +138,10 @@ local function buildChunkPlan(chunk)
             else
                 baseMat = Enum.Material.Grass
             end
+        end
+
+        if hasExplicitCellMaterial then
+            return baseMat
         end
 
         local slope = computeSlope(x, z)
@@ -152,8 +159,8 @@ local function buildChunkPlan(chunk)
         local wx1 = wx0 + cellSize
         cellXRanges[cellX + 1] = {
             wx0 = wx0,
-            vx0 = math.max(1, math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1),
-            vx1 = math.min(dimX, math.ceil((wx1 - rMinX) / VOXEL_SIZE)),
+            vx0 = math.max(1, math.floor((wx0 - rMinX) / TERRAIN_WRITE_RESOLUTION) + 1),
+            vx1 = math.min(dimX, math.ceil((wx1 - rMinX) / TERRAIN_WRITE_RESOLUTION)),
         }
     end
 
@@ -164,8 +171,8 @@ local function buildChunkPlan(chunk)
         local wz1 = wz0 + cellSize
         cellZRanges[cellZ + 1] = {
             wz0 = wz0,
-            vz0 = math.max(1, math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1),
-            vz1 = math.min(dimZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE)),
+            vz0 = math.max(1, math.floor((wz0 - rMinZ) / TERRAIN_WRITE_RESOLUTION) + 1),
+            vz1 = math.min(dimZ, math.ceil((wz1 - rMinZ) / TERRAIN_WRITE_RESOLUTION)),
         }
 
         local materialRow = table.create(gridW)
@@ -193,6 +200,8 @@ local function buildChunkPlan(chunk)
         dimX = dimX,
         dimY = dimY,
         dimZ = dimZ,
+        writeResolution = TERRAIN_WRITE_RESOLUTION,
+        requestedSampleResolution = REQUESTED_SAMPLE_RESOLUTION,
         cellXRanges = cellXRanges,
         cellZRanges = cellZRanges,
         cellMaterials = cellMaterials,
@@ -247,7 +256,7 @@ function TerrainBuilder.Build(_parent, chunk, preparedPlan)
 
     -- Strip-based WriteVoxels: process 16 Z-voxels at a time so peak memory is
     -- O(dimX * dimY * STRIP_DEPTH) instead of O(dimX * dimY * dimZ).
-    -- At VoxelSize=1, a 256-stud chunk reduces peak allocation ~16x.
+    -- Roblox terrain requires a 4-stud write resolution.
     local STRIP_DEPTH = 16
 
     -- Reusable strip buffers, allocated once and refilled each iteration.
@@ -308,13 +317,13 @@ function TerrainBuilder.Build(_parent, chunk, preparedPlan)
                 local vx1 = xRange.vx1
 
                 for ix = vx0, vx1 do
-                    local voxelWorldX = rMinX + (ix - 0.5) * VOXEL_SIZE
+                    local voxelWorldX = rMinX + (ix - 0.5) * TERRAIN_WRITE_RESOLUTION
                     local fracX = math.clamp((voxelWorldX - wx0) / cellSize, 0, 1)
 
                     for globalIz = stripVz0, stripVz1 do
                         local localIz = globalIz - izBase + 1 -- 1-indexed within strip
 
-                        local voxelWorldZ = rMinZ + (globalIz - 0.5) * VOXEL_SIZE
+                        local voxelWorldZ = rMinZ + (globalIz - 0.5) * TERRAIN_WRITE_RESOLUTION
                         local fracZ = math.clamp((voxelWorldZ - wz0) / cellSize, 0, 1)
 
                         -- Interpolated surface height for this (X, Z) column
@@ -322,8 +331,8 @@ function TerrainBuilder.Build(_parent, chunk, preparedPlan)
                         local worldSurfY = origin.y + interpH
                         local worldBotY = worldSurfY - TERRAIN_THICKNESS
 
-                        local vy0 = math.max(1, math.floor((worldBotY - rMinY) / VOXEL_SIZE) + 1)
-                        local vy1 = math.min(dimY, math.ceil((worldSurfY - rMinY) / VOXEL_SIZE))
+                        local vy0 = math.max(1, math.floor((worldBotY - rMinY) / TERRAIN_WRITE_RESOLUTION) + 1)
+                        local vy1 = math.min(dimY, math.ceil((worldSurfY - rMinY) / TERRAIN_WRITE_RESOLUTION))
 
                         for iy = vy0, vy1 do
                             stripMat[ix][iy][localIz] = mat
@@ -335,10 +344,10 @@ function TerrainBuilder.Build(_parent, chunk, preparedPlan)
         end
 
         -- Write this strip to Roblox terrain.
-        local zWorldMin = rMinZ + (izBase - 1) * VOXEL_SIZE
-        local zWorldMax = rMinZ + izEnd * VOXEL_SIZE
+        local zWorldMin = rMinZ + (izBase - 1) * TERRAIN_WRITE_RESOLUTION
+        local zWorldMax = rMinZ + izEnd * TERRAIN_WRITE_RESOLUTION
         local stripRegion = Region3.new(Vector3.new(rMinX, rMinY, zWorldMin), Vector3.new(rMaxX, rMaxY, zWorldMax))
-        terrain:WriteVoxels(stripRegion, VOXEL_SIZE, stripMat, stripOcc)
+        terrain:WriteVoxels(stripRegion, TERRAIN_WRITE_RESOLUTION, stripMat, stripOcc)
 
         izBase = izEnd + 1
     end

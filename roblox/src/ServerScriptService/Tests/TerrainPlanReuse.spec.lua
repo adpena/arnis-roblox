@@ -41,4 +41,14 @@ return function()
         firstPlan,
         "expected prepared terrain build plan to stay attached to the chunk"
     )
+    Assert.equal(
+        firstPlan.writeResolution,
+        4,
+        "expected terrain plans to use Roblox's required 4-stud write resolution"
+    )
+    Assert.equal(
+        firstPlan.requestedSampleResolution,
+        1,
+        "expected terrain plans to preserve the configured sampling intent"
+    )
 end

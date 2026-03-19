@@ -1,12 +1,12 @@
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
+use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
     BarrierSegment, BuildingShell, Chunk, ChunkManifest, GroundPoint, LanduseShell, ManifestMeta,
-    PropInstance, RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
 
@@ -50,21 +50,77 @@ fn parse_css_color(s: &str) -> Option<crate::manifest::Color> {
         return Some(Color { r, g, b });
     }
     match s {
-        "white"       => Some(Color { r: 255, g: 255, b: 255 }),
-        "black"       => Some(Color { r: 30,  g: 30,  b: 30  }),
-        "gray"|"grey" => Some(Color { r: 128, g: 128, b: 128 }),
-        "red"         => Some(Color { r: 180, g: 50,  b: 50  }),
-        "brown"       => Some(Color { r: 139, g: 90,  b: 43  }),
-        "beige"       => Some(Color { r: 245, g: 245, b: 220 }),
-        "yellow"      => Some(Color { r: 255, g: 220, b: 50  }),
-        "blue"        => Some(Color { r: 50,  g: 100, b: 200 }),
-        "green"       => Some(Color { r: 50,  g: 140, b: 50  }),
-        "orange"      => Some(Color { r: 230, g: 120, b: 30  }),
-        "pink"        => Some(Color { r: 255, g: 180, b: 180 }),
-        "tan"         => Some(Color { r: 210, g: 180, b: 140 }),
-        "silver"      => Some(Color { r: 192, g: 192, b: 192 }),
-        "gold"        => Some(Color { r: 212, g: 175, b: 55  }),
-        _             => None,
+        "white" => Some(Color {
+            r: 255,
+            g: 255,
+            b: 255,
+        }),
+        "black" => Some(Color {
+            r: 30,
+            g: 30,
+            b: 30,
+        }),
+        "gray" | "grey" => Some(Color {
+            r: 128,
+            g: 128,
+            b: 128,
+        }),
+        "red" => Some(Color {
+            r: 180,
+            g: 50,
+            b: 50,
+        }),
+        "brown" => Some(Color {
+            r: 139,
+            g: 90,
+            b: 43,
+        }),
+        "beige" => Some(Color {
+            r: 245,
+            g: 245,
+            b: 220,
+        }),
+        "yellow" => Some(Color {
+            r: 255,
+            g: 220,
+            b: 50,
+        }),
+        "blue" => Some(Color {
+            r: 50,
+            g: 100,
+            b: 200,
+        }),
+        "green" => Some(Color {
+            r: 50,
+            g: 140,
+            b: 50,
+        }),
+        "orange" => Some(Color {
+            r: 230,
+            g: 120,
+            b: 30,
+        }),
+        "pink" => Some(Color {
+            r: 255,
+            g: 180,
+            b: 180,
+        }),
+        "tan" => Some(Color {
+            r: 210,
+            g: 180,
+            b: 140,
+        }),
+        "silver" => Some(Color {
+            r: 192,
+            g: 192,
+            b: 192,
+        }),
+        "gold" => Some(Color {
+            r: 212,
+            g: 175,
+            b: 55,
+        }),
+        _ => None,
     }
 }
 
@@ -96,7 +152,12 @@ pub struct Chunker {
 }
 
 impl Chunker {
-    pub fn new(chunk_size_studs: i32, meters_per_stud: f64, terrain_cell_size: i32, center_latlon: LatLon) -> Self {
+    pub fn new(
+        chunk_size_studs: i32,
+        meters_per_stud: f64,
+        terrain_cell_size: i32,
+        center_latlon: LatLon,
+    ) -> Self {
         Self {
             chunk_size_studs,
             meters_per_stud,
@@ -295,7 +356,8 @@ impl Chunker {
                     let cos_lat = center.lat.to_radians().cos();
                     let centroid_lat = center.lat - (centroid.z * mps / 111_111.0);
                     let centroid_lon = center.lon + (centroid.x * mps / (111_111.0 * cos_lat));
-                    let surface_h = elevation.sample_height_at(LatLon::new(centroid_lat, centroid_lon));
+                    let surface_h =
+                        elevation.sample_height_at(LatLon::new(centroid_lat, centroid_lon));
 
                     let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
                     let chunk = self.ensure_chunk(chunk_id, elevation, style);
@@ -359,32 +421,23 @@ impl Chunker {
                     .map(|pt| GroundPoint::new(pt.x - origin.x, pt.y - origin.z))
                     .collect();
 
-                let material = style.get_building_material(&f.roof);
-                let material = if material == "Concrete" {
-                    style.get_building_material("default")
-                } else {
-                    material
-                };
+                let style_key = f.usage.as_deref().unwrap_or("default");
+                let material = style.get_building_material(style_key);
                 let color = if let Some(css) = f.colour.as_deref().and_then(parse_css_color) {
                     Some(css)
                 } else {
-                    let c = style.get_building_color(&f.roof);
-                    if c.is_none() {
-                        style.get_building_color("default")
-                    } else {
-                        c
-                    }
+                    style.get_building_color(style_key)
                 };
                 let material_override = f.material_tag.as_deref().map(|m| match m {
-                    "brick"                               => "Brick",
-                    "concrete"                            => "Concrete",
-                    "glass"                               => "Glass",
-                    "metal" | "steel"                     => "Metal",
-                    "wood"                                => "WoodPlanks",
-                    "stone" | "granite" | "limestone"     => "Limestone",
-                    "sandstone"                           => "Sandstone",
-                    "marble"                              => "Marble",
-                    _                                     => "Concrete",
+                    "brick" => "Brick",
+                    "concrete" => "Concrete",
+                    "glass" => "Glass",
+                    "metal" | "steel" => "Metal",
+                    "wood" => "WoodPlanks",
+                    "stone" | "granite" | "limestone" => "Limestone",
+                    "sandstone" => "Sandstone",
+                    "marble" => "Marble",
+                    _ => "Concrete",
                 });
                 let material = if color.is_none() {
                     material_override.map(|s| s.to_string()).unwrap_or(material)
@@ -394,34 +447,6 @@ impl Chunker {
 
                 // Resolve roof color: prefer explicit OSM roof:colour, fall back to style
                 let roof_color = f.roof_colour.as_deref().and_then(parse_css_color);
-
-                // Assign a procedural facade style if it's a default building
-                let facade_style = if f.roof == "dome" {
-                    Some("facade_modern".to_string())
-                } else if f.id.contains("osm") {
-                    Some("facade_brick".to_string())
-                } else {
-                    None
-                };
-
-                // Generate rooms (one per level)
-                let mut rooms = Vec::new();
-                let levels = f.levels.unwrap_or(1);
-                let floor_height = f.height / levels as f64;
-
-                for i in 0..levels {
-                    rooms.push(Room {
-                        id: format!("{}_floor_{}", f.id, i),
-                        name: format!("Floor {}", i + 1),
-                        footprint: relative_footprint.clone(),
-                        floor_y: (f.base_y - origin.y) + (i as f64 * floor_height),
-                        height: 0.2, // slab thickness
-                        wall_material: None,
-                        floor_material: Some("WoodPlanks".to_string()),
-                        has_door: i == 0,
-                        has_window: true,
-                    });
-                }
 
                 chunk.buildings.push(BuildingShell {
                     id: f.id,
@@ -439,9 +464,9 @@ impl Chunker {
                     height_m: f.height_m,
                     levels: f.levels,
                     roof_levels: f.roof_levels,
-                    facade_style,
+                    facade_style: None,
                     roof: f.roof,
-                    rooms,
+                    rooms: Vec::new(),
                     roof_height: f.roof_height,
                     name: f.name.clone(),
                 });

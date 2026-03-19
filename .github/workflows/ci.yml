@@ -21,6 +21,17 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install repo audit tools
+        run: bash scripts/install_repo_audit_tools.sh
+
+      - name: Export local audit tools to PATH
+        run: echo "${{ github.workspace }}/.tools/bin" >> "$GITHUB_PATH"
+
       - name: Run scaffold checks
         run: python scripts/run_all_checks.py
 

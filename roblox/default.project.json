@@ -16,7 +16,9 @@
   },
   "globIgnorePaths": [
     "**/*.md",
-    "**/.DS_Store"
+    "**/.DS_Store",
+    "src/ServerStorage/SampleData/AustinHDManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinHDManifestChunks/**"
   ],
   "tree": {
     "$className": "DataModel",
