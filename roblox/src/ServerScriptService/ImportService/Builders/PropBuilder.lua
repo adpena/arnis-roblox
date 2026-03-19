@@ -7,6 +7,22 @@ local SpatialQuery = require(script.Parent.Parent.SpatialQuery)
 local PropBuilder = {}
 
 local pools = {}
+local ROADSIDE_EXTRA_OFFSETS = {
+    street_lamp = 0.75,
+    bus_stop = 1.5,
+    traffic_signal = 0.5,
+    fire_hydrant = 1.0,
+    waste_basket = 0.5,
+}
+
+local function getPrefabFolder()
+    local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
+    if not assetsFolder then
+        return nil
+    end
+
+    return assetsFolder:FindFirstChild("Prefabs")
+end
 
 local function hashId(id)
     local h = 5381
@@ -16,17 +32,13 @@ local function hashId(id)
     return h
 end
 
+local function deterministicUnitFloat(seed)
+    local nextSeed = (seed * 48271) % 2147483647
+    return nextSeed / 2147483647
+end
+
 local function resolveBaseY(chunk, worldX, fallbackY, worldZ)
-    if not chunk then
-        return fallbackY
-    end
-
-    local groundY = GroundSampler.sampleWorldHeight(chunk, worldX, worldZ)
-    if math.abs(fallbackY - groundY) > 4 then
-        return fallbackY
-    end
-
-    return groundY
+    return fallbackY
 end
 
 local function alignRoadsideProp(prop, chunk, originStuds, wx, wz)
@@ -55,13 +67,7 @@ local function alignRoadsideProp(prop, chunk, originStuds, wx, wz)
 
     local sidewalk = RoadProfile.getSidewalkWidth(nearestRoad.road, nearestRoad.width)
     local edgeBuffer = RoadProfile.getEdgeBufferWidth(nearestRoad.road, nearestRoad.width)
-    local extraOffset = ({
-        street_lamp = 0.75,
-        bus_stop = 1.5,
-        traffic_signal = 0.5,
-        fire_hydrant = 1.0,
-        waste_basket = 0.5,
-    })[prop.kind] or 0.5
+    local extraOffset = ROADSIDE_EXTRA_OFFSETS[prop.kind] or 0.5
     local offset = nearestRoad.width * 0.5 + sidewalk + edgeBuffer + extraOffset
 
     return nearestRoad.projX + normalX * offset * side, nearestRoad.projZ + normalZ * offset * side
@@ -150,7 +156,8 @@ local function getOrCreatePool(kind)
     end
 
     -- Strategy: Use prefabs from ReplicatedStorage if they exist, otherwise use generic placeholders
-    local prefab = ReplicatedStorage.Assets.Prefabs:FindFirstChild(kind)
+    local prefabFolder = getPrefabFolder()
+    local prefab = if prefabFolder then prefabFolder:FindFirstChild(kind) else nil
     if prefab then
         pools[kind] = InstancePool.new(prefab)
     else
@@ -211,18 +218,16 @@ local function buildStreetLamp(x, y, z, parent)
 end
 
 -- Builds a simple procedural tree model (trunk + canopy)
-local function buildTree(parent, prop, originStuds)
-    -- Seed RNG for deterministic output
-    math.randomseed(hashId(prop.id or tostring(prop.position.x) .. tostring(prop.position.z)))
-
+local function buildTree(parent, prop, originStuds, baseYOverride)
     local worldPos = Vector3.new(
         prop.position.x + originStuds.x,
-        prop.position.y + originStuds.y,
+        baseYOverride or (prop.position.y + originStuds.y),
         prop.position.z + originStuds.z
     )
     local yaw = math.rad(prop.yawDegrees or 0)
     local scale = prop.scale or 1.0
     local speciesScale = getCanopyScale(prop.species)
+    local canopySeed = hashId(prop.id or tostring(prop.position.x) .. ":" .. tostring(prop.position.z))
 
     local model = Instance.new("Model")
     model.Name = prop.id or "Tree"
@@ -235,15 +240,14 @@ local function buildTree(parent, prop, originStuds)
     trunk.Anchored = true
     trunk.Size = Vector3.new(trunkR * 2, trunkH, trunkR * 2)
     trunk.Shape = Enum.PartType.Cylinder
-    trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0))
-        * CFrame.Angles(0, yaw, math.pi * 0.5)
+    trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
     trunk.Material = Enum.Material.Wood
     trunk.Color = Color3.fromRGB(101, 79, 55)
     trunk.CastShadow = false
     trunk.Parent = model
 
     -- Canopy sphere
-    local canopyR = (4 + math.random() * 3) * scale * speciesScale
+    local canopyR = (4 + deterministicUnitFloat(canopySeed) * 3) * scale * speciesScale
     local canopy = Instance.new("Part")
     canopy.Name = "Canopy"
     canopy.Anchored = true
@@ -261,16 +265,12 @@ end
 
 function PropBuilder.Build(parent, prop, originStuds, chunk)
     if prop.kind == "tree" then
+        local baseY
         if chunk then
-            prop = table.clone(prop)
-            prop.position = table.clone(prop.position)
-            prop.position.y = GroundSampler.sampleWorldHeight(
-                chunk,
-                prop.position.x + originStuds.x,
-                prop.position.z + originStuds.z
-            ) - originStuds.y
+            baseY =
+                GroundSampler.sampleWorldHeight(chunk, prop.position.x + originStuds.x, prop.position.z + originStuds.z)
         end
-        return buildTree(parent, prop, originStuds)
+        return buildTree(parent, prop, originStuds, baseY)
     end
 
     if prop.kind == "street_lamp" or prop.kind == "amenity_street_lamp" then
@@ -291,8 +291,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         bench.CanCollide = false
         bench.CastShadow = false
         bench.Size = Vector3.new(2, 0.25, 0.6)
-        bench.CFrame = CFrame.new(wx, wy + 0.8, wz)
-            * CFrame.Angles(0, math.rad(prop.yawDegrees or 0), 0)
+        bench.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, math.rad(prop.yawDegrees or 0), 0)
         bench.Material = Enum.Material.WoodPlanks
         bench.Color = Color3.fromRGB(139, 90, 43)
         bench.Parent = parent
