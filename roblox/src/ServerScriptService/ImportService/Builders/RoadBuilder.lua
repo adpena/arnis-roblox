@@ -390,9 +390,22 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
     local sidewalkMode = getSidewalkMode(road)
     local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
 
+    -- Overpasses: elevate road by layer * 8 studs when layer > 0.
+    local layerElevation = 0
+    if road.layer and road.layer > 0 then
+        layerElevation = road.layer * 8
+    end
+
     for i = 1, #road.points - 1 do
         local p1 = offsetPoint(road.points[i], originStuds)
         local p2 = offsetPoint(road.points[i + 1], originStuds)
+
+        -- Apply layer elevation to surface Y for visual separation of stacked roads.
+        if layerElevation > 0 then
+            local surfaceY = (p1.Y + p2.Y) * 0.5 + layerElevation
+            p1 = Vector3.new(p1.X, surfaceY, p1.Z)
+            p2 = Vector3.new(p2.X, surfaceY, p2.Z)
+        end
 
         local segmentMode, resolvedP1, resolvedP2 = classifySegment(road, p1, p2, chunk)
         if segmentMode == "bridge" then
