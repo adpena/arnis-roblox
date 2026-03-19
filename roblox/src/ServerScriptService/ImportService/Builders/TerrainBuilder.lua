@@ -76,17 +76,9 @@ function TerrainBuilder.Build(_parent, chunk)
 	local vY = (rMaxY - rMinY) / VOXEL_SIZE
 	local vZ = (rMaxZ - rMinZ) / VOXEL_SIZE
 
-	-- Pre-build 3D arrays (all Air, all 0 occupancy)
-	local materials = table.create(vX)
-	local occupancies = table.create(vX)
-	for ix = 1, vX do
-		materials[ix] = table.create(vY)
-		occupancies[ix] = table.create(vY)
-		for iy = 1, vY do
-			materials[ix][iy] = table.create(vZ, Enum.Material.Air)
-			occupancies[ix][iy] = table.create(vZ, 0)
-		end
-	end
+	local dimX = vX
+	local dimY = vY
+	local dimZ = vZ
 
 	local gridW = terrainGrid.width
 	local gridD = terrainGrid.depth
@@ -147,98 +139,110 @@ function TerrainBuilder.Build(_parent, chunk)
 		return baseMat
 	end
 
-	-- Fill voxels from terrain grid cells, using per-voxel interpolated height
-	-- so transitions between cells produce smooth slopes rather than flat plateaus.
-	for cellZ = 0, gridD - 1 do
-		for cellX = 0, gridW - 1 do
-			local mat = getMat(cellX, cellZ)
+	-- Strip-based WriteVoxels: process 16 Z-voxels at a time so peak memory is
+	-- O(dimX * dimY * STRIP_DEPTH) instead of O(dimX * dimY * dimZ).
+	-- At VoxelSize=1, a 256-stud chunk reduces peak allocation ~16x.
+	local STRIP_DEPTH = 16
 
-			local wx0 = origin.x + cellX * cellSize
+	-- Reusable strip buffers, allocated once and refilled each iteration.
+	local stripMat = nil
+	local stripOcc = nil
+
+	local izBase = 1  -- 1-indexed global Z voxel, start of current strip
+	while izBase <= dimZ do
+		local izEnd   = math.min(izBase + STRIP_DEPTH - 1, dimZ)  -- inclusive, 1-indexed
+		local stripLen = izEnd - izBase + 1  -- number of Z slices in this strip
+
+		-- Allocate buffers on the first strip; reuse on subsequent strips.
+		-- Inner Z dimension is always STRIP_DEPTH except possibly the last strip,
+		-- so we allocate fresh when stripLen changes (only the final strip differs).
+		if stripMat == nil or #stripMat[1][1] ~= stripLen then
+			stripMat = table.create(dimX)
+			stripOcc = table.create(dimX)
+			for ix = 1, dimX do
+				stripMat[ix] = table.create(dimY)
+				stripOcc[ix] = table.create(dimY)
+				for iy = 1, dimY do
+					stripMat[ix][iy] = table.create(stripLen, Enum.Material.Air)
+					stripOcc[ix][iy] = table.create(stripLen, 0)
+				end
+			end
+		else
+			-- Clear buffers back to Air/0 for reuse.
+			for ix = 1, dimX do
+				for iy = 1, dimY do
+					local mRow = stripMat[ix][iy]
+					local oRow = stripOcc[ix][iy]
+					for s = 1, stripLen do
+						mRow[s] = Enum.Material.Air
+						oRow[s] = 0
+					end
+				end
+			end
+		end
+
+		-- Fill this strip by iterating over terrain cells that overlap the strip's Z range.
+		-- Global voxel Z range covered by this strip: [izBase, izEnd] (1-indexed).
+		for cellZ = 0, gridD - 1 do
 			local wz0 = origin.z + cellZ * cellSize
-			local wx1 = wx0 + cellSize
 			local wz1 = wz0 + cellSize
 
-			-- Voxel column range for this cell in X and Z
-			local vx0 = math.max(1, math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1)
-			local vx1 = math.min(vX, math.ceil((wx1 - rMinX) / VOXEL_SIZE))
-			local vz0 = math.max(1, math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1)
-			local vz1 = math.min(vZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE))
+			-- Global voxel Z range for this cell
+			local cellVz0 = math.max(1,    math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1)
+			local cellVz1 = math.min(dimZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE))
 
-			for ix = vx0, vx1 do
-				-- Fractional X position of this voxel centre within the cell [0,1]
-				local voxelWorldX = rMinX + (ix - 0.5) * VOXEL_SIZE
-				local fracX = math.clamp((voxelWorldX - wx0) / cellSize, 0, 1)
+			-- Clamp to current strip window
+			local stripVz0 = math.max(cellVz0, izBase)
+			local stripVz1 = math.min(cellVz1, izEnd)
+			if stripVz0 > stripVz1 then continue end
 
-				for iz = vz0, vz1 do
-					-- Fractional Z position of this voxel centre within the cell [0,1]
-					local voxelWorldZ = rMinZ + (iz - 0.5) * VOXEL_SIZE
-					local fracZ = math.clamp((voxelWorldZ - wz0) / cellSize, 0, 1)
+			for cellX = 0, gridW - 1 do
+				local mat = getMat(cellX, cellZ)
 
-					-- Interpolated surface height for this column
-					local interpH = sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
-					local worldSurfY = origin.y + interpH
-					local worldBotY  = worldSurfY - TERRAIN_THICKNESS
+				local wx0 = origin.x + cellX * cellSize
+				local wx1 = wx0 + cellSize
 
-					local vy0 = math.max(1, math.floor((worldBotY - rMinY) / VOXEL_SIZE) + 1)
-					local vy1 = math.min(vY, math.ceil((worldSurfY - rMinY) / VOXEL_SIZE))
+				-- Voxel X range for this cell
+				local vx0 = math.max(1,    math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1)
+				local vx1 = math.min(dimX, math.ceil((wx1 - rMinX) / VOXEL_SIZE))
 
-					for iy = vy0, vy1 do
-						materials[ix][iy][iz] = mat
-						occupancies[ix][iy][iz] = 1
+				for ix = vx0, vx1 do
+					local voxelWorldX = rMinX + (ix - 0.5) * VOXEL_SIZE
+					local fracX = math.clamp((voxelWorldX - wx0) / cellSize, 0, 1)
+
+					for globalIz = stripVz0, stripVz1 do
+						local localIz = globalIz - izBase + 1  -- 1-indexed within strip
+
+						local voxelWorldZ = rMinZ + (globalIz - 0.5) * VOXEL_SIZE
+						local fracZ = math.clamp((voxelWorldZ - wz0) / cellSize, 0, 1)
+
+						-- Interpolated surface height for this (X, Z) column
+						local interpH = sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
+						local worldSurfY = origin.y + interpH
+						local worldBotY  = worldSurfY - TERRAIN_THICKNESS
+
+						local vy0 = math.max(1,    math.floor((worldBotY - rMinY) / VOXEL_SIZE) + 1)
+						local vy1 = math.min(dimY, math.ceil((worldSurfY - rMinY) / VOXEL_SIZE))
+
+						for iy = vy0, vy1 do
+							stripMat[ix][iy][localIz] = mat
+							stripOcc[ix][iy][localIz] = 1
+						end
 					end
 				end
 			end
 		end
-	end
 
-	local dimX = vX
-	local dimY = vY
-	local dimZ = vZ
-
-	local MAX_VOXELS_PER_CALL = 500000
-	local totalVoxels = dimX * dimY * dimZ
-
-	if totalVoxels <= MAX_VOXELS_PER_CALL then
-		local region = Region3.new(
-			Vector3.new(rMinX, rMinY, rMinZ),
-			Vector3.new(rMaxX, rMaxY, rMaxZ)
+		-- Write this strip to Roblox terrain.
+		local zWorldMin = rMinZ + (izBase - 1) * VOXEL_SIZE
+		local zWorldMax = rMinZ + izEnd * VOXEL_SIZE
+		local stripRegion = Region3.new(
+			Vector3.new(rMinX, rMinY, zWorldMin),
+			Vector3.new(rMaxX, rMaxY, zWorldMax)
 		)
-		terrain:WriteVoxels(region, VOXEL_SIZE, materials, occupancies)
-	else
-		-- Write in Z-strips to avoid exceeding Roblox WriteVoxels limits.
-		-- Each strip covers the full X and Y range but only a subset of Z slices.
-		local stripDepth = math.max(1, math.floor(MAX_VOXELS_PER_CALL / (dimX * dimY)))
-		local iz = 1
-		while iz <= dimZ do
-			local iz1 = math.min(iz + stripDepth - 1, dimZ)
-			local stripLen = iz1 - iz + 1
+		terrain:WriteVoxels(stripRegion, VOXEL_SIZE, stripMat, stripOcc)
 
-			-- Build sub-arrays for this Z strip
-			local subMat = table.create(dimX)
-			local subOcc = table.create(dimX)
-			for ix = 1, dimX do
-				subMat[ix] = table.create(dimY)
-				subOcc[ix] = table.create(dimY)
-				for iy = 1, dimY do
-					subMat[ix][iy] = table.create(stripLen)
-					subOcc[ix][iy] = table.create(stripLen)
-					for s = 1, stripLen do
-						subMat[ix][iy][s] = materials[ix][iy][iz + s - 1]
-						subOcc[ix][iy][s] = occupancies[ix][iy][iz + s - 1]
-					end
-				end
-			end
-
-			local zWorldMin = rMinZ + (iz - 1) * VOXEL_SIZE
-			local zWorldMax = rMinZ + iz1 * VOXEL_SIZE
-			local stripRegion = Region3.new(
-				Vector3.new(rMinX, rMinY, zWorldMin),
-				Vector3.new(rMaxX, rMaxY, zWorldMax)
-			)
-			terrain:WriteVoxels(stripRegion, VOXEL_SIZE, subMat, subOcc)
-
-			iz = iz1 + 1
-		end
+		izBase = izEnd + 1
 	end
 end
 
