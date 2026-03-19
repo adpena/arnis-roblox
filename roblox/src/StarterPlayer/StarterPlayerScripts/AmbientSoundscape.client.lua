@@ -70,11 +70,16 @@ local function updateAmbience()
     if not hrp then return end
     local pos = hrp.Position
 
+    -- Smooth volume helper: lerp toward target to prevent audio pops
+    local function smoothVol(sound, target)
+        sound.instance.Volume = sound.instance.Volume + (target - sound.instance.Volume) * 0.15
+    end
+
     -- Altitude-based wind: louder when high up (e.g. on a rooftop).
     -- 50 studs is approximate street level; ramps up to full at 350 studs.
     local altitude = math.max(0, pos.Y - 50)
     local windVol = math.clamp(altitude / 300, 0, 0.4)
-    sounds.wind.instance.Volume = windVol
+    smoothVol(sounds.wind, windVol)
 
     -- Near water? Scan water-surface parts tagged by the importer.
     local nearWater = false
@@ -90,7 +95,7 @@ local function updateAmbience()
             end
         end
     end
-    sounds.water.instance.Volume = nearWater and 0.2 or 0
+    smoothVol(sounds.water, nearWater and 0.2 or 0)
 
     -- Near nature? Raycast straight down and inspect terrain material.
     local nearNature = false
@@ -102,7 +107,7 @@ local function updateAmbience()
             nearNature = true
         end
     end
-    sounds.birds.instance.Volume = nearNature and 0.12 or 0
+    smoothVol(sounds.birds, nearNature and 0.12 or 0)
 
     -- City hum: louder near roads (tagged by the importer), softer in parks.
     local nearRoad = false
@@ -113,7 +118,7 @@ local function updateAmbience()
             break
         end
     end
-    sounds.cityHum.instance.Volume = nearRoad and 0.2 or 0.08
+    smoothVol(sounds.cityHum, nearRoad and 0.2 or 0.08)
 end
 
 -- ---------------------------------------------------------------------------

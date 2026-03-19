@@ -115,6 +115,8 @@ local BRAKE_ON = Color3.fromRGB(255, 20, 20)
 local BRAKE_OFF = Color3.fromRGB(80, 10, 10)
 local TURN_ON = Color3.fromRGB(255, 180, 30)
 local TURN_OFF = Color3.fromRGB(80, 60, 20)
+local FUEL_LOW_COLOR = Color3.fromRGB(255, 60, 60)
+local FUEL_MID_COLOR = Color3.fromRGB(255, 180, 50)
 
 -- HUD
 local HUD_FADE_DELAY = 5
@@ -479,9 +481,9 @@ local function updateHUDValues(dt)
         local barWidth = math.max(0, frac)
         fuelBarFill.Size = UDim2.new(barWidth, 0, 1, -4)
         if frac < 0.2 then
-            fuelBarFill.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+            fuelBarFill.BackgroundColor3 = FUEL_LOW_COLOR
         elseif frac < 0.5 then
-            fuelBarFill.BackgroundColor3 = Color3.fromRGB(255, 180, 50)
+            fuelBarFill.BackgroundColor3 = FUEL_MID_COLOR
         else
             fuelBarFill.BackgroundColor3 = HUD_ACCENT_COLOR
         end
