@@ -7,7 +7,7 @@ use arbx_roblox_export::{export_to_chunks, ExportConfig};
 #[test]
 fn full_pipeline_produces_valid_manifest() {
     let bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
-    let adapter = arbx_pipeline::SyntheticAustinAdapter;
+    let adapter = arbx_pipeline::SyntheticAustinAdapter { meters_per_stud: 0.3 };
 
     let stages = [
         &ValidateStage as &dyn arbx_pipeline::PipelineStage,
@@ -41,7 +41,7 @@ fn full_pipeline_produces_valid_manifest() {
 #[test]
 fn full_pipeline_deterministic_output() {
     let bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
-    let adapter = arbx_pipeline::SyntheticAustinAdapter;
+    let adapter = arbx_pipeline::SyntheticAustinAdapter { meters_per_stud: 0.3 };
 
     let stages = [
         &ValidateStage as &dyn arbx_pipeline::PipelineStage,
