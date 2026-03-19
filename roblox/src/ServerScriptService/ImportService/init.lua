@@ -442,9 +442,14 @@ function ImportService.ImportChunk(chunk, options)
     if shouldImportLayer(layers, "roads") and config.RoadMode ~= "none" then
         local pRoads = Profiler.begin("BuildRoads")
         if config.RoadMode == "mesh" then
-            forEachWithPacing(chunk.roads, function(road)
-                RoadBuilder.Build(roadsFolder, road, chunk.originStuds, chunk)
-            end, maybeYield)
+            -- Merge all ground-level road surfaces into EditableMesh objects
+            -- grouped by material/colour to minimise draw calls.
+            RoadBuilder.MeshBuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk)
+            maybeYield(false)
+            -- Decorations (centerlines, arrows, lights, crosswalks, steps, tunnels)
+            -- cannot be merged into the surface mesh; render them as separate Parts.
+            RoadBuilder.MeshBuildDecorations(roadsFolder, chunk.roads, chunk.originStuds, chunk)
+            maybeYield(false)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.Build(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
