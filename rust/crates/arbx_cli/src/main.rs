@@ -331,9 +331,9 @@ fn cmd_validate(args: &[String]) -> Result<(), String> {
         .and_then(|v| v.as_str())
         .ok_or("missing or invalid schemaVersion")?;
 
-    if schema_version != "0.2.0" {
+    if schema_version != "0.4.0" {
         return Err(format!(
-            "unsupported schemaVersion: {} (expected 0.2.0)",
+            "unsupported schemaVersion: {} (expected 0.4.0)",
             schema_version
         ));
     }
@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn diff_identical_manifests() {
         let content = r#"{
-            "schemaVersion": "0.2.0",
+            "schemaVersion": "0.3.0",
             "meta": { "totalFeatures": 10 },
             "chunks": [{}, {}]
         }"#;
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn diff_different_versions() {
-        let c1 = r#"{ "schemaVersion": "0.2.0", "meta": { "totalFeatures": 10 }, "chunks": [] }"#;
+        let c1 = r#"{ "schemaVersion": "0.3.0", "meta": { "totalFeatures": 10 }, "chunks": [] }"#;
         let c2 = r#"{ "schemaVersion": "0.1.0", "meta": { "totalFeatures": 10 }, "chunks": [] }"#;
         let f1 = write_temp_manifest(c1);
         let f2 = write_temp_manifest(c2);

@@ -118,7 +118,7 @@ impl Chunker {
             let origin = chunk_origin(id, chunk_size, center, meters_per_stud, elevation);
 
             // Build terrain grid for the chunk
-            let cell_size = 16;
+            let cell_size = 4;
             let grid_dim = (chunk_size / cell_size) as usize;
             let total_cells = grid_dim * grid_dim;
 
@@ -210,6 +210,9 @@ impl Chunker {
                         width_studs: f.width_studs,
                         has_sidewalk: f.has_sidewalk,
                         surface: f.surface.clone(),
+                        elevated: f.elevated.unwrap_or(false),
+                        tunnel: f.tunnel.unwrap_or(false),
+                        sidewalk: f.sidewalk.clone(),
                         points: relative_points,
                     });
                 }
@@ -260,6 +263,7 @@ impl Chunker {
                             footprint: None,
                             holes: vec![],
                             indices: None,
+                            surface_y: None,
                         });
                     }
                 }
@@ -306,6 +310,7 @@ impl Chunker {
                         footprint: Some(relative_footprint),
                         holes: relative_holes,
                         indices: p.indices,
+                        surface_y: None,
                     });
                 }
             },
@@ -395,7 +400,12 @@ impl Chunker {
                     footprint: relative_footprint,
                     indices: f.indices,
                     material,
-                    color,
+                    wall_color: color,
+                    roof_color: None,
+                    roof_shape: Some(f.roof.clone()),
+                    roof_material: f.material_tag.clone(),
+                    usage: f.usage.clone(),
+                    min_height: f.min_height,
                     base_y: f.base_y - origin.y,
                     height: f.height,
                     height_m: f.height_m,
@@ -569,7 +579,7 @@ impl Chunker {
         chunks.sort_by_key(|c| (c.id.z, c.id.x));
 
         ChunkManifest {
-            schema_version: "0.2.0".to_string(),
+            schema_version: "0.4.0".to_string(),
             meta,
             chunks,
         }

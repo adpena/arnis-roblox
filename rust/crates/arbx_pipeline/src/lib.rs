@@ -17,6 +17,9 @@ pub struct RoadFeature {
     pub width_studs: f64,
     pub has_sidewalk: bool,
     pub surface: Option<String>,
+    pub elevated: Option<bool>,
+    pub tunnel: Option<bool>,
+    pub sidewalk: Option<String>,
     pub points: Vec<Vec3>,
 }
 
@@ -234,6 +237,9 @@ impl SourceAdapter for SyntheticAustinAdapter {
             width_studs: 40.0,
             has_sidewalk: true,
             surface: None,
+            elevated: None,
+            tunnel: None,
+            sidewalk: Some("both".to_string()),
             points: vec![
                 project_with_y(center.lat - 0.005, center.lon),
                 project_with_y(center.lat, center.lon),
@@ -779,10 +785,9 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
         let has_sidewalk = tags.get("sidewalk").map(|s| s != "none").unwrap_or(false);
         let width_studs = tags.get("width").and_then(|w| w.parse::<f64>().ok())
             .unwrap_or_else(|| road_width_from_kind(highway));
-        let y_offset: f64 = if tags.get("bridge").map(|v| v != "no").unwrap_or(false) { 8.0 }
-            else if tags.get("tunnel").map(|v| v != "no").unwrap_or(false) { -8.0 }
-            else { 0.0 };
-        let pts = points.into_iter().map(|mut p| { p.y += y_offset; p }).collect();
+        let elevated = if tags.get("bridge").map(|v| v != "no").unwrap_or(false) { Some(true) } else { None };
+        let tunnel = if tags.get("tunnel").map(|v| v != "no").unwrap_or(false) { Some(true) } else { None };
+        let sidewalk = tags.get("sidewalk").cloned();
         features.push(Feature::Road(RoadFeature {
             id: format!("osm_{}", id),
             kind: highway.clone(),
@@ -790,7 +795,10 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
             width_studs,
             has_sidewalk,
             surface: tags.get("surface").cloned(),
-            points: pts,
+            elevated,
+            tunnel,
+            sidewalk,
+            points,
         }));
     } else if let Some(railway) = tags.get("railway") {
         features.push(Feature::Rail(RailFeature {

@@ -47,6 +47,9 @@ pub struct RoadSegment {
     pub width_studs: f64,
     pub has_sidewalk: bool,
     pub surface: Option<String>,
+    pub elevated: bool,
+    pub tunnel: bool,
+    pub sidewalk: Option<String>,
     pub points: Vec<Vec3>,
 }
 
@@ -67,7 +70,12 @@ pub struct BuildingShell {
     pub footprint: Vec<GroundPoint>,
     pub indices: Option<Vec<usize>>,
     pub material: String,
-    pub color: Option<Color>,
+    pub wall_color: Option<Color>,
+    pub roof_color: Option<Color>,
+    pub roof_shape: Option<String>,
+    pub roof_material: Option<String>,
+    pub usage: Option<String>,
+    pub min_height: Option<f64>,
     pub base_y: f64,
     pub height: f64,
     pub height_m: Option<f64>,
@@ -102,6 +110,7 @@ pub struct WaterFeature {
     pub footprint: Option<Vec<GroundPoint>>,
     pub holes: Vec<Vec<GroundPoint>>,
     pub indices: Option<Vec<usize>>,
+    pub surface_y: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -381,6 +390,21 @@ impl RoadSegment {
             write_key(out, indent + 2, "surface");
             write_string(out, s);
         }
+        if self.elevated {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "elevated");
+            out.push_str("true");
+        }
+        if self.tunnel {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "tunnel");
+            out.push_str("true");
+        }
+        if let Some(ref s) = self.sidewalk {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "sidewalk");
+            write_string(out, s);
+        }
         out.push_str(",\n");
         write_key(out, indent + 2, "points");
         write_vec3_array(out, &self.points, indent + 2);
@@ -433,10 +457,35 @@ impl BuildingShell {
         out.push_str(",\n");
         write_key(out, indent + 2, "material");
         write_string(out, &self.material);
-        if let Some(color) = self.color {
+        if let Some(color) = self.wall_color {
             out.push_str(",\n");
-            write_key(out, indent + 2, "color");
+            write_key(out, indent + 2, "wallColor");
             write_color(out, color);
+        }
+        if let Some(color) = self.roof_color {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "roofColor");
+            write_color(out, color);
+        }
+        if let Some(ref s) = self.roof_shape {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "roofShape");
+            write_string(out, s);
+        }
+        if let Some(ref s) = self.roof_material {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "roofMaterial");
+            write_string(out, s);
+        }
+        if let Some(ref s) = self.usage {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "usage");
+            write_string(out, s);
+        }
+        if let Some(h) = self.min_height {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "minHeight");
+            write_number(out, h);
         }
         out.push_str(",\n");
         write_key(out, indent + 2, "footprint");
@@ -586,6 +635,12 @@ impl WaterFeature {
             out.push_str(",\n");
             write_key(out, indent + 2, "indices");
             write_indices(out, idx);
+        }
+
+        if let Some(sy) = self.surface_y {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "surfaceY");
+            write_number(out, sy);
         }
 
         out.push('\n');

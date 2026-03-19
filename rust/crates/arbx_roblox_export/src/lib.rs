@@ -26,7 +26,7 @@ impl Default for ExportConfig {
         Self {
             world_name: "ExportedWorld".to_string(),
             chunk_size_studs: 256,
-            meters_per_stud: 1.0,
+            meters_per_stud: 0.3,
             include_props: true,
             style: StyleMapper::default(),
         }
@@ -64,10 +64,10 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                 id,
                 origin_studs: origin,
                 terrain: Some(TerrainGrid {
-                    cell_size_studs: 16,
-                    width: 16, // Match 256/16
-                    depth: 16,
-                    heights: vec![0.0; 256], // Chunker will overwrite this if ingested, but here we just sample manually if needed
+                    cell_size_studs: 4,
+                    width: 64, // Match 256/4
+                    depth: 64,
+                    heights: vec![0.0; 4096], // Chunker will overwrite this if ingested, but here we just sample manually if needed
                     materials: None,
                     material: config.style.get_terrain_material("grass"),
                 }),
@@ -81,6 +81,9 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                         width_studs: 10.0,
                         has_sidewalk: false,
                         surface: None,
+                        elevated: false,
+                        tunnel: false,
+                        sidewalk: None,
                         points: vec![
                             Vec3::new(0.0, 2.0, 64.0),
                             Vec3::new(128.0, 2.0, 64.0),
@@ -102,7 +105,12 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                         ],
                         indices: None,
                         material: config.style.get_building_material("default"),
-                        color: config.style.get_building_color("default"),
+                        wall_color: config.style.get_building_color("default"),
+                        roof_color: None,
+                        roof_shape: Some("flat".to_string()),
+                        roof_material: None,
+                        usage: None,
+                        min_height: None,
                         base_y: 2.0,
                         height: 36.0,
                         height_m: None,
@@ -148,6 +156,9 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                     width_studs: road.width_studs,
                     has_sidewalk: false,
                     surface: None,
+                    elevated: None,
+                    tunnel: None,
+                    sidewalk: None,
                     points: world_points,
                 }),
                 &config.style,
@@ -348,7 +359,7 @@ pub fn export_to_chunks(
     }
 
     let mut manifest = manifest;
-    manifest.schema_version = "0.2.0".to_string();
+    manifest.schema_version = "0.4.0".to_string();
     manifest.meta.total_features = total_features;
     manifest
 }
@@ -375,7 +386,7 @@ mod tests {
     #[test]
     fn sample_manifest_serializes() {
         let json = build_sample_manifest().to_json_pretty();
-        assert!(json.contains("\"schemaVersion\": \"0.2.0\""));
+        assert!(json.contains("\"schemaVersion\": \"0.3.0\""));
         assert!(json.contains("\"buildings\""));
         assert!(json.contains("\"roads\""));
     }
