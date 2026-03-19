@@ -242,4 +242,51 @@ function TerrainBuilder.Build(_parent, chunk)
 	end
 end
 
+function TerrainBuilder.ImprintRoads(roads, originStuds, chunk)
+	local terrain = Workspace.Terrain
+	local voxelSize = WorldConfig.VoxelSize or 1
+
+	for _, road in ipairs(roads) do
+		if road.tunnel then continue end  -- don't imprint tunnels
+
+		local halfWidth = (road.widthStuds or 10) * 0.5
+
+		for i = 1, #road.points - 1 do
+			local p1 = road.points[i]
+			local p2 = road.points[i + 1]
+
+			local worldP1 = Vector3.new(
+				p1.x + originStuds.x,
+				p1.y + originStuds.y,
+				p1.z + originStuds.z
+			)
+			local worldP2 = Vector3.new(
+				p2.x + originStuds.x,
+				p2.y + originStuds.y,
+				p2.z + originStuds.z
+			)
+
+			-- Compute segment direction and length
+			local dir = (worldP2 - worldP1)
+			local segLen = dir.Magnitude
+			if segLen < 0.1 then continue end
+			dir = dir.Unit
+
+			-- Average road surface Y
+			local surfaceY = (worldP1.Y + worldP2.Y) * 0.5
+
+			-- Flatten terrain in a box along the road segment
+			-- Fill with Asphalt at road level, Air above
+			local midpoint = (worldP1 + worldP2) * 0.5
+
+			-- Fill the road bed with Asphalt terrain material
+			terrain:FillBlock(
+				CFrame.new(midpoint.X, surfaceY - 1, midpoint.Z) * CFrame.Angles(0, math.atan2(dir.X, dir.Z), 0),
+				Vector3.new(halfWidth * 2, 2, segLen),
+				Enum.Material.Asphalt
+			)
+		end
+	end
+end
+
 return TerrainBuilder
