@@ -43,21 +43,12 @@ local function setupAtmosphere(manifest)
     atmosphere.Color = Color3.fromRGB(199, 210, 225)   -- cool blue-grey
     atmosphere.Decay = Color3.fromRGB(106, 112, 125)   -- distance fade
 
-    -- Sky / sun position
-    Lighting.ClockTime = 14              -- 2 PM
-    Lighting.GeographicLatitude = 30     -- default: Austin TX
+    -- Sky / sun position (ClockTime and GeographicLatitude are set by DayNightCycle.Configure)
     Lighting.Brightness = 2
     Lighting.EnvironmentDiffuseScale = 1
     Lighting.EnvironmentSpecularScale = 1
     Lighting.GlobalShadows = true
     Lighting.ShadowSoftness = 0.2
-
-    -- Derive latitude from manifest bbox when available
-    if manifest and manifest.meta and manifest.meta.bbox then
-        local bbox = manifest.meta.bbox
-        local lat = (bbox.minLat + bbox.maxLat) / 2
-        Lighting.GeographicLatitude = lat
-    end
 
     -- Bloom for a cinematic look
     local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
@@ -698,6 +689,13 @@ function ImportService.ImportManifest(manifest, options)
 
     if config.EnableAtmosphere ~= false then
         setupAtmosphere(validated)
+    end
+
+    if manifest.meta and manifest.meta.bbox then
+        local lat = (manifest.meta.bbox.minLat + manifest.meta.bbox.maxLat) / 2
+        local lon = (manifest.meta.bbox.minLon + manifest.meta.bbox.maxLon) / 2
+        local datetime = config.DateTime or "auto"
+        DayNightCycle.Configure(lat, lon, datetime)
     end
 
     if config.EnableDayNightCycle ~= false then

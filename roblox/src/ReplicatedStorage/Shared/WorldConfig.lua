@@ -80,6 +80,7 @@ local WorldConfig = {
     EnableAtmosphere = true,     -- set false to skip cinematic lighting setup
     EnableDayNightCycle = true,
     DayNightSpeed = 60,          -- 60 = 1 game-day per 24 minutes, 0 = frozen
+    DateTime = "auto",           -- "auto" = system time at location, or "2024-06-15T14:00" for specific time
 
     -- ═══════════════════════════════════════════════════════════════
     -- INSTANCE BUDGETS (set high for powerful hardware)
