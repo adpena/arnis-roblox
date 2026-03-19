@@ -33,6 +33,12 @@ local function validatePoint3(point, label)
     assertType(point.z, "number", label .. ".z must be a number")
 end
 
+local function validateOptionalPoint3(point, label)
+    if point ~= nil then
+        validatePoint3(point, label)
+    end
+end
+
 local function validatePoint2(point, label)
     assertType(point, "table", label .. " must be a table")
     assertType(point.x, "number", label .. ".x must be a number")
@@ -41,7 +47,7 @@ end
 
 function ChunkSchema.validateManifest(manifest)
     assertType(manifest, "table", "manifest must be a table")
-    
+
     -- 1. Migrate if needed
     if manifest.schemaVersion ~= Version.SchemaVersion then
         manifest = Migrations.migrate(manifest, Version.SchemaVersion)
@@ -56,11 +62,27 @@ function ChunkSchema.validateManifest(manifest)
     assertType(manifest.meta.source, "string", "manifest.meta.source must be a string")
     assertType(manifest.meta.metersPerStud, "number", "manifest.meta.metersPerStud must be a number")
     assertType(manifest.meta.chunkSizeStuds, "number", "manifest.meta.chunkSizeStuds must be a number")
-    
-    -- 0.2.0 requirement
+
+    -- 0.2.0+ requirement
     assertType(manifest.meta.totalFeatures, "number", "manifest.meta.totalFeatures must be a number")
+    if manifest.meta.canonicalAnchor ~= nil then
+        assertType(manifest.meta.canonicalAnchor, "table", "manifest.meta.canonicalAnchor must be a table")
+        validateOptionalPoint3(
+            manifest.meta.canonicalAnchor.positionStuds,
+            "manifest.meta.canonicalAnchor.positionStuds"
+        )
+        validateOptionalPoint3(
+            manifest.meta.canonicalAnchor.positionOffsetFromHeuristicStuds,
+            "manifest.meta.canonicalAnchor.positionOffsetFromHeuristicStuds"
+        )
+        validateOptionalPoint3(
+            manifest.meta.canonicalAnchor.lookDirectionStuds,
+            "manifest.meta.canonicalAnchor.lookDirectionStuds"
+        )
+    end
 
     assertType(manifest.chunks, "table", "manifest.chunks must be an array-like table")
+    assert(#manifest.chunks > 0, "manifest.chunks must contain at least one chunk")
 
     for chunkIndex, chunk in ipairs(manifest.chunks) do
         local prefix = ("manifest.chunks[%d]"):format(chunkIndex)
@@ -75,6 +97,16 @@ function ChunkSchema.validateManifest(manifest)
             assertType(terrain.depth, "number", prefix .. ".terrain.depth must be a number")
             assertType(terrain.heights, "table", prefix .. ".terrain.heights must be a table")
             assertType(terrain.material, "string", prefix .. ".terrain.material must be a string")
+            assert(
+                #terrain.heights == terrain.width * terrain.depth,
+                prefix .. ".terrain.heights length must equal width * depth"
+            )
+            if terrain.materials ~= nil then
+                assert(
+                    #terrain.materials == terrain.width * terrain.depth,
+                    prefix .. ".terrain.materials length must equal width * depth"
+                )
+            end
         end
 
         for _, road in ipairs(chunk.roads or {}) do
@@ -87,6 +119,15 @@ function ChunkSchema.validateManifest(manifest)
             assert(#road.points >= 2, prefix .. ".roads[].points must contain at least two points")
             if road.surface ~= nil then
                 assertType(road.surface, "string", prefix .. ".roads[].surface must be a string")
+            end
+            if road.elevated ~= nil then
+                assertType(road.elevated, "boolean", prefix .. ".roads[].elevated must be a boolean")
+            end
+            if road.tunnel ~= nil then
+                assertType(road.tunnel, "boolean", prefix .. ".roads[].tunnel must be a boolean")
+            end
+            if road.sidewalk ~= nil then
+                assertType(road.sidewalk, "string", prefix .. ".roads[].sidewalk must be a string")
             end
             for pointIndex, point in ipairs(road.points) do
                 validatePoint3(point, ("%s.roads[].points[%d]"):format(prefix, pointIndex))
@@ -119,6 +160,30 @@ function ChunkSchema.validateManifest(manifest)
             if building.levels ~= nil then
                 assertType(building.levels, "number", prefix .. ".buildings[].levels must be a number")
             end
+            if building.roofLevels ~= nil then
+                assertType(building.roofLevels, "number", prefix .. ".buildings[].roofLevels must be a number")
+            end
+            if building.facadeStyle ~= nil then
+                assertType(building.facadeStyle, "string", prefix .. ".buildings[].facadeStyle must be a string")
+            end
+            if building.wallColor ~= nil then
+                assertType(building.wallColor, "table", prefix .. ".buildings[].wallColor must be a table")
+            end
+            if building.roofColor ~= nil then
+                assertType(building.roofColor, "table", prefix .. ".buildings[].roofColor must be a table")
+            end
+            if building.roofShape ~= nil then
+                assertType(building.roofShape, "string", prefix .. ".buildings[].roofShape must be a string")
+            end
+            if building.roofMaterial ~= nil then
+                assertType(building.roofMaterial, "string", prefix .. ".buildings[].roofMaterial must be a string")
+            end
+            if building.usage ~= nil then
+                assertType(building.usage, "string", prefix .. ".buildings[].usage must be a string")
+            end
+            if building.minHeight ~= nil then
+                assertType(building.minHeight, "number", prefix .. ".buildings[].minHeight must be a number")
+            end
 
             for pointIndex, point in ipairs(building.footprint) do
                 validatePoint2(point, ("%s.buildings[].footprint[%d]"):format(prefix, pointIndex))
@@ -144,7 +209,10 @@ function ChunkSchema.validateManifest(manifest)
             assertType(water.id, "string", prefix .. ".water[].id must be a string")
             assertType(water.kind, "string", prefix .. ".water[].kind must be a string")
             assertType(water.material, "string", prefix .. ".water[].material must be a string")
-            
+            if water.surfaceY ~= nil then
+                assertType(water.surfaceY, "number", prefix .. ".water[].surfaceY must be a number")
+            end
+
             if water.points then
                 assertType(water.widthStuds, "number", prefix .. ".water[].widthStuds must be a number")
                 assertType(water.points, "table", prefix .. ".water[].points must be a table")
@@ -164,7 +232,10 @@ function ChunkSchema.validateManifest(manifest)
                     for holeIndex, hole in ipairs(water.holes) do
                         if type(hole) == "table" and #hole >= 3 then
                             for pointIndex, point in ipairs(hole) do
-                                validatePoint2(point, ("%s.water[].holes[%d][%d]"):format(prefix, holeIndex, pointIndex))
+                                validatePoint2(
+                                    point,
+                                    ("%s.water[].holes[%d][%d]"):format(prefix, holeIndex, pointIndex)
+                                )
                             end
                         else
                             warn(prefix .. (".water[].holes[%d]: skipping malformed hole"):format(holeIndex))
@@ -182,19 +253,37 @@ function ChunkSchema.validateManifest(manifest)
             validatePoint3(prop.position, prefix .. ".props[].position")
             assertType(prop.yawDegrees, "number", prefix .. ".props[].yawDegrees must be a number")
             assertType(prop.scale, "number", prefix .. ".props[].scale must be a number")
+            if prop.species ~= nil then
+                assertType(prop.species, "string", prefix .. ".props[].species must be a string")
+            end
         end
 
         -- Normalize landuse to an empty table if absent; validate present entries
         chunk.landuse = chunk.landuse or {}
         local validLanduse = {}
         for _, lu in ipairs(chunk.landuse) do
-            if type(lu.id) == "string" and type(lu.kind) == "string"
-                and type(lu.footprint) == "table" and #lu.footprint >= 3 then
+            if
+                type(lu.id) == "string"
+                and type(lu.kind) == "string"
+                and (lu.material == nil or type(lu.material) == "string")
+                and type(lu.footprint) == "table"
+                and #lu.footprint >= 3
+            then
+                for pointIndex, point in ipairs(lu.footprint) do
+                    validatePoint2(point, ("%s.landuse[].footprint[%d]"):format(prefix, pointIndex))
+                end
                 table.insert(validLanduse, lu)
             else
-                warn(prefix .. ".landuse[]: skipping entry with invalid/missing fields (id="
-                    .. tostring(lu.id) .. " kind=" .. tostring(lu.kind)
-                    .. " footprint=" .. tostring(lu.footprint and #lu.footprint or 0) .. " pts)")
+                warn(
+                    prefix
+                        .. ".landuse[]: skipping entry with invalid/missing fields (id="
+                        .. tostring(lu.id)
+                        .. " kind="
+                        .. tostring(lu.kind)
+                        .. " footprint="
+                        .. tostring(lu.footprint and #lu.footprint or 0)
+                        .. " pts)"
+                )
             end
         end
         chunk.landuse = validLanduse
@@ -203,8 +292,15 @@ function ChunkSchema.validateManifest(manifest)
         chunk.barriers = chunk.barriers or {}
         local validBarriers = {}
         for _, barrier in ipairs(chunk.barriers) do
-            if type(barrier.id) == "string" and type(barrier.kind) == "string"
-                and type(barrier.points) == "table" and #barrier.points >= 2 then
+            if
+                type(barrier.id) == "string"
+                and type(barrier.kind) == "string"
+                and type(barrier.points) == "table"
+                and #barrier.points >= 2
+            then
+                for pointIndex, point in ipairs(barrier.points) do
+                    validatePoint3(point, ("%s.barriers[].points[%d]"):format(prefix, pointIndex))
+                end
                 table.insert(validBarriers, barrier)
             else
                 warn(prefix .. ".barriers[]: skipping entry with invalid/missing fields")
