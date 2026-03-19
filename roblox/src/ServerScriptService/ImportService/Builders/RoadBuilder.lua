@@ -448,6 +448,40 @@ local function placeStreetLights(parent, p1, p2, width)
     end
 end
 
+-- Render stairway steps as stacked Part slabs between two points.
+local function paintSteps(parent, p1, p2, width)
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 1 then return end
+    dir = dir.Unit
+
+    -- Compute height difference (steps have varying Y)
+    local heightDiff = math.abs(p2.Y - p1.Y)
+    local stepCount = math.max(2, math.floor(heightDiff / 0.5))  -- ~0.5 stud per step (~0.15m)
+    local stepDepth = segLen / stepCount
+    local stepHeight = heightDiff / stepCount
+    local goingUp = p2.Y > p1.Y
+
+    for i = 0, stepCount - 1 do
+        local t = i / stepCount
+        local stepPos = p1 + dir * (t * segLen + stepDepth * 0.5)
+        local stepY = p1.Y + (goingUp and 1 or -1) * (i * stepHeight) + stepHeight * 0.5
+
+        local step = Instance.new("Part")
+        step.Name = "Step"
+        step.Size = Vector3.new(width, stepHeight, stepDepth)
+        step.Material = Enum.Material.Concrete
+        step.Color = Color3.fromRGB(180, 175, 168)
+        step.Anchored = true
+        step.CanCollide = true
+        step.CFrame = CFrame.lookAt(
+            Vector3.new(stepPos.X, stepY, stepPos.Z),
+            Vector3.new(stepPos.X + dir.X, stepY, stepPos.Z + dir.Z)
+        )
+        step.Parent = parent
+    end
+end
+
 -- Build ALL roads in a chunk by painting them into the terrain.
 function RoadBuilder.BuildAll(parent, roads, originStuds, chunk)
     if not roads or #roads == 0 then
@@ -469,6 +503,17 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
     local width = getEffectiveWidth(road, profileWidth)
     local sidewalkMode = getSidewalkMode(road)
     local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
+
+    -- Steps: render as stacked Part slabs rather than a flat road surface.
+    if road.kind == "steps" then
+        local ox, oy, oz = originStuds.x, originStuds.y, originStuds.z
+        for i = 1, #road.points - 1 do
+            local p1 = Vector3.new(road.points[i].x + ox, road.points[i].y + oy, road.points[i].z + oz)
+            local p2 = Vector3.new(road.points[i+1].x + ox, road.points[i+1].y + oy, road.points[i+1].z + oz)
+            paintSteps(parent, p1, p2, width)
+        end
+        return  -- don't render as a normal road
+    end
 
     -- Overpasses: elevate road by layer * 8 studs when layer > 0.
     local layerElevation = 0
