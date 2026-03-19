@@ -43,5 +43,5 @@
 
 - [x] SP-1: Coordinate contract (meters_per_stud=0.3, schema 0.4.0, elevation authority, terrain 64x64)
 - [x] SP-2: Data source fusion (z15 DEM, live Overpass tags, satellite tile classification, expanded OSM fields maxspeed/lit/oneway/layer/roofHeight/name/width/intermittent/circumference, Lua schema validation, JSON schema and docs updated)
-- [ ] SP-3: Builder fidelity (facades, windows, roofs, lanes, expanded props)
-- [ ] SP-4: Material & texture pipeline (satellite-derived roof/ground/road classification)
+- [x] SP-3: Builder fidelity (bilinear terrain interpolation, slope-aware materials, roof colors/materials from satellite, glass window panes, usage-aware window density, lane-aware road width, directional sidewalks, street lighting, water terrain carving, island preservation, height-based tree scaling, leaf type canopy shapes, palm tree rendering, 25+ tree species)
+- [x] SP-4: Material & texture pipeline (integrated into SP-2 satellite classification + SP-3 builder consumption — roof materials from satellite, per-cell terrain materials, ground cover classification)
