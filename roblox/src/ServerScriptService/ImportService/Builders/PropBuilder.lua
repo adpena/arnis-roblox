@@ -350,13 +350,9 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
 end
 
 function PropBuilder.Build(parent, prop, originStuds, chunk)
-    local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
     if prop.kind == "tree" then
-        local baseY
-        if sampleGroundY then
-            baseY = sampleGroundY(prop.position.x + originStuds.x, prop.position.z + originStuds.z)
-        end
-        return buildTree(parent, prop, originStuds, baseY)
+        -- Use manifest Y directly; DEM elevation is authoritative
+        return buildTree(parent, prop, originStuds, prop.position.y + originStuds.y)
     end
 
     if prop.kind == "street_lamp" or prop.kind == "amenity_street_lamp" then
