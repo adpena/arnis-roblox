@@ -9,6 +9,7 @@ local DayNightCycle = require(script.DayNightCycle)
 
 local Profiler = require(script.Profiler)
 local ChunkLoader = require(script.ChunkLoader)
+local ImportPlanCache = require(script.ImportPlanCache)
 local GroundSampler = require(script.GroundSampler)
 local TerrainBuilder = require(script.Builders.TerrainBuilder)
 local RoadBuilder = require(script.Builders.RoadBuilder)
@@ -19,6 +20,7 @@ local PropBuilder = require(script.Builders.PropBuilder)
 local RoomBuilder = require(script.Builders.RoomBuilder)
 local LanduseBuilder = require(script.Builders.LanduseBuilder)
 local BarrierBuilder = require(script.Builders.BarrierBuilder)
+local MinimapService = require(script.MinimapService)
 
 local ImportService = {}
 
@@ -26,7 +28,7 @@ local DEFAULT_WORLD_ROOT_NAME = "GeneratedWorld"
 
 -- Set up atmospheric and cinematic lighting effects.
 -- Called once after all chunks have been imported.
-local function setupAtmosphere(manifest)
+local function setupAtmosphere(_manifest)
     local Lighting = game:GetService("Lighting")
 
     -- Atmosphere
@@ -40,8 +42,8 @@ local function setupAtmosphere(manifest)
     atmosphere.Offset = 0.25
     atmosphere.Glare = 0
     atmosphere.Haze = 1
-    atmosphere.Color = Color3.fromRGB(199, 210, 225)   -- cool blue-grey
-    atmosphere.Decay = Color3.fromRGB(106, 112, 125)   -- distance fade
+    atmosphere.Color = Color3.fromRGB(199, 210, 225) -- cool blue-grey
+    atmosphere.Decay = Color3.fromRGB(106, 112, 125) -- distance fade
 
     -- Sky / sun position (ClockTime and GeographicLatitude are set by DayNightCycle.Configure)
     Lighting.Brightness = 2
@@ -69,7 +71,7 @@ local function setupAtmosphere(manifest)
     cc.Brightness = 0.02
     cc.Contrast = 0.05
     cc.Saturation = 0.1
-    cc.TintColor = Color3.fromRGB(255, 248, 240)   -- warm white
+    cc.TintColor = Color3.fromRGB(255, 248, 240) -- warm white
 
     -- Sun rays for god rays through buildings
     local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
@@ -238,15 +240,17 @@ local function makeImportChunkOptions(options, config)
     }
 end
 
-local function shouldImportLayer(layers, layerName)
-    return layers == nil or layers[layerName] == true
-end
-
 function ImportService.ImportChunk(chunk, options)
     options = options or {}
     local config = options.config or DefaultWorldConfig
     local layers = options.layers
-    local selectiveLayers = layers ~= nil
+    local plan = ImportPlanCache.GetOrCreatePlan(chunk, {
+        config = config,
+        configSignature = options.configSignature,
+        layerSignatures = options.layerSignatures,
+        layers = layers,
+    })
+    local selectiveLayers = plan.selectiveLayers
     local _nonBlocking, maybeYield = makePacingController(options)
     local shouldCancel = if type(options.shouldCancel) == "function" then options.shouldCancel else nil
 
@@ -311,8 +315,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local terrainFolder = nil
-    if shouldImportLayer(layers, "terrain") then
-        terrainFolder = prepareLayerFolder("Terrain", selectiveLayers)
+    if plan.folderSpecs.terrain then
+        terrainFolder = prepareLayerFolder(plan.folderSpecs.terrain.name, plan.folderSpecs.terrain.clearChildren)
     end
     if terrainFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -323,8 +327,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local roadsFolder = nil
-    if shouldImportLayer(layers, "roads") then
-        roadsFolder = prepareLayerFolder("Roads", selectiveLayers)
+    if plan.folderSpecs.roads then
+        roadsFolder = prepareLayerFolder(plan.folderSpecs.roads.name, plan.folderSpecs.roads.clearChildren)
     end
     if roadsFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -335,8 +339,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local railsFolder = nil
-    if shouldImportLayer(layers, "roads") then
-        railsFolder = prepareLayerFolder("Rails", selectiveLayers)
+    if plan.folderSpecs.rails then
+        railsFolder = prepareLayerFolder(plan.folderSpecs.rails.name, plan.folderSpecs.rails.clearChildren)
     end
     if railsFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -347,8 +351,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local buildingsFolder = nil
-    if shouldImportLayer(layers, "buildings") then
-        buildingsFolder = prepareLayerFolder("Buildings", selectiveLayers)
+    if plan.folderSpecs.buildings then
+        buildingsFolder = prepareLayerFolder(plan.folderSpecs.buildings.name, plan.folderSpecs.buildings.clearChildren)
     end
     if buildingsFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -359,8 +363,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local waterFolder = nil
-    if shouldImportLayer(layers, "water") then
-        waterFolder = prepareLayerFolder("Water", selectiveLayers)
+    if plan.folderSpecs.water then
+        waterFolder = prepareLayerFolder(plan.folderSpecs.water.name, plan.folderSpecs.water.clearChildren)
     end
     if waterFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -371,8 +375,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local propsFolder = nil
-    if shouldImportLayer(layers, "props") then
-        propsFolder = prepareLayerFolder("Props", selectiveLayers)
+    if plan.folderSpecs.props then
+        propsFolder = prepareLayerFolder(plan.folderSpecs.props.name, plan.folderSpecs.props.clearChildren)
     end
     if propsFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -383,8 +387,8 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local landuseFolder = nil
-    if shouldImportLayer(layers, "landuse") then
-        landuseFolder = prepareLayerFolder("Landuse", selectiveLayers)
+    if plan.folderSpecs.landuse then
+        landuseFolder = prepareLayerFolder(plan.folderSpecs.landuse.name, plan.folderSpecs.landuse.clearChildren)
     end
     if landuseFolder and checkpoint() then
         Profiler.finish(profile, {
@@ -395,17 +399,18 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     local barriersFolder = nil
-    if shouldImportLayer(layers, "barriers") then
-        barriersFolder = prepareLayerFolder("Barriers", selectiveLayers)
+    if plan.folderSpecs.barriers then
+        barriersFolder = prepareLayerFolder(plan.folderSpecs.barriers.name, plan.folderSpecs.barriers.clearChildren)
     end
     maybeYield()
 
-    if shouldImportLayer(layers, "terrain") and chunk.terrain and config.TerrainMode ~= "none" then
+    if plan.actionSet.terrain then
+        local terrainPlan = TerrainBuilder.PrepareChunk(chunk)
         if selectiveLayers then
-            TerrainBuilder.Clear(chunk)
+            TerrainBuilder.Clear(chunk, terrainPlan)
         end
         local p = Profiler.begin("BuildTerrain")
-        TerrainBuilder.Build(terrainFolder, chunk)
+        TerrainBuilder.Build(terrainFolder, chunk, terrainPlan)
         Profiler.finish(p)
         if checkpoint() then
             Profiler.finish(profile, {
@@ -417,7 +422,7 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     -- Landuse fills go BEFORE roads so roads paint over them
-    if shouldImportLayer(layers, "landuse") and chunk.landuse and #chunk.landuse > 0 then
+    if plan.actionSet.landuse then
         local pLanduse = Profiler.begin("BuildLanduse")
         LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds, landuseFolder, chunk)
         Profiler.finish(pLanduse)
@@ -430,7 +435,7 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    if shouldImportLayer(layers, "roads") and config.RoadMode ~= "none" then
+    if plan.actionSet.roads then
         local pRoads = Profiler.begin("BuildRoads")
         if config.RoadMode == "mesh" then
             -- Merge all ground-level road surfaces into EditableMesh objects
@@ -445,9 +450,7 @@ function ImportService.ImportChunk(chunk, options)
                 RailBuilder.Build(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
         else
-            forEachWithPacing(chunk.roads, function(road)
-                RoadBuilder.FallbackBuild(roadsFolder, road, chunk.originStuds, chunk)
-            end, maybeYield)
+            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk, maybeYield)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.FallbackBuild(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
@@ -463,7 +466,7 @@ function ImportService.ImportChunk(chunk, options)
 
         -- Imprint road surfaces into terrain voxels so slopes are flattened
         -- under road segments. Only runs when both terrain and roads are present.
-        if chunk.roads and #chunk.roads > 0 and chunk.terrain and config.TerrainMode ~= "none" then
+        if plan.actionSet.roadImprint then
             local pImprint = Profiler.begin("ImprintRoads")
             TerrainBuilder.ImprintRoads(chunk.roads, chunk.originStuds, chunk)
             Profiler.finish(pImprint)
@@ -477,7 +480,7 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    if shouldImportLayer(layers, "barriers") then
+    if plan.actionSet.barriers then
         local pBarriers = Profiler.begin("BuildBarriers")
         BarrierBuilder.BuildAll(chunk, barriersFolder)
         Profiler.finish(pBarriers)
@@ -490,7 +493,7 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    if shouldImportLayer(layers, "buildings") and config.BuildingMode ~= "none" then
+    if plan.actionSet.buildings then
         local pBldgs = Profiler.begin("BuildBuildings")
         local windowBudget = {
             used = 0,
@@ -499,9 +502,8 @@ function ImportService.ImportChunk(chunk, options)
         if config.BuildingMode == "shellMesh" then
             -- Merge opaque wall + flat-roof geometry into per-material EditableMeshes
             -- (10-100x draw call reduction). Windows/shaped roofs remain as Parts.
-            local builtModelsById = BuildingBuilder.MeshBuildAll(
-                buildingsFolder, chunk.buildings, chunk.originStuds, chunk, config
-            )
+            local builtModelsById =
+                BuildingBuilder.MeshBuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, chunk, config)
             -- Build interiors (merged by material across chunk)
             RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, builtModelsById)
         elseif config.BuildingMode == "shellParts" then
@@ -524,7 +526,7 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    if shouldImportLayer(layers, "water") and config.WaterMode ~= "none" then
+    if plan.actionSet.water then
         local pWater = Profiler.begin("BuildWater")
         local waterSampler = if chunk.terrain then GroundSampler.createSampler(chunk) else nil
         if config.WaterMode == "mesh" then
@@ -546,7 +548,7 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    if shouldImportLayer(layers, "props") then
+    if plan.actionSet.props then
         local pProps = Profiler.begin("BuildProps")
         forEachWithPacing(chunk.props, function(prop)
             PropBuilder.Build(propsFolder, prop, chunk.originStuds, chunk)
@@ -562,6 +564,7 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     ChunkLoader.RegisterChunk(chunk.id, chunkFolder, chunk, {
+        planKey = plan.key,
         configSignature = options.configSignature,
         layerSignatures = options.layerSignatures,
     })
@@ -571,6 +574,7 @@ function ImportService.ImportChunk(chunk, options)
     Profiler.finish(profile, {
         chunkId = chunk.id,
         instanceCount = artifactCount,
+        planKey = plan.key,
     })
 
     return chunkFolder, artifactCount
@@ -658,6 +662,8 @@ function ImportService.ImportManifest(manifest, options)
         stats.barriersImported += #(chunk.barriers or {})
         stats.totalInstances += artifactCount or 0
 
+        MinimapService.RegisterChunk(chunk)
+
         if nonBlocking then
             maybeYield(chunkIndex <= startupChunkCount)
         end
@@ -700,6 +706,10 @@ function ImportService.ImportManifest(manifest, options)
 
     if config.EnableDayNightCycle ~= false then
         DayNightCycle.Start()
+    end
+
+    if config.EnableMinimap ~= false then
+        MinimapService.Start()
     end
 
     return stats

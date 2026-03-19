@@ -83,6 +83,13 @@ local WorldConfig = {
     DateTime = "auto",           -- "auto" = system time at location, or "2024-06-15T14:00" for specific time
 
     -- ═══════════════════════════════════════════════════════════════
+    -- MINIMAP
+    -- ═══════════════════════════════════════════════════════════════
+    EnableMinimap = true,
+    MinimapRadius = 400,         -- world studs visible in minimap
+    MinimapSize = 200,           -- pixel resolution
+
+    -- ═══════════════════════════════════════════════════════════════
     -- INSTANCE BUDGETS (set high for powerful hardware)
     -- ═══════════════════════════════════════════════════════════════
     InstanceBudget = {
