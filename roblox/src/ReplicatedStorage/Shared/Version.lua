@@ -1,5 +1,5 @@
 local Version = {
-    SchemaVersion = "0.2.0",
+    SchemaVersion = "0.4.0",
     ScaffoldVersion = "0.1.0",
 }
 
