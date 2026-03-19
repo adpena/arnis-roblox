@@ -90,15 +90,17 @@ fn landuse_material(kind: &str) -> String {
 pub struct Chunker {
     chunk_size_studs: i32,
     meters_per_stud: f64,
+    terrain_cell_size: i32,
     center_latlon: LatLon,
     chunks: HashMap<ChunkId, Chunk>,
 }
 
 impl Chunker {
-    pub fn new(chunk_size_studs: i32, meters_per_stud: f64, center_latlon: LatLon) -> Self {
+    pub fn new(chunk_size_studs: i32, meters_per_stud: f64, terrain_cell_size: i32, center_latlon: LatLon) -> Self {
         Self {
             chunk_size_studs,
             meters_per_stud,
+            terrain_cell_size,
             center_latlon,
             chunks: HashMap::new(),
         }
@@ -118,7 +120,9 @@ impl Chunker {
             let origin = chunk_origin(id, chunk_size, center, meters_per_stud, elevation);
 
             // Build terrain grid for the chunk
-            let cell_size = 4;
+            // Cell size is configurable: 2-stud cells = 128×128 grid (insane fidelity)
+            // 4-stud cells = 64×64 grid (high fidelity), 8-stud cells = 32×32 (balanced)
+            let cell_size = self.terrain_cell_size;
             let grid_dim = (chunk_size / cell_size) as usize;
             let total_cells = grid_dim * grid_dim;
 
@@ -650,7 +654,7 @@ mod tests {
 
     #[test]
     fn split_polyline_across_chunks() {
-        let chunker = Chunker::new(100, 1.0, LatLon::new(0.0, 0.0));
+        let chunker = Chunker::new(100, 1.0, 4, LatLon::new(0.0, 0.0));
         let points = vec![
             Vec3::new(50.0, 0.0, 50.0),  // Chunk (0,0)
             Vec3::new(150.0, 0.0, 50.0), // Chunk (1,0)

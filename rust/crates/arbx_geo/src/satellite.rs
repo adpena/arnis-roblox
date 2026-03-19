@@ -18,8 +18,9 @@ impl Rgb {
 }
 
 /// Maximum number of decoded satellite tiles held in memory at once.
-/// Each z17 tile is ~256×256 RGBA = ~256KB decoded. 64 tiles ≈ 16MB.
-const MAX_CACHED_TILES: usize = 64;
+/// Each z19 tile is ~256×256 RGBA = ~256KB decoded. 4096 tiles ≈ 1GB.
+/// Designed for high-memory workstations (36-128GB unified).
+const MAX_CACHED_TILES: usize = 4096;
 
 pub struct SatelliteTileProvider {
     zoom: u32,
@@ -32,7 +33,7 @@ impl SatelliteTileProvider {
         let cache_path = PathBuf::from(cache_dir);
         fs::create_dir_all(&cache_path).ok();
         Self {
-            zoom: 17,
+            zoom: 19,  // z19 ≈ 0.3m/pixel — per-stud satellite resolution
             cache_dir: cache_path,
             tiles: HashMap::new(),
         }

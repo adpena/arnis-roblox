@@ -1,19 +1,86 @@
+--[[
+    WorldConfig — Central configuration for the Arnis HD Pipeline.
+
+    All rendering parameters are configurable here. For open-source users:
+    adjust these values based on your hardware capabilities.
+
+    Hardware reference:
+    - "insane" preset: M5 Max 36-128GB, RTX 4090+ equivalent
+    - "high" preset: M3 Pro 18GB, RTX 3070 equivalent
+    - "medium" preset: M1 8GB, GTX 1660 equivalent
+]]
+
 local WorldConfig = {
+    -- ═══════════════════════════════════════════════════════════════
+    -- CHUNK & SCALE
+    -- ═══════════════════════════════════════════════════════════════
     ChunkSizeStuds = 256,
 
-    TerrainMode = "voxel", -- Options: "none", "debugParts", "voxel"
-    RoadMode = "mesh", -- Options: "none", "parts", "mesh", "hybrid"
-    BuildingMode = "shellMesh", -- Options: "none", "shellParts", "shellMesh", "prefab"
-    WaterMode = "mesh", -- Added for completeness
-    LanduseMode = "fill", -- Options: "none", "fill"
+    -- ═══════════════════════════════════════════════════════════════
+    -- RENDER MODES
+    -- ═══════════════════════════════════════════════════════════════
+    TerrainMode = "voxel",       -- "none" | "debugParts" | "voxel"
+    RoadMode = "mesh",           -- "none" | "parts" | "mesh" | "hybrid"
+    BuildingMode = "shellMesh",  -- "none" | "shellParts" | "shellMesh" | "prefab"
+    WaterMode = "mesh",          -- "none" | "mesh"
+    LanduseMode = "fill",        -- "none" | "fill"
 
-    StreamingEnabled = false, -- importer-driven chunk streaming; keep off until runtime path is validated for your map
-    StreamingTargetRadius = 4096, -- Distance to keep any representation loaded
-    HighDetailRadius = 2048, -- Distance to keep full buildings/water/props loaded
+    -- ═══════════════════════════════════════════════════════════════
+    -- TERRAIN FIDELITY
+    -- ═══════════════════════════════════════════════════════════════
+    VoxelSize = 1,               -- studs; 1 = maximum smoothness (4 = fast, 2 = balanced)
+    TerrainThickness = 8,        -- studs below surface to fill with solid terrain
+    SlopeRockThreshold = 1.0,    -- rise/run ratio above which terrain becomes Rock (≈45°)
+    SlopeGroundThreshold = 0.47, -- rise/run ratio above which terrain becomes Ground (≈25°)
 
+    -- ═══════════════════════════════════════════════════════════════
+    -- BUILDING FIDELITY
+    -- ═══════════════════════════════════════════════════════════════
+    EnableWindowRendering = true,
+    EnableRoomInteriors = true,
+    WindowSpacing = {            -- studs between windows by building usage
+        office = 4,
+        residential = 6,
+        apartments = 6,
+        house = 6,
+        warehouse = 12,
+        industrial = 12,
+        default = 8,
+    },
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- ROAD FIDELITY
+    -- ═══════════════════════════════════════════════════════════════
+    LaneWidth = 12,              -- studs per lane (~3.6m at 0.3 m/stud)
+    EnableStreetLighting = true,
+    StreetLightInterval = 50,    -- studs between street lights
+    StreetLightRange = 40,       -- PointLight range in studs
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- WATER FIDELITY
+    -- ═══════════════════════════════════════════════════════════════
+    WaterCarveDepth = 4,         -- studs to carve below water surface
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- PROP FIDELITY
+    -- ═══════════════════════════════════════════════════════════════
+    TreeMetersToStuds = 1 / 0.3, -- conversion factor for real-world tree heights
+    EnablePalmRendering = true,
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- STREAMING & LOD
+    -- ═══════════════════════════════════════════════════════════════
+    StreamingEnabled = false,
+    StreamingTargetRadius = 4096,
+    HighDetailRadius = 2048,
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- INSTANCE BUDGETS (set high for powerful hardware)
+    -- ═══════════════════════════════════════════════════════════════
     InstanceBudget = {
-        MaxPerChunk = 2000, -- Increased for higher detail
-        MaxPropsPerChunk = 500,
+        MaxPerChunk = 8000,
+        MaxPropsPerChunk = 2000,
+        MaxWindowsPerChunk = 10000,  -- effectively unlimited on M5 Max
     },
 }
 

@@ -26,8 +26,10 @@ function TerrainBuilder.Clear(chunk)
 	terrain:FillBlock(clearCFrame, clearSize, Enum.Material.Air)
 end
 
-local VOXEL_SIZE = 2
-local TERRAIN_THICKNESS = 8 -- studs below the surface to fill
+-- Configurable via WorldConfig; defaults favor maximum fidelity
+local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
+local VOXEL_SIZE = WorldConfig.VoxelSize or 1
+local TERRAIN_THICKNESS = WorldConfig.TerrainThickness or 8
 
 function TerrainBuilder.Build(_parent, chunk)
 	local terrainGrid = chunk.terrain

@@ -18,6 +18,7 @@ pub struct ExportConfig {
     pub world_name: String,
     pub chunk_size_studs: i32,
     pub meters_per_stud: f64,
+    pub terrain_cell_size: i32,
     pub include_props: bool,
     pub style: StyleMapper,
 }
@@ -28,6 +29,7 @@ impl Default for ExportConfig {
             world_name: "ExportedWorld".to_string(),
             chunk_size_studs: 256,
             meters_per_stud: 0.3,
+            terrain_cell_size: 2,  // 2-stud cells = 128×128 grid = sub-meter precision
             include_props: true,
             style: StyleMapper::default(),
         }
@@ -65,10 +67,10 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                 id,
                 origin_studs: origin,
                 terrain: Some(TerrainGrid {
-                    cell_size_studs: 4,
-                    width: 64, // Match 256/4
-                    depth: 64,
-                    heights: vec![0.0; 4096], // Chunker will overwrite this if ingested, but here we just sample manually if needed
+                    cell_size_studs: 2,
+                    width: 128, // Match 256/2
+                    depth: 128,
+                    heights: vec![0.0; 16384], // Chunker will overwrite this if ingested, but here we just sample manually if needed
                     materials: None,
                     material: config.style.get_terrain_material("grass"),
                 }),
@@ -139,7 +141,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
     }
 
     // Since we want realistic terrain in the sample, let's actually run it through the chunker logic
-    let mut chunker = Chunker::new(config.chunk_size_studs, config.meters_per_stud, center);
+    let mut chunker = Chunker::new(config.chunk_size_studs, config.meters_per_stud, config.terrain_cell_size, center);
 
     // Ingest the sample features
     for chunk in chunks {
@@ -351,6 +353,7 @@ pub fn export_to_chunks(
     let mut chunker = Chunker::new(
         config.chunk_size_studs,
         config.meters_per_stud,
+        config.terrain_cell_size,
         bbox.center(),
     );
 

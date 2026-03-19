@@ -76,14 +76,18 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut source_path: Option<PathBuf> = None;
     // Default bbox covers downtown Austin. Overridden by --bbox to match the OSM fetch area.
     let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
-    // 1 stud = 1 meter by default. Use --meters-per-stud to scale the world.
-    let mut meters_per_stud: f64 = 1.0;
+    // 0.3 = Roblox humanoid-scale. Use --meters-per-stud to override.
+    let mut meters_per_stud: f64 = 0.3;
     // --live: fetch from the Overpass API instead of a local file.
     let mut live = false;
     // --cache-dir: where to store cached Overpass responses (default: out/overpass).
     let mut cache_dir = "out/overpass".to_string();
     // --satellite: optional satellite tile directory for material enrichment.
     let mut satellite_dir: Option<String> = None;
+    // --terrain-cell-size: terrain grid cell size in studs (2 = insane, 4 = high, 8 = balanced).
+    let mut terrain_cell_size: i32 = 2;
+    // --yolo: maximum fidelity preset — all settings cranked to max.
+    let mut yolo = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -134,6 +138,25 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 let value = args.get(i + 1).ok_or("--cache-dir requires a path")?;
                 cache_dir = value.clone();
                 i += 2;
+            }
+            "--terrain-cell-size" => {
+                let value = args.get(i + 1).ok_or("--terrain-cell-size requires a number")?;
+                terrain_cell_size = value.parse::<i32>()
+                    .map_err(|_| format!("invalid --terrain-cell-size: {value}"))?;
+                if terrain_cell_size < 1 || terrain_cell_size > 32 {
+                    return Err("--terrain-cell-size must be 1-32".to_string());
+                }
+                i += 2;
+            }
+            "--yolo" => {
+                yolo = true;
+                terrain_cell_size = 1;  // 256×256 grid = 65,536 cells per chunk
+                // satellite enabled automatically
+                if satellite_dir.is_none() {
+                    satellite_dir = Some("out/tiles/satellite".to_string());
+                }
+                eprintln!("🔥 YOLO MODE: terrain cell=1, satellite=on, maximum fidelity");
+                i += 1;
             }
             "--satellite" => {
                 // Optional tile directory argument: use it if the next token doesn't start with '-'
@@ -195,6 +218,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
 
     let config = ExportConfig {
         meters_per_stud,
+        terrain_cell_size,
         ..ExportConfig::default()
     };
 
