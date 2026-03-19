@@ -6,6 +6,7 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
 local DayNightCycle = require(script.DayNightCycle)
+local LoadingScreen = require(script.LoadingScreen)
 
 local Profiler = require(script.Profiler)
 local ChunkLoader = require(script.ChunkLoader)
@@ -608,6 +609,8 @@ function ImportService.ImportManifest(manifest, options)
     local worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME
     local worldRoot = getWorldRoot(worldRootName)
 
+    LoadingScreen.Show(validated.meta and validated.meta.worldName or "World")
+
     if options.clearFirst then
         ChunkLoader.Clear() -- This now handles folder destruction and prop releasing
         clearResidualChildren(worldRoot)
@@ -681,6 +684,9 @@ function ImportService.ImportManifest(manifest, options)
 
         MinimapService.RegisterChunk(chunk)
 
+        LoadingScreen.UpdateProgress(chunkIndex / #chunksToImport,
+            string.format("Building chunk %d/%d...", chunkIndex, #chunksToImport))
+
         if nonBlocking then
             maybeYield(chunkIndex <= startupChunkCount)
         end
@@ -728,6 +734,8 @@ function ImportService.ImportManifest(manifest, options)
     if config.EnableMinimap ~= false then
         MinimapService.Start()
     end
+
+    LoadingScreen.Hide()
 
     return stats
 end
