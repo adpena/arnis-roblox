@@ -1,6 +1,19 @@
 {
   "name": "ArnisRoblox",
   "servePort": 34872,
+  "vertigoSync": {
+    "builders": {
+      "roots": [
+        "src/ServerScriptService/StudioPreview/AustinPreviewBuilder.lua"
+      ],
+      "dependencyRoots": [
+        "src/ServerScriptService/StudioPreview",
+        "src/ServerScriptService/ImportService",
+        "src/ReplicatedStorage/Shared",
+        "src/ServerStorage"
+      ]
+    }
+  },
   "globIgnorePaths": [
     "**/*.md",
     "**/.DS_Store"
@@ -16,10 +29,16 @@
     "ServerStorage": {
       "$path": "src/ServerStorage"
     },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      }
+    },
     "Workspace": {
       "$className": "Workspace",
       "$properties": {
-        "StreamingEnabled": true
+        "StreamingEnabled": false
       },
       "$path": "src/Workspace"
     }
