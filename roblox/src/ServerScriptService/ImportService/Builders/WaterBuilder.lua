@@ -61,7 +61,7 @@ local function pointInPolygon(px, pz, pts)
 end
 
 -- Paint a ribbon water feature (river/stream) into terrain.
-local function paintRibbonSegment(terrain, p1, p2, width)
+local function paintRibbonSegment(terrain, p1, p2, width, waterMaterial)
     local delta = p2 - p1
     local length = delta.Magnitude
     if length < 0.01 then
@@ -71,7 +71,7 @@ local function paintRibbonSegment(terrain, p1, p2, width)
     local midY = p1.Y - WATER_DEPTH * 0.5
     local midPos = Vector3.new((p1.X + p2.X) * 0.5, midY, (p1.Z + p2.Z) * 0.5)
     local cf = CFrame.lookAt(midPos, Vector3.new(p2.X, midY, p2.Z))
-    terrain:FillBlock(cf, Vector3.new(width, WATER_DEPTH, length), Enum.Material.Water)
+    terrain:FillBlock(cf, Vector3.new(width, WATER_DEPTH, length), waterMaterial or Enum.Material.Water)
 end
 
 -- Carve a channel of Air below a ribbon water segment.
@@ -200,18 +200,24 @@ function WaterBuilder.BuildAll(parent, waters, originStuds, chunk)
     if not waters or #waters == 0 then
         return
     end
+    local sampleGroundY = if chunk and chunk.terrain then GroundSampler.createSampler(chunk) else nil
     for _, water in ipairs(waters) do
-        WaterBuilder.FallbackBuild(parent, water, originStuds, chunk)
+        WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
     end
 end
 
-function WaterBuilder.Build(parent, water, originStuds, chunk)
-    WaterBuilder.FallbackBuild(parent, water, originStuds, chunk)
+function WaterBuilder.Build(parent, water, originStuds, chunk, sampleGroundY)
+    WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
 end
 
-function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk)
+function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk, sampleGroundY)
     local terrain = Workspace.Terrain
-    local sampleGroundY = GroundSampler.createSampler(chunk)
+    sampleGroundY = sampleGroundY or GroundSampler.createSampler(chunk)
+    -- Intermittent water bodies (seasonal streambeds) render as dry sand
+    local waterMaterial = Enum.Material.Water
+    if water.intermittent then
+        waterMaterial = Enum.Material.Sand
+    end
     if water.points then
         local width = water.widthStuds or 8
         for i = 1, #water.points - 1 do
@@ -221,7 +227,7 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk)
             local surfaceY2 = resolveWaterSurfaceY(water, p2.Y, chunk, p2.X, p2.Z)
             local resolvedP1 = Vector3.new(p1.X, surfaceY1, p1.Z)
             local resolvedP2 = Vector3.new(p2.X, surfaceY2, p2.Z)
-            paintRibbonSegment(terrain, resolvedP1, resolvedP2, width)
+            paintRibbonSegment(terrain, resolvedP1, resolvedP2, width, waterMaterial)
             -- Carve terrain below the ribbon channel after placing water material.
             carveRibbonChannel(terrain, resolvedP1, resolvedP2, width)
         end
@@ -234,7 +240,7 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk)
         local surfaceY = water.surfaceY or estimatePolygonSurfaceY(chunk, worldPts, sampleGroundY)
         local cy = surfaceY - WATER_DEPTH * 0.5
         -- Scanline fill for accurate polygon shape
-        paintPolygonScanline(terrain, worldPts, cy, Enum.Material.Water)
+        paintPolygonScanline(terrain, worldPts, cy, waterMaterial)
         -- Restore islands: fill inner rings (holes) with terrain
         local holePtsList = nil
         if water.holes then
