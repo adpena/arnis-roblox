@@ -3,7 +3,7 @@
 
 local GroundSampler = {}
 
-local DEFAULT_CELL_SIZE = 16
+local DEFAULT_CELL_SIZE = 4
 local function lerp(a, b, t)
     return a + (b - a) * t
 end
