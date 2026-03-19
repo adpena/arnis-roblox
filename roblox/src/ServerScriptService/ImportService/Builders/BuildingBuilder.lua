@@ -109,34 +109,106 @@ local ROOF_THICKNESS = 0.8
 
 -- Material palette keyed by OSM building usage (used for wall Parts — any Enum.Material valid)
 local USAGE_MATERIAL = {
+    -- Residential
     residential = Enum.Material.Brick,
     apartments = Enum.Material.Brick,
-    house = Enum.Material.Brick,
+    house = Enum.Material.WoodPlanks,
+    detached = Enum.Material.WoodPlanks,
+    terrace = Enum.Material.Brick,
+    dormitory = Enum.Material.Brick,
+    -- Commercial
     commercial = Enum.Material.Concrete,
-    retail = Enum.Material.Concrete,
+    retail = Enum.Material.SmoothPlastic,
     office = Enum.Material.Glass,
-    industrial = Enum.Material.Metal,
-    warehouse = Enum.Material.Metal,
-    church = Enum.Material.SmoothPlastic,
-    school = Enum.Material.SmoothPlastic,
+    bank = Enum.Material.Marble,
+    supermarket = Enum.Material.Concrete,
+    mall = Enum.Material.SmoothPlastic,
+    hotel = Enum.Material.Marble,
+    -- Civic
     hospital = Enum.Material.SmoothPlastic,
+    school = Enum.Material.Brick,
+    university = Enum.Material.Limestone,
+    civic = Enum.Material.Limestone,
+    government = Enum.Material.Limestone,
+    courthouse = Enum.Material.Marble,
+    -- Industrial
+    industrial = Enum.Material.DiamondPlate,
+    warehouse = Enum.Material.CorrugatedSteel,
+    factory = Enum.Material.DiamondPlate,
+    -- Religious
+    religious = Enum.Material.Limestone,
+    church = Enum.Material.Cobblestone,
+    cathedral = Enum.Material.Cobblestone,
+    mosque = Enum.Material.Marble,
+    temple = Enum.Material.Sandstone,
+    -- Utility
+    garage = Enum.Material.CorrugatedSteel,
+    shed = Enum.Material.WoodPlanks,
+    barn = Enum.Material.WoodPlanks,
+    -- Default
     yes = Enum.Material.Concrete,
     default = Enum.Material.Concrete,
 }
 
+-- OSM building:material tag → Roblox material
+local MATERIAL_TAG_MAP = {
+    brick = Enum.Material.Brick,
+    concrete = Enum.Material.Concrete,
+    glass = Enum.Material.Glass,
+    metal = Enum.Material.Metal,
+    steel = Enum.Material.DiamondPlate,
+    wood = Enum.Material.WoodPlanks,
+    stone = Enum.Material.Cobblestone,
+    granite = Enum.Material.Granite,
+    limestone = Enum.Material.Limestone,
+    sandstone = Enum.Material.Sandstone,
+    marble = Enum.Material.Marble,
+    plaster = Enum.Material.SmoothPlastic,
+    stucco = Enum.Material.SmoothPlastic,
+    render = Enum.Material.SmoothPlastic,
+    cladding = Enum.Material.CorrugatedSteel,
+    timber_framing = Enum.Material.WoodPlanks,
+}
+
 -- Floor material for Terrain:FillBlock — must be a valid terrain material (no Glass/Metal/Neon)
 local USAGE_FLOOR_MATERIAL = {
+    -- Residential
     residential = Enum.Material.Brick,
     apartments = Enum.Material.Brick,
     house = Enum.Material.Brick,
+    detached = Enum.Material.Brick,
+    terrace = Enum.Material.Brick,
+    dormitory = Enum.Material.Brick,
+    -- Commercial
     commercial = Enum.Material.Concrete,
     retail = Enum.Material.Concrete,
     office = Enum.Material.Concrete, -- Glass → Concrete floor
-    industrial = Enum.Material.Concrete, -- Metal → Concrete floor
-    warehouse = Enum.Material.Concrete,
-    church = Enum.Material.SmoothPlastic,
-    school = Enum.Material.SmoothPlastic,
+    bank = Enum.Material.Concrete,
+    supermarket = Enum.Material.Concrete,
+    mall = Enum.Material.Concrete,
+    hotel = Enum.Material.Concrete,
+    -- Civic
     hospital = Enum.Material.SmoothPlastic,
+    school = Enum.Material.Concrete,
+    university = Enum.Material.Concrete,
+    civic = Enum.Material.Concrete,
+    government = Enum.Material.Concrete,
+    courthouse = Enum.Material.Concrete,
+    -- Industrial
+    industrial = Enum.Material.Concrete, -- DiamondPlate → Concrete floor
+    warehouse = Enum.Material.Concrete, -- CorrugatedSteel → Concrete floor
+    factory = Enum.Material.Concrete,
+    -- Religious
+    religious = Enum.Material.Concrete,
+    church = Enum.Material.Cobblestone,
+    cathedral = Enum.Material.Cobblestone,
+    mosque = Enum.Material.Concrete,
+    temple = Enum.Material.Sandstone,
+    -- Utility
+    garage = Enum.Material.Concrete,
+    shed = Enum.Material.Concrete,
+    barn = Enum.Material.Concrete,
+    -- Default
     yes = Enum.Material.Concrete,
     default = Enum.Material.Concrete,
 }
@@ -191,7 +263,7 @@ local BUILDING_PALETTE = {
 }
 
 local function getMaterial(building)
-    -- First try the manifest material string directly
+    -- First try the manifest material string directly via Enum lookup
     if building.material then
         local ok, mat = pcall(function()
             return Enum.Material[building.material]
@@ -199,10 +271,105 @@ local function getMaterial(building)
         if ok and mat then
             return mat
         end
+        -- Also try the OSM tag map (lowercase match)
+        local tagMat = MATERIAL_TAG_MAP[building.material:lower()]
+        if tagMat then
+            return tagMat
+        end
     end
     -- Fall back to usage/kind lookup
     local usage = building.usage or building.kind or "default"
     return USAGE_MATERIAL[usage] or USAGE_MATERIAL.default
+end
+
+-- Per-material color palettes: each entry is {R, G, B} for Color3.fromRGB.
+-- Index is chosen deterministically from the building ID hash so the same
+-- building always gets the same shade, yet neighbouring buildings vary.
+local MATERIAL_COLOR_RANGES = {
+    [Enum.Material.Brick] = {
+        { 180, 80, 60 },
+        { 160, 90, 70 },
+        { 200, 100, 75 },
+        { 140, 75, 55 },
+    },
+    [Enum.Material.Concrete] = {
+        { 180, 178, 175 },
+        { 170, 168, 165 },
+        { 190, 188, 185 },
+        { 160, 158, 155 },
+    },
+    [Enum.Material.Limestone] = {
+        { 230, 220, 200 },
+        { 225, 215, 195 },
+        { 235, 225, 205 },
+        { 220, 210, 190 },
+    },
+    [Enum.Material.WoodPlanks] = {
+        { 140, 100, 60 },
+        { 130, 90, 55 },
+        { 150, 110, 65 },
+        { 120, 85, 50 },
+    },
+    [Enum.Material.Marble] = {
+        { 240, 235, 230 },
+        { 235, 230, 225 },
+        { 245, 240, 235 },
+    },
+    [Enum.Material.Cobblestone] = {
+        { 130, 125, 115 },
+        { 120, 115, 105 },
+        { 140, 135, 125 },
+    },
+    [Enum.Material.Sandstone] = {
+        { 210, 185, 145 },
+        { 200, 175, 135 },
+        { 220, 195, 155 },
+    },
+    [Enum.Material.SmoothPlastic] = {
+        { 200, 200, 198 },
+        { 210, 208, 205 },
+        { 190, 190, 188 },
+    },
+    [Enum.Material.DiamondPlate] = {
+        { 165, 168, 172 },
+        { 155, 158, 162 },
+        { 175, 178, 182 },
+    },
+    [Enum.Material.CorrugatedSteel] = {
+        { 155, 155, 150 },
+        { 145, 145, 140 },
+        { 165, 165, 160 },
+    },
+    [Enum.Material.Granite] = {
+        { 130, 125, 120 },
+        { 120, 115, 110 },
+        { 140, 135, 130 },
+    },
+}
+
+-- Return a deterministic color from MATERIAL_COLOR_RANGES for a given material,
+-- or nil if that material has no defined palette (fall through to getColor).
+local function getMaterialColor(material, buildingId)
+    local ranges = MATERIAL_COLOR_RANGES[material]
+    if not ranges then
+        return nil
+    end
+    local idx = (hashId(buildingId) % #ranges) + 1
+    local c = ranges[idx]
+    return Color3.fromRGB(c[1], c[2], c[3])
+end
+
+-- For tall commercial/mixed-use buildings the ground floor uses a glazed
+-- storefront material (Glass) while upper floors use the base wall material.
+local function getWallMaterialForFloor(building, floor, totalFloors)
+    local baseMat = getMaterial(building)
+    if floor == 0 and totalFloors >= 3 then
+        local usage = building.usage or building.kind or ""
+        if usage == "commercial" or usage == "retail" or usage == "mixed" then
+            return Enum.Material.Glass
+        end
+    end
+    return baseMat
 end
 
 local function getColor(building)
@@ -213,8 +380,14 @@ local function getColor(building)
             return Color3.fromRGB(r, g, b)
         end
     end
-    -- Deterministic palette variety based on building ID
+    -- Prefer a material-appropriate color palette for richer visual variety
     local id = building.id or tostring(building)
+    local mat = getMaterial(building)
+    local matColor = getMaterialColor(mat, id)
+    if matColor then
+        return matColor
+    end
+    -- Final fallback: generic building palette
     return BUILDING_PALETTE[(hashId(id) % #BUILDING_PALETTE) + 1]
 end
 
@@ -231,11 +404,18 @@ end
 
 local ROOF_MATERIAL_LOOKUP = {
     Asphalt = Enum.Material.Asphalt,
-    Metal = Enum.Material.Metal,
+    Metal = Enum.Material.CorrugatedSteel, -- corrugated for realism
     Brick = Enum.Material.Brick,
     WoodPlanks = Enum.Material.WoodPlanks,
     Slate = Enum.Material.Slate,
     Concrete = Enum.Material.Concrete,
+    tile = Enum.Material.Brick,    -- closest to clay/concrete roof tiles
+    thatch = Enum.Material.Grass,
+    copper = Enum.Material.Metal,
+    glass = Enum.Material.Glass,
+    Limestone = Enum.Material.Limestone,
+    Sandstone = Enum.Material.Sandstone,
+    Marble = Enum.Material.Marble,
 }
 
 local function getRoofMaterial(building, wallMat)
