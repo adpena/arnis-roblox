@@ -98,6 +98,40 @@ pub struct PropFeature {
     pub circumference: Option<f64>,
 }
 
+/// Compile-time specification for a simple node → prop mapping.
+struct NodePropSpec {
+    tag_key: &'static str,
+    tag_value: &'static str,
+    kind: &'static str,
+    id_prefix: &'static str,
+    extract_height: bool,
+}
+
+const NODE_PROP_SPECS: &[NodePropSpec] = &[
+    NodePropSpec { tag_key: "highway",   tag_value: "street_lamp",       kind: "street_lamp",     id_prefix: "lamp",     extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "bench",             kind: "bench",           id_prefix: "bench",    extract_height: false },
+    NodePropSpec { tag_key: "highway",   tag_value: "bus_stop",          kind: "bus_stop",        id_prefix: "busstop",  extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "bus_shelter",       kind: "bus_stop",        id_prefix: "busstop",  extract_height: false },
+    NodePropSpec { tag_key: "highway",   tag_value: "traffic_signals",   kind: "traffic_signal",  id_prefix: "signal",   extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "waste_basket",      kind: "waste_basket",    id_prefix: "bin",      extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "recycling",         kind: "waste_basket",    id_prefix: "bin",      extract_height: false },
+    NodePropSpec { tag_key: "emergency", tag_value: "fire_hydrant",      kind: "fire_hydrant",    id_prefix: "hydrant",  extract_height: false },
+    NodePropSpec { tag_key: "highway",   tag_value: "crossing",          kind: "crossing",        id_prefix: "crossing", extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "fountain",          kind: "fountain",        id_prefix: "fountain", extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "post_box",          kind: "post_box",        id_prefix: "postbox",  extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "drinking_water",    kind: "drinking_water",  id_prefix: "water",    extract_height: false },
+    NodePropSpec { tag_key: "barrier",   tag_value: "bollard",           kind: "bollard",         id_prefix: "bollard",  extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "vending_machine",   kind: "vending_machine", id_prefix: "vending",  extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "telephone",         kind: "telephone",       id_prefix: "phone",    extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "parking_meter",     kind: "parking_meter",   id_prefix: "pmeter",   extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "parking_entrance",  kind: "parking_meter",   id_prefix: "pmeter",   extract_height: false },
+    NodePropSpec { tag_key: "amenity",   tag_value: "bicycle_parking",   kind: "bicycle_parking", id_prefix: "bikepark", extract_height: false },
+    NodePropSpec { tag_key: "power",     tag_value: "tower",             kind: "power_tower",     id_prefix: "ptower",   extract_height: true  },
+    NodePropSpec { tag_key: "power",     tag_value: "pole",              kind: "power_pole",      id_prefix: "ppole",    extract_height: true  },
+    NodePropSpec { tag_key: "man_made",  tag_value: "surveillance",      kind: "surveillance",    id_prefix: "camera",   extract_height: false },
+    NodePropSpec { tag_key: "man_made",  tag_value: "flagpole",          kind: "flagpole",        id_prefix: "flag",     extract_height: true  },
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanduseFeature {
     pub id: String,
@@ -665,290 +699,35 @@ impl SourceAdapter for OverpassAdapter {
                     continue;
                 }
                 let pos = Mercator::project(ll, center, mps);
-                if tags.get("highway") == Some(&"street_lamp".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("lamp_{}", el.id),
-                        kind: "street_lamp".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
+
+                // Table-driven prop extraction — covers all simple tag → prop mappings.
+                let mut matched = false;
+                for spec in NODE_PROP_SPECS {
+                    if tags.get(spec.tag_key) == Some(&spec.tag_value.to_string()) {
+                        features.push(Feature::Prop(PropFeature {
+                            id: format!("{}_{}", spec.id_prefix, el.id),
+                            kind: spec.kind.to_string(),
+                            position: pos,
+                            yaw_degrees: 0.0,
+                            scale: 1.0,
+                            species: None,
+                            height: if spec.extract_height {
+                                tags.get("height").and_then(|h| h.parse().ok())
+                            } else {
+                                None
+                            },
+                            leaf_type: None,
+                            circumference: None,
+                        }));
+                        matched = true;
+                        break;
+                    }
+                }
+                if matched {
                     continue;
                 }
-                if tags.get("amenity") == Some(&"bench".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("bench_{}", el.id),
-                        kind: "bench".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                if tags.get("highway") == Some(&"bus_stop".to_string())
-                    || tags.get("amenity") == Some(&"bus_shelter".to_string())
-                {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("busstop_{}", el.id),
-                        kind: "bus_stop".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                if tags.get("highway") == Some(&"traffic_signals".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("signal_{}", el.id),
-                        kind: "traffic_signal".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                if tags.get("amenity") == Some(&"waste_basket".to_string())
-                    || tags.get("amenity") == Some(&"recycling".to_string())
-                {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("bin_{}", el.id),
-                        kind: "waste_basket".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                if tags.get("emergency") == Some(&"fire_hydrant".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("hydrant_{}", el.id),
-                        kind: "fire_hydrant".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                if tags.get("highway") == Some(&"crossing".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("crossing_{}", el.id),
-                        kind: "crossing".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Fountains
-                if tags.get("amenity") == Some(&"fountain".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("fountain_{}", el.id),
-                        kind: "fountain".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Post boxes / mailboxes
-                if tags.get("amenity") == Some(&"post_box".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("postbox_{}", el.id),
-                        kind: "post_box".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Drinking water fountains
-                if tags.get("amenity") == Some(&"drinking_water".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("water_{}", el.id),
-                        kind: "drinking_water".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Bollards
-                if tags.get("barrier") == Some(&"bollard".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("bollard_{}", el.id),
-                        kind: "bollard".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Vending machines
-                if tags.get("amenity") == Some(&"vending_machine".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("vending_{}", el.id),
-                        kind: "vending_machine".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Telephone booths
-                if tags.get("amenity") == Some(&"telephone".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("phone_{}", el.id),
-                        kind: "telephone".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Parking meters
-                if tags.get("amenity") == Some(&"parking_meter".to_string())
-                    || tags.get("amenity") == Some(&"parking_entrance".to_string())
-                {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("pmeter_{}", el.id),
-                        kind: "parking_meter".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Bicycle parking
-                if tags.get("amenity") == Some(&"bicycle_parking".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("bikepark_{}", el.id),
-                        kind: "bicycle_parking".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Power towers
-                if tags.get("power") == Some(&"tower".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("ptower_{}", el.id),
-                        kind: "power_tower".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: tags.get("height").and_then(|h| h.parse().ok()),
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Power poles
-                if tags.get("power") == Some(&"pole".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("ppole_{}", el.id),
-                        kind: "power_pole".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: tags.get("height").and_then(|h| h.parse().ok()),
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Surveillance cameras
-                if tags.get("man_made") == Some(&"surveillance".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("camera_{}", el.id),
-                        kind: "surveillance".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: None,
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
-                // Flag poles
-                if tags.get("man_made") == Some(&"flagpole".to_string()) {
-                    features.push(Feature::Prop(PropFeature {
-                        id: format!("flag_{}", el.id),
-                        kind: "flagpole".to_string(),
-                        position: pos,
-                        yaw_degrees: 0.0,
-                        scale: 1.0,
-                        species: None,
-                        height: tags.get("height").and_then(|h| h.parse().ok()),
-                        leaf_type: None,
-                        circumference: None,
-                    }));
-                    continue;
-                }
+
+                // Tree detection — special case with species/leaf_type/circumference enrichment.
                 if tags.get("natural") == Some(&"tree".to_string())
                     || tags.get("amenity") == Some(&"tree".to_string())
                 {
