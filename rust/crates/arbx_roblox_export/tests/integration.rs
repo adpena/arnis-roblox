@@ -93,6 +93,10 @@ fn multi_chunk_export_correct() {
             usage: None,
             colour: None,
             material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
         }),
         Feature::Building(arbx_pipeline::BuildingFeature {
             id: "b2".to_string(),
@@ -113,6 +117,10 @@ fn multi_chunk_export_correct() {
             usage: None,
             colour: None,
             material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
         }),
     ];
 

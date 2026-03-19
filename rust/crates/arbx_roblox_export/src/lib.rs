@@ -89,6 +89,10 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                             Vec3::new(128.0, 2.0, 64.0),
                             Vec3::new(256.0, 2.0, 64.0),
                         ],
+                        maxspeed: None,
+                        lit: None,
+                        oneway: None,
+                        layer: None,
                     }]
                 } else {
                     vec![]
@@ -119,6 +123,8 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                         roof: "flat".to_string(),
                         facade_style: None,
                         rooms: Vec::new(),
+                        roof_height: None,
+                        name: None,
                     }]
                 } else {
                     vec![]
@@ -160,6 +166,10 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                     tunnel: None,
                     sidewalk: None,
                     points: world_points,
+                    maxspeed: None,
+                    lit: None,
+                    oneway: None,
+                    layer: None,
                 }),
                 &config.style,
                 &elevation,
@@ -188,6 +198,10 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
                     roof: bldg.roof,
                     colour: None,
                     material_tag: None,
+                    roof_colour: None,
+                    roof_material: None,
+                    roof_height: None,
+                    name: None,
                 }),
                 &config.style,
                 &elevation,
@@ -411,6 +425,10 @@ mod tests {
             roof: "flat".to_string(),
             colour: None,
             material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
         })];
 
         let elevation = PerlinElevationProvider::default();

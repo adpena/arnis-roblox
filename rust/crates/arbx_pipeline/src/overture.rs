@@ -116,6 +116,10 @@ pub fn load_overture_buildings(
             roof: "flat".to_string(),
             colour: None,
             material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
         }));
     }
 

@@ -21,6 +21,10 @@ pub struct RoadFeature {
     pub tunnel: Option<bool>,
     pub sidewalk: Option<String>,
     pub points: Vec<Vec3>,
+    pub maxspeed: Option<u32>,
+    pub lit: Option<bool>,
+    pub oneway: Option<bool>,
+    pub layer: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +51,10 @@ pub struct BuildingFeature {
     pub roof: String,
     pub colour: Option<String>,
     pub material_tag: Option<String>,
+    pub roof_colour: Option<String>,
+    pub roof_material: Option<String>,
+    pub roof_height: Option<f64>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +63,8 @@ pub struct WaterRibbonFeature {
     pub kind: String,
     pub width_studs: f64,
     pub points: Vec<Vec3>,
+    pub width: Option<f64>,
+    pub intermittent: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,6 +74,7 @@ pub struct WaterPolygonFeature {
     pub footprint: Footprint,
     pub holes: Vec<Footprint>,
     pub indices: Option<Vec<usize>>,
+    pub intermittent: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,6 +94,7 @@ pub struct PropFeature {
     pub species: Option<String>,
     pub height: Option<f64>,
     pub leaf_type: Option<String>,
+    pub circumference: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -247,6 +259,10 @@ impl SourceAdapter for SyntheticAustinAdapter {
                 project_with_y(center.lat, center.lon),
                 project_with_y(center.lat + 0.005, center.lon),
             ],
+            maxspeed: None,
+            lit: None,
+            oneway: None,
+            layer: None,
         }));
 
         // Add some buildings in different chunks
@@ -270,6 +286,10 @@ impl SourceAdapter for SyntheticAustinAdapter {
             roof: "dome".to_string(),
             colour: None,
             material_tag: None,
+            roof_colour: None,
+            roof_material: None,
+            roof_height: None,
+            name: None,
         }));
 
         // Add a landuse polygon (park)
@@ -537,6 +557,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -550,6 +571,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -565,6 +587,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -578,6 +601,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -593,6 +617,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -606,6 +631,7 @@ impl SourceAdapter for OverpassAdapter {
                         species: None,
                         height: None,
                         leaf_type: None,
+                        circumference: None,
                     }));
                     continue;
                 }
@@ -634,6 +660,7 @@ impl SourceAdapter for OverpassAdapter {
 
                     let tree_height = tags.get("height").and_then(|h| h.parse::<f64>().ok());
                     let leaf_type = tags.get("leaf_type").cloned();
+                    let circumference = tags.get("circumference").and_then(|c| c.parse::<f64>().ok());
 
                     features.push(Feature::Prop(PropFeature {
                         id: format!("tree_{}", el.id),
@@ -644,6 +671,7 @@ impl SourceAdapter for OverpassAdapter {
                         species,
                         height: tree_height,
                         leaf_type,
+                        circumference,
                     }));
                 }
             }
@@ -736,6 +764,10 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Ve
             colour: tags.get("building:colour").or_else(|| tags.get("building:color"))
                 .map(|s| s.trim().to_lowercase()),
             material_tag: tags.get("building:material").map(|s| s.to_lowercase()),
+            roof_colour: tags.get("roof:colour").or_else(|| tags.get("roof:color")).map(|s| s.to_lowercase()),
+            roof_material: tags.get("roof:material").map(|s| s.to_lowercase()),
+            roof_height: tags.get("roof:height").and_then(|h| h.parse::<f64>().ok()),
+            name: tags.get("name").cloned(),
         }));
     } else if tags.get("natural") == Some(&"water".to_string()) {
         features.push(Feature::Water(WaterFeature::Polygon(WaterPolygonFeature {
@@ -744,6 +776,7 @@ fn emit_area_way(id: u64, tags: &HashMap<String, String>, fp: &[Vec2], holes: Ve
             footprint: Footprint::new(fp.to_vec()),
             holes,
             indices: None,
+            intermittent: tags.get("intermittent").map(|s| s == "yes"),
         })));
     } else if let Some(landuse) = tags.get("landuse") {
         features.push(Feature::Landuse(LanduseFeature {
@@ -818,6 +851,10 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
             tunnel,
             sidewalk,
             points,
+            maxspeed: tags.get("maxspeed").and_then(|s| s.replace("mph", "").trim().parse().ok()),
+            lit: tags.get("lit").map(|s| s == "yes"),
+            oneway: tags.get("oneway").map(|s| s == "yes" || s == "1"),
+            layer: tags.get("layer").and_then(|s| s.parse().ok()),
         }));
     } else if let Some(railway) = tags.get("railway") {
         features.push(Feature::Rail(RailFeature {
@@ -833,6 +870,8 @@ fn emit_linear_way(id: u64, tags: &HashMap<String, String>, points: Vec<Vec3>, f
             kind: waterway.clone(),
             width_studs: 8.0,
             points,
+            width: tags.get("width").and_then(|w| w.parse::<f64>().ok()),
+            intermittent: tags.get("intermittent").map(|s| s == "yes"),
         })));
     }
 }
@@ -929,6 +968,10 @@ mod tests {
                 roof: "flat".to_string(),
                 colour: None,
                 material_tag: None,
+                roof_colour: None,
+                roof_material: None,
+                roof_height: None,
+                name: None,
             })])
         }
     }

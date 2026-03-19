@@ -51,6 +51,10 @@ pub struct RoadSegment {
     pub tunnel: bool,
     pub sidewalk: Option<String>,
     pub points: Vec<Vec3>,
+    pub maxspeed: Option<u32>,
+    pub lit: Option<bool>,
+    pub oneway: Option<bool>,
+    pub layer: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +88,8 @@ pub struct BuildingShell {
     pub roof: String,
     pub facade_style: Option<String>,
     pub rooms: Vec<Room>,
+    pub roof_height: Option<f64>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +117,8 @@ pub struct WaterFeature {
     pub holes: Vec<Vec<GroundPoint>>,
     pub indices: Option<Vec<usize>>,
     pub surface_y: Option<f64>,
+    pub width: Option<f64>,
+    pub intermittent: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +139,7 @@ pub struct PropInstance {
     pub species: Option<String>,
     pub height: Option<f64>,
     pub leaf_type: Option<String>,
+    pub circumference: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -407,6 +416,26 @@ impl RoadSegment {
             write_key(out, indent + 2, "sidewalk");
             write_string(out, s);
         }
+        if let Some(ms) = self.maxspeed {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "maxspeed");
+            write!(out, "{}", ms).unwrap();
+        }
+        if let Some(lit) = self.lit {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "lit");
+            out.push_str(if lit { "true" } else { "false" });
+        }
+        if let Some(oneway) = self.oneway {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "oneway");
+            out.push_str(if oneway { "true" } else { "false" });
+        }
+        if let Some(layer) = self.layer {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "layer");
+            write!(out, "{}", layer).unwrap();
+        }
         out.push_str(",\n");
         write_key(out, indent + 2, "points");
         write_vec3_array(out, &self.points, indent + 2);
@@ -540,6 +569,18 @@ impl BuildingShell {
             });
         }
 
+        if let Some(rh) = self.roof_height {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "roofHeight");
+            write_number(out, rh);
+        }
+
+        if let Some(ref n) = self.name {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "name");
+            write_string(out, n);
+        }
+
         out.push('\n');
         write_indent(out, indent);
         out.push('}');
@@ -645,6 +686,18 @@ impl WaterFeature {
             write_number(out, sy);
         }
 
+        if let Some(w) = self.width {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "width");
+            write_number(out, w);
+        }
+
+        if let Some(intermittent) = self.intermittent {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "intermittent");
+            out.push_str(if intermittent { "true" } else { "false" });
+        }
+
         out.push('\n');
         write_indent(out, indent);
         out.push('}');
@@ -683,6 +736,11 @@ impl PropInstance {
             out.push_str(",\n");
             write_key(out, indent + 2, "leafType");
             write_string(out, lt);
+        }
+        if let Some(c) = self.circumference {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "circumference");
+            write_number(out, c);
         }
         out.push('\n');
         write_indent(out, indent);

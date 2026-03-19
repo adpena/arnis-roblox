@@ -214,6 +214,10 @@ impl Chunker {
                         tunnel: f.tunnel.unwrap_or(false),
                         sidewalk: f.sidewalk.clone(),
                         points: relative_points,
+                        maxspeed: f.maxspeed,
+                        lit: f.lit,
+                        oneway: f.oneway,
+                        layer: f.layer,
                     });
                 }
             }
@@ -264,6 +268,8 @@ impl Chunker {
                             holes: vec![],
                             indices: None,
                             surface_y: None,
+                            width: r.width,
+                            intermittent: r.intermittent,
                         });
                     }
                 }
@@ -311,6 +317,8 @@ impl Chunker {
                         holes: relative_holes,
                         indices: p.indices,
                         surface_y: None,
+                        width: None,
+                        intermittent: p.intermittent,
                     });
                 }
             },
@@ -367,6 +375,9 @@ impl Chunker {
                     material
                 };
 
+                // Resolve roof color: prefer explicit OSM roof:colour, fall back to style
+                let roof_color = f.roof_colour.as_deref().and_then(parse_css_color);
+
                 // Assign a procedural facade style if it's a default building
                 let facade_style = if f.roof == "dome" {
                     Some("facade_modern".to_string())
@@ -401,9 +412,9 @@ impl Chunker {
                     indices: f.indices,
                     material,
                     wall_color: color,
-                    roof_color: None,
+                    roof_color,
                     roof_shape: Some(f.roof.clone()),
-                    roof_material: f.material_tag.clone(),
+                    roof_material: f.roof_material.clone(),
                     usage: f.usage.clone(),
                     min_height: f.min_height,
                     base_y: f.base_y - origin.y,
@@ -414,6 +425,8 @@ impl Chunker {
                     facade_style,
                     roof: f.roof,
                     rooms,
+                    roof_height: f.roof_height,
+                    name: f.name.clone(),
                 });
             }
             Feature::Prop(f) => {
@@ -433,6 +446,7 @@ impl Chunker {
                     species: f.species,
                     height: f.height,
                     leaf_type: f.leaf_type,
+                    circumference: f.circumference,
                 });
             }
             Feature::Landuse(f) => {
