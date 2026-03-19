@@ -457,7 +457,7 @@ fn download_terrarium_tile(
 /// Elevation provider backed by AWS Terrarium PNG tiles.
 ///
 /// On construction it downloads all tiles covering the given `bbox` at the
-/// requested `zoom` level (default 13) and caches them under
+/// requested `zoom` level (default 15) and caches them under
 /// `rust/data/terrarium/`.  Subsequent lookups are purely in-memory.
 pub struct TerrariumElevationProvider {
     zoom: u32,
@@ -465,7 +465,7 @@ pub struct TerrariumElevationProvider {
 }
 
 impl TerrariumElevationProvider {
-    pub const DEFAULT_ZOOM: u32 = 13;
+    pub const DEFAULT_ZOOM: u32 = 15;
     pub const CACHE_DIR: &'static str = "data/terrarium";
 
     /// Download all tiles required to cover `bbox` at `zoom` and return a
