@@ -1,3 +1,4 @@
+local AssetService = game:GetService("AssetService")
 local Workspace = game:GetService("Workspace")
 local CollectionService = game:GetService("CollectionService")
 
@@ -5,6 +6,101 @@ local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldCon
 local GeoUtils = require(script.Parent.Parent.GeoUtils)
 
 local BuildingBuilder = {}
+
+-------------------------------------------------------------------------------
+-- MeshAccumulator: batches quads/triangles and flushes to EditableMesh when
+-- approaching the 20K triangle limit. One accumulator per (material, color).
+-------------------------------------------------------------------------------
+local MeshAccumulator = {}
+MeshAccumulator.__index = MeshAccumulator
+
+function MeshAccumulator.new(parent, materialName, material, color)
+    local self = setmetatable({}, MeshAccumulator)
+    self.parent = parent
+    self.materialName = materialName
+    self.material = material
+    self.color = color
+    self.vertices = {}   -- array of Vector3
+    self.normals = {}    -- array of Vector3
+    self.triangles = {}  -- array of {v1_idx, v2_idx, v3_idx} (1-indexed)
+    self.meshCount = 0
+    self.MAX_TRIANGLES = 18000  -- headroom below 20K API limit
+    return self
+end
+
+function MeshAccumulator:addQuad(p1, p2, p3, p4, normal)
+    if #self.triangles + 2 > self.MAX_TRIANGLES then
+        self:flush()
+    end
+
+    local base = #self.vertices
+    self.vertices[base + 1] = p1
+    self.vertices[base + 2] = p2
+    self.vertices[base + 3] = p3
+    self.vertices[base + 4] = p4
+    self.normals[base + 1] = normal
+    self.normals[base + 2] = normal
+    self.normals[base + 3] = normal
+    self.normals[base + 4] = normal
+
+    -- Two triangles: (1,2,3) and (1,3,4)
+    self.triangles[#self.triangles + 1] = { base + 1, base + 2, base + 3 }
+    self.triangles[#self.triangles + 1] = { base + 1, base + 3, base + 4 }
+end
+
+function MeshAccumulator:addTriangle(p1, p2, p3, normal)
+    if #self.triangles + 1 > self.MAX_TRIANGLES then
+        self:flush()
+    end
+
+    local base = #self.vertices
+    self.vertices[base + 1] = p1
+    self.vertices[base + 2] = p2
+    self.vertices[base + 3] = p3
+    self.normals[base + 1] = normal
+    self.normals[base + 2] = normal
+    self.normals[base + 3] = normal
+
+    self.triangles[#self.triangles + 1] = { base + 1, base + 2, base + 3 }
+end
+
+function MeshAccumulator:flush()
+    if #self.triangles == 0 then
+        return
+    end
+
+    local mesh = AssetService:CreateEditableMesh()
+
+    -- Add all vertices and set normals
+    local vertexIds = table.create(#self.vertices)
+    for i, pos in ipairs(self.vertices) do
+        vertexIds[i] = mesh:AddVertex(pos)
+        mesh:SetVertexNormal(vertexIds[i], self.normals[i])
+    end
+
+    -- Add all triangles
+    for _, tri in ipairs(self.triangles) do
+        mesh:AddTriangle(vertexIds[tri[1]], vertexIds[tri[2]], vertexIds[tri[3]])
+    end
+
+    -- Create host MeshPart and apply the mesh
+    self.meshCount += 1
+    local part = Instance.new("MeshPart")
+    part.Name = string.format("%s_mesh_%d", self.materialName, self.meshCount)
+    part.Material = self.material
+    part.Color = self.color
+    part.Anchored = true
+    part.CanCollide = true
+    part.CastShadow = false
+    part.Size = Vector3.new(1, 1, 1) -- overridden by ApplyMesh
+    part.Parent = self.parent
+    part:ApplyMesh(mesh)
+
+    -- Reset buffers for next batch
+    self.vertices = {}
+    self.normals = {}
+    self.triangles = {}
+end
 
 local WALL_THICKNESS = 0.6 -- studs
 local MIN_EDGE = 0.5 -- ignore edges shorter than this
@@ -679,6 +775,93 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
     buildFlatRoofFromFootprint(bldgName, footprint, baseY + height, color, mat, parent, rc, rm)
 end
 
+local function buildFoundation(parent, worldPts, baseY)
+    for i = 1, #worldPts do
+        local p1 = worldPts[i]
+        local p2 = worldPts[(i % #worldPts) + 1]
+        local edgeLen = (p2 - p1).Magnitude
+        if edgeLen < 1 then continue end
+
+        local mid = (p1 + p2) * 0.5
+        local dir = (p2 - p1).Unit
+
+        local foundation = Instance.new("Part")
+        foundation.Name = "Foundation"
+        foundation.Size = Vector3.new(edgeLen + 0.2, 1.5, 0.8)
+        foundation.Material = Enum.Material.Concrete
+        foundation.Color = Color3.fromRGB(160, 155, 148)
+        foundation.Anchored = true
+        foundation.CanCollide = true
+        foundation.CastShadow = false
+        foundation.CFrame = CFrame.lookAt(
+            mid + Vector3.new(0, baseY + 0.75, 0),
+            mid + Vector3.new(0, baseY + 0.75, 0) + dir
+        ) * CFrame.new(0, 0, -0.1)
+        CollectionService:AddTag(foundation, "LOD_Detail")
+        foundation.Parent = parent
+    end
+end
+
+local function buildCornice(parent, worldPts, topY)
+    for i = 1, #worldPts do
+        local p1 = worldPts[i]
+        local p2 = worldPts[(i % #worldPts) + 1]
+        local edgeLen = (p2 - p1).Magnitude
+        if edgeLen < 1 then continue end
+
+        local mid = (p1 + p2) * 0.5
+        local dir = (p2 - p1).Unit
+
+        local cornice = Instance.new("Part")
+        cornice.Name = "Cornice"
+        cornice.Size = Vector3.new(edgeLen, 0.4, 0.6)
+        cornice.Material = Enum.Material.Concrete
+        cornice.Color = Color3.fromRGB(210, 205, 195)
+        cornice.Anchored = true
+        cornice.CanCollide = false
+        cornice.CastShadow = false
+        cornice.CFrame = CFrame.lookAt(
+            mid + Vector3.new(0, topY, 0),
+            mid + Vector3.new(0, topY, 0) + dir
+        ) * CFrame.new(0, 0, -0.15)
+        CollectionService:AddTag(cornice, "LOD_Detail")
+        cornice.Parent = parent
+    end
+end
+
+local function buildRooftopEquipment(parent, building, baseY, height, worldPts)
+    if not building.levels or building.levels < 5 then return end
+
+    local cx, cz = 0, 0
+    for _, p in ipairs(worldPts) do
+        cx = cx + p.X
+        cz = cz + p.Z
+    end
+    cx = cx / #worldPts
+    cz = cz / #worldPts
+
+    local roofY = baseY + height
+
+    local unitCount = math.min(3, math.floor(building.levels / 3))
+    local seed = string.len(building.id or "")
+
+    for i = 1, unitCount do
+        local offsetX = ((seed * 7 + i * 13) % 20) - 10
+        local offsetZ = ((seed * 11 + i * 17) % 20) - 10
+
+        local unit = Instance.new("Part")
+        unit.Name = "ACUnit"
+        unit.Size = Vector3.new(3, 2, 3)
+        unit.Material = Enum.Material.Metal
+        unit.Color = Color3.fromRGB(160, 160, 165)
+        unit.CFrame = CFrame.new(cx + offsetX * 0.3, roofY + 1, cz + offsetZ * 0.3)
+        unit.Anchored = true
+        unit.CanCollide = true
+        CollectionService:AddTag(unit, "LOD_Detail")
+        unit.Parent = parent
+    end
+end
+
 local function buildAwning(parent, building, baseY, worldPts)
     local usage = building.usage or building.kind or ""
     if usage ~= "commercial" and usage ~= "retail" and usage ~= "restaurant" then
@@ -886,10 +1069,28 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                     band:SetAttribute("ArnisFacadePaneCount", numPanes)
                     CollectionService:AddTag(band, "LOD_Detail")
                     band.Parent = detailFolder
+
+                    -- Window sill: thin concrete ledge below each facade band
+                    local paneW = bandLen
+                    local windowCFrame = band.CFrame
+                    local sill = Instance.new("Part")
+                    sill.Name = "WindowSill"
+                    sill.Size = Vector3.new(paneW + 0.4, 0.2, 0.5)
+                    sill.Material = Enum.Material.Concrete
+                    sill.Color = Color3.fromRGB(200, 195, 185)
+                    sill.Anchored = true
+                    sill.CanCollide = false
+                    sill.CastShadow = false
+                    sill.CFrame = windowCFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)
+                    CollectionService:AddTag(sill, "LOD_Detail")
+                    sill.Parent = detailFolder
                 end
             end
         end
     end
+
+    -- Foundation strip along the base of every wall edge
+    buildFoundation(detailFolder, worldPts, baseY)
 
     -- Awning on commercial/retail/restaurant ground floors
     buildAwning(detailFolder, building, baseY, worldPts)
@@ -898,6 +1099,12 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
 
     buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
+
+    -- Cornice trim at the roofline
+    buildCornice(detailFolder, worldPts, baseY + height)
+
+    -- Rooftop equipment for tall buildings (>= 5 levels)
+    buildRooftopEquipment(detailFolder, building, baseY, height, worldPts)
 
     -- Building name label (from OSM name tag)
     if building.name and building.name ~= "" then
