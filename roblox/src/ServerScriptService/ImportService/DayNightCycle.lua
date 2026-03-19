@@ -9,16 +9,96 @@ local DayNightCycle = {}
 
 local CYCLE_SPEED = 1 -- 1 = real-time, 60 = 1 minute per second, 0 = frozen
 local connection = nil
-local DAWN_HOUR = 6.5
-local DUSK_HOUR = 19.5
 local UPDATE_INTERVAL = 0.5 -- seconds between lighting updates
 
-local isNight = false
 local lastUpdate = 0
+local currentPhase = nil -- tracks last applied phase to avoid redundant reactive calls
 
-local function isDusk(hour)
-    return hour >= DUSK_HOUR or hour < DAWN_HOUR
+-- ---------------------------------------------------------------------------
+-- Time-of-day phase classification
+-- ---------------------------------------------------------------------------
+
+local function getTimePhase(hour)
+    if hour >= 5.5 and hour < 7.5 then
+        return "dawn"
+    elseif hour >= 7.5 and hour < 17 then
+        return "day"
+    elseif hour >= 17 and hour < 19.5 then
+        return "golden"
+    elseif hour >= 19.5 and hour < 21 then
+        return "dusk"
+    else
+        return "night"
+    end
 end
+
+-- Per-phase atmospheric targets.
+local PHASE_SETTINGS = {
+    dawn = {
+        density = 0.5,
+        haze = 2,
+        atmosphereColor = Color3.fromRGB(220, 180, 140),
+        decayColor = Color3.fromRGB(180, 120, 80),
+        bloomIntensity = 0.8,
+        bloomThreshold = 1.0,
+        sunRaysIntensity = 0.4,
+        sunRaysSpread = 1.0,
+        outdoorAmbient = Color3.fromRGB(180, 140, 90),
+        lightsOn = false,
+    },
+    day = {
+        density = 0.25,
+        haze = 0.8,
+        atmosphereColor = Color3.fromRGB(199, 210, 225),
+        decayColor = Color3.fromRGB(106, 112, 125),
+        bloomIntensity = 0.4,
+        bloomThreshold = 2.5,
+        sunRaysIntensity = 0.12,
+        sunRaysSpread = 0.7,
+        outdoorAmbient = Color3.fromRGB(128, 128, 128),
+        lightsOn = false,
+    },
+    golden = {
+        density = 0.3,
+        haze = 1.2,
+        atmosphereColor = Color3.fromRGB(240, 200, 150),
+        decayColor = Color3.fromRGB(200, 130, 70),
+        bloomIntensity = 0.7,
+        bloomThreshold = 1.5,
+        sunRaysIntensity = 0.3,
+        sunRaysSpread = 1.0,
+        outdoorAmbient = Color3.fromRGB(200, 160, 100),
+        lightsOn = false,
+    },
+    dusk = {
+        density = 0.35,
+        haze = 1.5,
+        atmosphereColor = Color3.fromRGB(120, 100, 140),
+        decayColor = Color3.fromRGB(60, 50, 80),
+        bloomIntensity = 0.6,
+        bloomThreshold = 1.5,
+        sunRaysIntensity = 0.2,
+        sunRaysSpread = 0.8,
+        outdoorAmbient = Color3.fromRGB(80, 70, 100),
+        lightsOn = true,
+    },
+    night = {
+        density = 0.4,
+        haze = 0.5,
+        atmosphereColor = Color3.fromRGB(30, 35, 55),
+        decayColor = Color3.fromRGB(15, 18, 30),
+        bloomIntensity = 0.9,
+        bloomThreshold = 0.8,
+        sunRaysIntensity = 0,
+        sunRaysSpread = 0,
+        outdoorAmbient = Color3.fromRGB(25, 28, 40),
+        lightsOn = true,
+    },
+}
+
+-- ---------------------------------------------------------------------------
+-- Reactive object helpers (street lights, night windows)
+-- ---------------------------------------------------------------------------
 
 local function forEachReactive(reactiveKind, visitor)
     for _, chunkId in ipairs(ChunkLoader.ListLoadedChunks()) do
@@ -43,12 +123,12 @@ local function isWindowLit(part)
     return hash < 65
 end
 
-local function updateReactiveVisibility(reactiveKind, night)
+local function updateReactiveVisibility(reactiveKind, lightsOn)
     if reactiveKind == "streetLights" then
         forEachReactive("streetLights", function(part)
             local light = part:FindFirstChildOfClass("PointLight")
             if light then
-                light.Enabled = night
+                light.Enabled = lightsOn
             end
         end)
         return
@@ -56,7 +136,7 @@ local function updateReactiveVisibility(reactiveKind, night)
 
     if reactiveKind == "nightWindows" then
         forEachReactive("nightWindows", function(part)
-            if night then
+            if lightsOn then
                 if isWindowLit(part) then
                     -- Deterministic warm tone derived from position hash
                     local pos = part.Position
@@ -82,42 +162,68 @@ local function updateReactiveVisibility(reactiveKind, night)
         if part:IsDescendantOf(game) then
             local light = part:FindFirstChildOfClass("PointLight")
             if light then
-                light.Enabled = night
+                light.Enabled = lightsOn
             end
         end
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- Color lerp helper
+-- ---------------------------------------------------------------------------
+
+local function lerpColor(a, b, t)
+    return Color3.new(
+        a.R + (b.R - a.R) * t,
+        a.G + (b.G - a.G) * t,
+        a.B + (b.B - a.B) * t
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- Core lighting update: lerps current Lighting values toward phase targets.
+-- Reactive objects (street lights, windows) are only toggled when the phase
+-- changes so we don't thrash them on every heartbeat tick.
+-- ---------------------------------------------------------------------------
+
+local LERP_SPEED = 0.12 -- fraction per update interval; feels smooth, not jarring
+
 local function updateLighting(hour)
-    local night = isDusk(hour)
-    if night == isNight then
-        return
-    end -- no change
-    isNight = night
+    local phase = getTimePhase(hour)
+    local settings = PHASE_SETTINGS[phase]
 
-    updateReactiveVisibility("streetLights", night)
-    updateReactiveVisibility("nightWindows", night)
+    -- Drive reactive objects only when the phase boundary is crossed.
+    if phase ~= currentPhase then
+        updateReactiveVisibility("streetLights", settings.lightsOn)
+        updateReactiveVisibility("nightWindows", settings.lightsOn)
+        currentPhase = phase
+    end
 
-    -- Adjust atmosphere
+    -- Atmosphere
     local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
     if atmosphere then
-        if night then
-            atmosphere.Density = 0.4
-            atmosphere.Color = Color3.fromRGB(50, 55, 80)
-            atmosphere.Decay = Color3.fromRGB(30, 35, 55)
-        else
-            atmosphere.Density = 0.3
-            atmosphere.Color = Color3.fromRGB(199, 210, 225)
-            atmosphere.Decay = Color3.fromRGB(106, 112, 125)
-        end
+        atmosphere.Density = atmosphere.Density + (settings.density - atmosphere.Density) * LERP_SPEED
+        atmosphere.Haze = atmosphere.Haze + (settings.haze - atmosphere.Haze) * LERP_SPEED
+        atmosphere.Color = lerpColor(atmosphere.Color, settings.atmosphereColor, LERP_SPEED)
+        atmosphere.Decay = lerpColor(atmosphere.Decay, settings.decayColor, LERP_SPEED)
     end
 
-    -- Adjust bloom for night
+    -- Bloom
     local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
     if bloom then
-        bloom.Intensity = night and 0.8 or 0.5
-        bloom.Threshold = night and 1.0 or 2.0
+        bloom.Intensity = bloom.Intensity + (settings.bloomIntensity - bloom.Intensity) * LERP_SPEED
+        bloom.Threshold = bloom.Threshold + (settings.bloomThreshold - bloom.Threshold) * LERP_SPEED
     end
+
+    -- Sun rays
+    local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
+    if sunRays then
+        sunRays.Intensity = sunRays.Intensity + (settings.sunRaysIntensity - sunRays.Intensity) * LERP_SPEED
+        sunRays.Spread = sunRays.Spread + (settings.sunRaysSpread - sunRays.Spread) * LERP_SPEED
+    end
+
+    -- Outdoor ambient
+    Lighting.OutdoorAmbient = lerpColor(Lighting.OutdoorAmbient, settings.outdoorAmbient, LERP_SPEED)
 end
 
 function DayNightCycle.Start(speed)
@@ -187,20 +293,12 @@ function DayNightCycle.Configure(latitude, longitude, datetime)
 
     Lighting.ClockTime = hour
 
-    -- Adjust sun color warmth based on hour (golden hour effect)
-    if hour < 7 or hour > 18 then
-        -- Night/twilight
-        Lighting.OutdoorAmbient = Color3.fromRGB(30, 35, 50)
-        Lighting.Ambient = Color3.fromRGB(20, 22, 30)
-    elseif hour < 8 or hour > 17 then
-        -- Golden hour
-        Lighting.OutdoorAmbient = Color3.fromRGB(180, 140, 90)
-        Lighting.Ambient = Color3.fromRGB(60, 45, 30)
-    else
-        -- Daytime
-        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-        Lighting.Ambient = Color3.fromRGB(40, 40, 40)
-    end
+    -- Set initial outdoor ambient from the phase table so Configure and the
+    -- heartbeat loop use consistent values rather than hard-coded fallbacks.
+    local phase = getTimePhase(hour)
+    local settings = PHASE_SETTINGS[phase]
+    Lighting.OutdoorAmbient = settings.outdoorAmbient
+    Lighting.Ambient = Color3.fromRGB(40, 40, 40) -- neutral fill; phase system owns OutdoorAmbient
 
     -- Update the lighting state immediately
     updateLighting(hour)
