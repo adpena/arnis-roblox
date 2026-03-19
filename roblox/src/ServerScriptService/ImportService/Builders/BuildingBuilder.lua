@@ -1,6 +1,8 @@
 local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
 
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
+local GeoUtils = require(script.Parent.Parent.GeoUtils)
 
 local BuildingBuilder = {}
 
@@ -126,20 +128,6 @@ local function getRoofMaterial(building, wallMat)
     return wallMat or Enum.Material.Concrete
 end
 
-local function pointInPolygon(px, pz, poly)
-    local inside = false
-    local j = #poly
-    for i = 1, #poly do
-        local xi, zi = poly[i].x, poly[i].z
-        local xj, zj = poly[j].x, poly[j].z
-        if ((zi > pz) ~= (zj > pz)) and (px < (xj - xi) * (pz - zi) / (zj - zi) + xi) then
-            inside = not inside
-        end
-        j = i
-    end
-    return inside
-end
-
 local function buildFootprintData(footprint, originStuds)
     local worldPts = table.create(#footprint)
     local footprintXZ = table.create(#footprint)
@@ -193,7 +181,7 @@ local function fillInterior(footprintXZ, bounds, baseY, material)
     while x < maxX do
         local z = minZ + GRID_SIZE * 0.5
         while z < maxZ do
-            if pointInPolygon(x, z, footprintXZ) then
+            if GeoUtils.pointInPolygon(x, z, footprintXZ) then
                 Workspace.Terrain:FillBlock(
                     CFrame.new(x, baseY, z),
                     Vector3.new(GRID_SIZE, GRID_SIZE, GRID_SIZE),
@@ -404,7 +392,7 @@ local function buildFlatRoofFromFootprint(bldgName, footprint, topY, color, mat,
         local runEndZ
 
         while z <= maxZ + ROOF_GRID_SIZE do
-            local inside = z <= maxZ and pointInPolygon(x, z, roofPoly)
+            local inside = z <= maxZ and GeoUtils.pointInPolygon(x, z, roofPoly)
 
             if inside then
                 if not runStartZ then
@@ -637,6 +625,65 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
     buildFlatRoofFromFootprint(bldgName, footprint, baseY + height, color, mat, parent, rc, rm)
 end
 
+local function buildAwning(parent, building, baseY, worldPts)
+    local usage = building.usage or building.kind or ""
+    if usage ~= "commercial" and usage ~= "retail" and usage ~= "restaurant" then
+        return
+    end
+
+    -- Find the longest edge (likely the storefront)
+    local bestLen = 0
+    local bestP1, bestP2
+    local n = #worldPts
+    for i = 1, n do
+        local p1 = worldPts[i]
+        local p2 = worldPts[(i % n) + 1]
+        local dx = p2.X - p1.X
+        local dz = p2.Z - p1.Z
+        local len = math.sqrt(dx * dx + dz * dz)
+        if len > bestLen then
+            bestLen = len
+            bestP1 = p1
+            bestP2 = p2
+        end
+    end
+
+    if not bestP1 or bestLen < 6 then return end
+
+    local mid = Vector3.new((bestP1.X + bestP2.X) * 0.5, 0, (bestP1.Z + bestP2.Z) * 0.5)
+    local dx = bestP2.X - bestP1.X
+    local dz = bestP2.Z - bestP1.Z
+    local mag = math.sqrt(dx * dx + dz * dz)
+    local dir = Vector3.new(dx / mag, 0, dz / mag)
+    local outward = Vector3.new(-dir.Z, 0, dir.X)
+
+    -- Deterministic awning color seeded from building ID
+    local id = building.id or tostring(building)
+    local h = hashId(id)
+    local h2 = ((h * 33) + 7) % 2147483647
+    local h3 = ((h2 * 33) + 13) % 2147483647
+    local r = 120 + (h % 81)   -- 120–200
+    local g = 40 + (h2 % 41)   -- 40–80
+    local b = 30 + (h3 % 31)   -- 30–60
+    local awningColor = Color3.fromRGB(r, g, b)
+
+    local awningDepth = 4 -- studs
+    local awningY = baseY + 10 -- ~3m above ground floor
+
+    local awning = Instance.new("Part")
+    awning.Name = "Awning"
+    awning.Size = Vector3.new(bestLen * 0.8, 0.3, awningDepth)
+    awning.Material = Enum.Material.Fabric
+    awning.Color = awningColor
+    awning.Anchored = true
+    awning.CanCollide = false
+    awning.CFrame = CFrame.lookAt(
+        mid + outward * (awningDepth * 0.5) + Vector3.new(0, awningY, 0),
+        mid + outward * (awningDepth * 0.5) + Vector3.new(0, awningY, 0) + dir
+    )
+    awning.Parent = parent
+end
+
 -- Build a single building as polygon wall Parts + roof
 -- windowBudget is an optional table { used = number, max = number } shared across a chunk.
 function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, windowBudget)
@@ -773,11 +820,16 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                     win.Color = WIN_COLOR
                     win.CastShadow = false
                     win.Transparency = 0.35
+                    win:SetAttribute("BaseTransparency", 0.35)
+                    CollectionService:AddTag(win, "LOD_Detail")
                     win.Parent = model
                 end
             end
         end
     end
+
+    -- Awning on commercial/retail/restaurant ground floors
+    buildAwning(model, building, baseY, worldPts)
 
     -- Fill interior with terrain (uses terrain-safe floor materials only)
     fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
@@ -803,6 +855,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         text.Font = Enum.Font.GothamBold
         text.Parent = nameLabel
 
+        CollectionService:AddTag(nameLabel, "LOD_Detail")
         nameLabel.Parent = model
     end
 
