@@ -1,12 +1,11 @@
 local Workspace = game:GetService("Workspace")
 
-local GroundSampler = require(script.Parent.Parent.GroundSampler)
+local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 local BuildingBuilder = {}
 
 local WALL_THICKNESS = 0.6 -- studs
 local MIN_EDGE = 0.5 -- ignore edges shorter than this
-local BUILDING_GROUND_SNAP_MAX_DELTA = 40
 local ROOF_GRID_SIZE = 8
 local ROOF_THICKNESS = 0.8
 
@@ -450,34 +449,9 @@ local function getBuildingHeight(building)
     end
 end
 
-local function resolveBuildingBaseY(chunk, footprintData, fallbackBaseY)
-    if not chunk or not chunk.terrain or not footprintData or footprintData.count == 0 then
-        return fallbackBaseY
-    end
-
-    local minGroundY = math.huge
-    local sampleGroundY = GroundSampler.createSampler(chunk)
-
-    for _, point in ipairs(footprintData.footprintXZ) do
-        local worldX = point.x
-        local worldZ = point.z
-        local groundY = sampleGroundY(worldX, worldZ)
-        if groundY < minGroundY then
-            minGroundY = groundY
-        end
-    end
-
-    local centroidGroundY =
-        sampleGroundY(footprintData.sumX / footprintData.count, footprintData.sumZ / footprintData.count)
-    if centroidGroundY < minGroundY then
-        minGroundY = centroidGroundY
-    end
-
-    if math.abs(fallbackBaseY - minGroundY) <= BUILDING_GROUND_SNAP_MAX_DELTA then
-        return minGroundY
-    end
-
-    return fallbackBaseY
+local function resolveBuildingBaseY(building, originStuds, chunk)
+    -- Schema 0.4.0: baseY is authoritative from DEM. Use directly.
+    return originStuds.y + building.baseY
 end
 
 -- Build roof geometry based on building.roof shape.
@@ -664,14 +638,15 @@ local function buildRoof(building, footprint, bounds, baseY, height, color, mat,
 end
 
 -- Build a single building as polygon wall Parts + roof
-function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
+-- windowBudget is an optional table { used = number, max = number } shared across a chunk.
+function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, windowBudget)
     local fp = building.footprint
     if not fp or #fp < 2 then
         return
     end
 
     local footprintData = buildFootprintData(fp, originStuds)
-    local baseY = resolveBuildingBaseY(chunk, footprintData, originStuds.y + (building.baseY or 0))
+    local baseY = resolveBuildingBaseY(building, originStuds, chunk)
     local height = getBuildingHeight(building)
     local mat = getMaterial(building)
     local color = getColor(building)
@@ -680,6 +655,9 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     local model = Instance.new("Model")
     model.Name = bldgName
     model.Parent = parent
+    model:SetAttribute("ArnisImportBuildingBaseY", baseY)
+    model:SetAttribute("ArnisImportBuildingHeight", height)
+    model:SetAttribute("ArnisImportBuildingTopY", baseY + height)
 
     -- World coordinates of footprint vertices
     local worldPts = footprintData.worldPts
@@ -744,10 +722,16 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     local FLOOR_H = 5
     local BAND_H = 2.5
     local numFloors = math.floor(height / FLOOR_H)
+    local maxWindows = windowBudget and windowBudget.max
+        or (WorldConfig.InstanceBudget and WorldConfig.InstanceBudget.MaxWindowsPerChunk)
+        or 10000
     if numFloors >= 3 and #worldPts <= 8 and (#worldPts * numFloors * 2) <= 100 then
+        local budgetExceeded = false
         for floor = 1, math.min(numFloors - 1, 10) do
+            if budgetExceeded then break end
             local bandY = baseY + floor * FLOOR_H + BAND_H * 0.5
             for i = 1, n do
+                if budgetExceeded then break end
                 local p1w = worldPts[i]
                 local p2w = worldPts[(i % n) + 1]
                 local dx = p2w.X - p1w.X
@@ -762,6 +746,14 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
                 local edgeUnitX = dx / eLen
                 local edgeUnitZ = dz / eLen
                 for pane = 0, numPanes - 1 do
+                    -- Check chunk-level window budget
+                    if windowBudget then
+                        if windowBudget.used >= maxWindows then
+                            budgetExceeded = true
+                            break
+                        end
+                        windowBudget.used += 1
+                    end
                     local tCenter = (pane + 0.5) / numPanes
                     local paneX = p1w.X + dx * tCenter
                     local paneZ = p1w.Z + dz * tCenter
@@ -787,6 +779,8 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
     fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
 
     buildRoof(building, worldPts, footprintData, baseY, height, color, mat, model)
+
+    return model
 end
 
 -- PartBuild is the same as FallbackBuild (polygon walls)
@@ -794,15 +788,25 @@ BuildingBuilder.PartBuild = BuildingBuilder.FallbackBuild
 
 function BuildingBuilder.BuildAll(parent, buildings, originStuds, chunk)
     if not buildings or #buildings == 0 then
-        return
+        return {}
     end
+    local windowBudget = {
+        used = 0,
+        max = WorldConfig.InstanceBudget and WorldConfig.InstanceBudget.MaxWindowsPerChunk or 10000,
+    }
+    local builtModelsById = {}
     for _, bldg in ipairs(buildings) do
-        BuildingBuilder.FallbackBuild(parent, bldg, originStuds, chunk)
+        local model = BuildingBuilder.FallbackBuild(parent, bldg, originStuds, chunk, windowBudget)
+        local buildingId = bldg.id
+        if model and type(buildingId) == "string" and buildingId ~= "" then
+            builtModelsById[buildingId] = model
+        end
     end
+    return builtModelsById
 end
 
 function BuildingBuilder.Build(parent, building, originStuds, chunk)
-    BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk)
+    return BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, nil)
 end
 
 return BuildingBuilder
