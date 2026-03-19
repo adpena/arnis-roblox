@@ -2,7 +2,7 @@
 
 ## Epic A — Contracts
 
-- [x] finalize chunk schema (v0.2.0 stable)
+- [x] finalize chunk schema (v0.3.0 stable)
 - [x] finalize world config schema
 - [x] add migration notes mechanism
 - [x] add manifest version upgrade helper
@@ -38,3 +38,10 @@
 - [x] tree/light prefab strategy (Pooling + Prefabs)
 - [x] rail/power layers
 - [x] interiors only after shell perf is stable
+
+## Epic F — HD Pipeline
+
+- [x] SP-1: Coordinate contract (meters_per_stud=0.3, schema 0.4.0, elevation authority, terrain 64x64)
+- [ ] SP-2: Data source fusion (Mapbox DEM/MVT/satellite, expanded OSM/Overpass tags)
+- [ ] SP-3: Builder fidelity (facades, windows, roofs, lanes, expanded props)
+- [ ] SP-4: Material & texture pipeline (satellite-derived roof/ground/road classification)
