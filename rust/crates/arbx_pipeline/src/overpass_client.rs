@@ -30,11 +30,6 @@ fn build_query(bbox: BoundingBox) -> String {
   way["building"]({bb});
   way["building:part"]({bb});
   way["highway"]({bb});
-  way["highway"="footway"]({bb});
-  way["highway"="path"]({bb});
-  way["highway"="pedestrian"]({bb});
-  way["highway"="steps"]({bb});
-  way["highway"="cycleway"]({bb});
   way["man_made"="bridge"]({bb});
   way["railway"]({bb});
   way["waterway"]({bb});
@@ -60,6 +55,11 @@ fn build_query(bbox: BoundingBox) -> String {
   node["amenity"="telephone"]({bb});
   node["amenity"="post_box"]({bb});
   node["amenity"="vending_machine"]({bb});
+  node["barrier"="bollard"]({bb});
+  node["power"="tower"]({bb});
+  node["power"="pole"]({bb});
+  node["man_made"="surveillance"]({bb});
+  node["man_made"="flagpole"]({bb});
 );
 out body;
 >;
@@ -76,14 +76,12 @@ fn cache_filename(bbox: BoundingBox) -> String {
     // Format: overpass_<s>_<w>_<n>_<e>.json  (dots and minus signs replaced)
     let fmt = |v: f64| format!("{:.6}", v).replace('.', "p").replace('-', "m");
     format!(
-        "overpass_{}_{}_{}_{}. json",
+        "overpass_{}_{}_{}_{}.json",
         fmt(bbox.min.lat),
         fmt(bbox.min.lon),
         fmt(bbox.max.lat),
         fmt(bbox.max.lon),
     )
-    // strip the accidental space that crept in above
-    .replace(" ", "")
 }
 
 /// Fetch Overpass data for `bbox`, caching the result under `cache_dir`.
@@ -225,12 +223,12 @@ mod tests {
         assert!(q.contains("30.26,-97.75,30.27,-97.74"), "query should embed bbox: {}", q);
         assert!(q.contains("way[\"building\"]"));
         assert!(q.contains("node[\"natural\"=\"tree\"]"));
-        // pedestrian infrastructure
-        assert!(q.contains("way[\"highway\"=\"footway\"]"), "missing footway: {}", q);
-        assert!(q.contains("way[\"highway\"=\"path\"]"), "missing path: {}", q);
-        assert!(q.contains("way[\"highway\"=\"pedestrian\"]"), "missing pedestrian: {}", q);
-        assert!(q.contains("way[\"highway\"=\"steps\"]"), "missing steps: {}", q);
-        assert!(q.contains("way[\"highway\"=\"cycleway\"]"), "missing cycleway: {}", q);
+        // highway covered by generic way["highway"] — redundant subtypes must NOT appear
+        assert!(!q.contains("way[\"highway\"=\"footway\"]"), "redundant footway should be removed");
+        assert!(!q.contains("way[\"highway\"=\"path\"]"), "redundant path should be removed");
+        assert!(!q.contains("way[\"highway\"=\"pedestrian\"]"), "redundant pedestrian should be removed");
+        assert!(!q.contains("way[\"highway\"=\"steps\"]"), "redundant steps should be removed");
+        assert!(!q.contains("way[\"highway\"=\"cycleway\"]"), "redundant cycleway should be removed");
         assert!(q.contains("way[\"man_made\"=\"bridge\"]"), "missing bridge: {}", q);
         // crosswalks and urban furniture nodes
         assert!(q.contains("node[\"highway\"=\"crossing\"]"), "missing crossing node: {}", q);
@@ -240,6 +238,12 @@ mod tests {
         assert!(q.contains("node[\"amenity\"=\"telephone\"]"), "missing telephone: {}", q);
         assert!(q.contains("node[\"amenity\"=\"post_box\"]"), "missing post_box: {}", q);
         assert!(q.contains("node[\"amenity\"=\"vending_machine\"]"), "missing vending_machine: {}", q);
+        // barrier/power/man_made nodes previously missing
+        assert!(q.contains("node[\"barrier\"=\"bollard\"]"), "missing bollard: {}", q);
+        assert!(q.contains("node[\"power\"=\"tower\"]"), "missing power tower: {}", q);
+        assert!(q.contains("node[\"power\"=\"pole\"]"), "missing power pole: {}", q);
+        assert!(q.contains("node[\"man_made\"=\"surveillance\"]"), "missing surveillance: {}", q);
+        assert!(q.contains("node[\"man_made\"=\"flagpole\"]"), "missing flagpole: {}", q);
     }
 
     #[test]
