@@ -255,6 +255,33 @@ local function paintBridgeSegment(parent, p1, p2, width, material, chunk, sample
     end
 end
 
+-- Place directional arrow markers on oneway roads every 30 studs.
+local function paintOnewayArrows(parent, p1, p2, width, road)
+    if not road.oneway then return end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 20 then return end  -- too short for arrows
+    dir = dir.Unit
+
+    -- Place arrows every 30 studs along the segment
+    local interval = 30
+    for dist = interval, segLen - interval, interval do
+        local pos = p1 + dir * dist
+        local arrow = Instance.new("Part")
+        arrow.Name = "OnewayArrow"
+        arrow.Size = Vector3.new(4, 0.05, 6)
+        arrow.Material = Enum.Material.SmoothPlastic
+        arrow.Color = Color3.fromRGB(255, 255, 255)
+        arrow.Anchored = true
+        arrow.CanCollide = false
+        arrow.CastShadow = false
+        -- Orient arrow in road direction, flat on surface
+        arrow.CFrame = CFrame.lookAt(pos + Vector3.new(0, 0.2, 0), pos + Vector3.new(0, 0.2, 0) + dir)
+        arrow.Parent = parent
+    end
+end
+
 -- Add a white dashed centerline stripe on roads wider than 12 studs.
 local function paintCenterline(parent, p1, p2, width)
     if width < 12 then
@@ -373,6 +400,7 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
         elseif segmentMode == "ground" then
             paintSegment(terrain, resolvedP1, resolvedP2, road, width, material, sidewalkMode)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
+            paintOnewayArrows(parent, resolvedP1, resolvedP2, width, road)
             if road.lit then
                 placeStreetLights(parent, resolvedP1, resolvedP2, width)
             end
