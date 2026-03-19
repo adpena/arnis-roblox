@@ -1,10 +1,10 @@
 return {
-    schemaVersion = "0.2.0",
+    schemaVersion = "0.4.0",
     meta = {
         worldName = "SampleMultiChunkWorld",
         generator = "roblox sample data",
         source = "synthetic-scaffold",
-        metersPerStud = 1.0,
+        metersPerStud = 0.3,
         chunkSizeStuds = 256,
         bbox = {
             minLat = 30.264,
@@ -22,15 +22,22 @@ return {
             id = "0_0",
             originStuds = { x = 0, y = 0, z = 0 },
             terrain = {
-                cellSizeStuds = 16,
-                width = 4,
-                depth = 4,
-                heights = {
-                    0, 1, 2, 1,
-                    1, 2, 3, 2,
-                    0, 1, 2, 2,
-                    0, 0, 1, 1,
-                },
+                cellSizeStuds = 4,
+                width = 64,
+                depth = 64,
+                heights = (function()
+                    local h = {}
+                    local pattern = {
+                        0, 1, 2, 1,
+                        1, 2, 3, 2,
+                        0, 1, 2, 2,
+                        0, 0, 1, 1,
+                    }
+                    for i = 1, 64 * 64 do
+                        h[i] = pattern[((i - 1) % 16) + 1]
+                    end
+                    return h
+                end)(),
                 material = "Grass",
             },
             roads = {
@@ -40,6 +47,9 @@ return {
                     material = "Asphalt",
                     color = { r = 68, g = 68, b = 68 },
                     widthStuds = 10,
+                    hasSidewalk = true,
+                    elevated = false,
+                    tunnel = false,
                     points = {
                         { x = 0, y = 2, z = 64 },
                         { x = 128, y = 2, z = 64 },
@@ -51,20 +61,21 @@ return {
             buildings = {},
             water = {},
             props = {},
+            landuse = {},
+            barriers = {},
         },
         {
             id = "1_0",
             originStuds = { x = 256, y = 0, z = 0 },
             terrain = {
-                cellSizeStuds = 16,
-                width = 4,
-                depth = 4,
-                heights = {
-                    0, 0, 0, 0,
-                    0, 0, 0, 0,
-                    0, 0, 0, 0,
-                    0, 0, 0, 0,
-                },
+                cellSizeStuds = 4,
+                width = 64,
+                depth = 64,
+                heights = (function()
+                    local h = {}
+                    for i = 1, 64 * 64 do h[i] = 0 end
+                    return h
+                end)(),
                 material = "Grass",
             },
             roads = {
@@ -74,6 +85,9 @@ return {
                     material = "Asphalt",
                     color = { r = 68, g = 68, b = 68 },
                     widthStuds = 10,
+                    hasSidewalk = true,
+                    elevated = false,
+                    tunnel = false,
                     points = {
                         { x = 256, y = 2, z = 64 },
                         { x = 384, y = 2, z = 64 },
@@ -85,7 +99,8 @@ return {
             buildings = {},
             water = {},
             props = {},
+            landuse = {},
+            barriers = {},
         },
     },
 }
-
