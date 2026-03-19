@@ -37,7 +37,7 @@ local function deterministicUnitFloat(seed)
     return nextSeed / 2147483647
 end
 
-local function resolveBaseY(chunk, worldX, fallbackY, worldZ)
+local function resolveBaseY(_chunk, _worldX, fallbackY, _worldZ)
     return fallbackY
 end
 
@@ -73,6 +73,8 @@ local function alignRoadsideProp(prop, chunk, originStuds, wx, wz)
     return nearestRoad.projX + normalX * offset * side, nearestRoad.projZ + normalZ * offset * side
 end
 
+local METERS_TO_STUDS = 1 / 0.3 -- ~3.33 studs per meter
+
 local SPECIES_COLOR = {
     -- Conifers (dark green)
     conifer = BrickColor.new("Dark green"),
@@ -101,7 +103,19 @@ local SPECIES_COLOR = {
     broadleaved_evergreen = BrickColor.new("Olive green"),
     -- Fruit/flowering trees
     prunus = BrickColor.new("Pink"),
-    magnolia = BrickColor.new("Light pink"),
+    magnolia = BrickColor.new("Dark green"),
+    -- Austin-specific species
+    pecan = BrickColor.new("Olive"),
+    cypress = BrickColor.new("Forest green"),
+    mesquite = BrickColor.new("Sage green"),
+    crepe_myrtle = BrickColor.new("Lavender"),
+    cedar = BrickColor.new("Dark green"),
+    ash = BrickColor.new("Lime green"),
+    birch = BrickColor.new("Lime green"),
+    willow = BrickColor.new("Olive"),
+    cottonwood = BrickColor.new("Bright green"),
+    hackberry = BrickColor.new("Olive"),
+    sycamore = BrickColor.new("Lime green"),
     -- Default (Austin's mix of live oak + cedar)
     default = BrickColor.new("Bright green"),
 }
@@ -111,6 +125,20 @@ local SPECIES_SCALE = {
     palm = 0.5,
     oak = 1.2,
     quercus = 1.2,
+    -- Austin-specific species
+    magnolia = 1.1,
+    pecan = 1.3,
+    cypress = 0.8,
+    mesquite = 0.7,
+    crepe_myrtle = 0.6,
+    cedar = 0.9,
+    elm = 1.2,
+    ash = 1.0,
+    birch = 0.8,
+    willow = 1.4,
+    cottonwood = 1.3,
+    hackberry = 1.0,
+    sycamore = 1.3,
     default = 1.0,
 }
 
@@ -148,6 +176,15 @@ local function getCanopyScale(species)
         end
     end
     return 1.0
+end
+
+local function getTreeScale(prop)
+    if prop.height and prop.height > 0 then
+        -- Convert real-world meters to studs, then scale relative to default 20-stud tree
+        local heightStuds = prop.height * METERS_TO_STUDS
+        return math.clamp(heightStuds / 20, 0.5, 3.0)
+    end
+    return getCanopyScale(prop.species)
 end
 
 local function getOrCreatePool(kind)
@@ -225,16 +262,57 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
         prop.position.z + originStuds.z
     )
     local yaw = math.rad(prop.yawDegrees or 0)
-    local scale = prop.scale or 1.0
-    local speciesScale = getCanopyScale(prop.species)
+    -- prop.scale is an optional manifest override; getTreeScale derives scale from
+    -- prop.height (real meters) when available, otherwise falls back to species table.
+    local scale = prop.scale or getTreeScale(prop)
     local canopySeed = hashId(prop.id or tostring(prop.position.x) .. ":" .. tostring(prop.position.z))
 
     local model = Instance.new("Model")
     model.Name = prop.id or "Tree"
 
-    -- Trunk: Cylinder is axis-Z by default; rotate 90° on Z to stand upright
     local trunkH = 7 * scale
     local trunkR = 0.5 * scale
+    local canopyR = (4 + deterministicUnitFloat(canopySeed) * 3) * scale
+
+    -- Palm special case: thin trunk + frond cluster instead of sphere canopy
+    local species = prop.species and prop.species:lower() or ""
+    local leafType = prop.leafType or ""
+    if species:find("palm") or leafType == "tropical" then
+        local trunk = Instance.new("Part")
+        trunk.Name = "Trunk"
+        trunk.Anchored = true
+        trunk.Size = Vector3.new(trunkR * 0.6 * 2, trunkH, trunkR * 0.6 * 2)
+        trunk.Shape = Enum.PartType.Cylinder
+        trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+        trunk.Material = Enum.Material.Wood
+        trunk.Color = Color3.fromRGB(139, 109, 75)
+        trunk.CastShadow = false
+        trunk.Parent = model
+
+        local trunkTop = worldPos + Vector3.new(0, trunkH, 0)
+        for i = 1, 4 do
+            local frond = Instance.new("Part")
+            frond.Name = "Frond" .. i
+            frond.Size = Vector3.new(1, 0.5, canopyR * 1.5)
+            frond.Color = Color3.fromRGB(34, 120, 50)
+            frond.Material = Enum.Material.Grass
+            frond.Anchored = true
+            frond.CanCollide = false
+            frond.CastShadow = false
+            local angle = (i - 1) * 90
+            frond.CFrame = CFrame.new(trunkTop)
+                * CFrame.Angles(0, math.rad(angle), 0)
+                * CFrame.Angles(math.rad(-30), 0, 0)
+                * CFrame.new(0, 0, -canopyR * 0.5)
+            frond.Parent = model
+        end
+
+        model.Parent = parent
+        return model
+    end
+
+    -- Standard tree: trunk + shaped canopy
+    -- Trunk: Cylinder is axis-Z by default; rotate 90° on Z to stand upright
     local trunk = Instance.new("Part")
     trunk.Name = "Trunk"
     trunk.Anchored = true
@@ -246,29 +324,37 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     trunk.CastShadow = false
     trunk.Parent = model
 
-    -- Canopy sphere
-    local canopyR = (4 + deterministicUnitFloat(canopySeed) * 3) * scale * speciesScale
+    -- Canopy: shape depends on leafType
     local canopy = Instance.new("Part")
     canopy.Name = "Canopy"
     canopy.Anchored = true
-    canopy.Shape = Enum.PartType.Ball
-    canopy.Size = Vector3.new(canopyR * 2, canopyR * 2, canopyR * 2)
-    canopy.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH + canopyR * 0.5, 0))
     canopy.Material = Enum.Material.LeafyGrass
     canopy.BrickColor = getCanopyColor(prop.species)
     canopy.CastShadow = false
-    canopy.Parent = model
 
+    if leafType == "needleleaved" then
+        -- Cone-like: tall and narrow
+        canopy.Shape = Enum.PartType.Ball
+        canopy.Size = Vector3.new(canopyR * 1.2, canopyR * 2.5, canopyR * 1.2)
+        canopy.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH + canopyR * 0.9, 0))
+    else
+        -- Broadleaved default: wide, round sphere
+        canopy.Shape = Enum.PartType.Ball
+        canopy.Size = Vector3.new(canopyR * 2, canopyR * 1.5, canopyR * 2)
+        canopy.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH + canopyR * 0.5, 0))
+    end
+
+    canopy.Parent = model
     model.Parent = parent
     return model
 end
 
 function PropBuilder.Build(parent, prop, originStuds, chunk)
+    local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
     if prop.kind == "tree" then
         local baseY
-        if chunk then
-            baseY =
-                GroundSampler.sampleWorldHeight(chunk, prop.position.x + originStuds.x, prop.position.z + originStuds.z)
+        if sampleGroundY then
+            baseY = sampleGroundY(prop.position.x + originStuds.x, prop.position.z + originStuds.z)
         end
         return buildTree(parent, prop, originStuds, baseY)
     end
