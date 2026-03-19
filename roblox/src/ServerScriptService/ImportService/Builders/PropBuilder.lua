@@ -274,6 +274,12 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     local trunkR = 0.5 * scale
     local canopyR = (4 + deterministicUnitFloat(canopySeed) * 3) * scale
 
+    -- Scale trunk radius from real-world circumference when available.
+    if prop.circumference and prop.circumference > 0 then
+        local diameterStuds = (prop.circumference / math.pi) * METERS_TO_STUDS
+        trunkR = math.max(0.5, diameterStuds * 0.5)
+    end
+
     -- Palm special case: thin trunk + frond cluster instead of sphere canopy
     local species = prop.species and prop.species:lower() or ""
     local leafType = prop.leafType or ""
