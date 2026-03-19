@@ -489,6 +489,40 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         return hydrant
     end
 
+    if prop.kind == "crossing" then
+        -- Render a zebra crosswalk: 6-8 white stripes perpendicular to nearby road
+        local wx = prop.position.x + originStuds.x
+        local wy = prop.position.y + originStuds.y
+        local wz = prop.position.z + originStuds.z
+
+        -- Place striped crosswalk markings (simple: assume N-S direction,
+        -- could be improved by finding nearest road direction)
+        local stripeCount = 6
+        local stripeWidth = 1.5
+        local stripeLen = 12  -- studs across the road
+        local gap = 1.2
+
+        local crosswalkModel = Instance.new("Model")
+        crosswalkModel.Name = prop.id
+
+        for s = 1, stripeCount do
+            local offset = (s - stripeCount / 2 - 0.5) * (stripeWidth + gap)
+            local stripe = Instance.new("Part")
+            stripe.Name = "CrosswalkStripe"
+            stripe.Size = Vector3.new(stripeLen, 0.05, stripeWidth)
+            stripe.Material = Enum.Material.SmoothPlastic
+            stripe.Color = Color3.fromRGB(255, 255, 255)
+            stripe.Anchored = true
+            stripe.CanCollide = false
+            stripe.CastShadow = false
+            stripe.CFrame = CFrame.new(wx, wy + 0.15, wz + offset)
+            stripe.Parent = crosswalkModel
+        end
+
+        crosswalkModel.Parent = parent
+        return crosswalkModel
+    end
+
     local pool = getOrCreatePool(prop.kind)
     local instance = pool:Acquire()
 
