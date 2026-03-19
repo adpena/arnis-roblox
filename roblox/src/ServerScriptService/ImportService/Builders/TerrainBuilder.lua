@@ -86,47 +86,100 @@ function TerrainBuilder.Build(_parent, chunk)
 		end
 	end
 
-	-- Resolve material for a given grid cell
+	local gridW = terrainGrid.width
+	local gridD = terrainGrid.depth
+	local heights = terrainGrid.heights
+
+	-- Bilinear interpolation of height at a fractional position within the grid.
+	-- cellX/cellZ are 0-indexed cell coordinates; fracX/fracZ are [0,1] within that cell.
+	local function sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
+		local function getH(cx, cz)
+			cx = math.max(0, math.min(gridW - 1, cx))
+			cz = math.max(0, math.min(gridD - 1, cz))
+			return heights[cz * gridW + cx + 1] or 0
+		end
+		local h00 = getH(cellX,     cellZ)
+		local h10 = getH(cellX + 1, cellZ)
+		local h01 = getH(cellX,     cellZ + 1)
+		local h11 = getH(cellX + 1, cellZ + 1)
+		local h0  = h00 + (h10 - h00) * fracX
+		local h1  = h01 + (h11 - h01) * fracX
+		return h0 + (h1 - h0) * fracZ
+	end
+
+	-- Slope at a cell as a rise/run ratio (gradient magnitude via central differences).
+	local function computeSlope(cx, cz)
+		local function getH(x, z)
+			x = math.max(0, math.min(gridW - 1, x))
+			z = math.max(0, math.min(gridD - 1, z))
+			return heights[z * gridW + x + 1] or 0
+		end
+		local dhdx = (getH(cx + 1, cz) - getH(cx - 1, cz)) / (2 * cellSize)
+		local dhdz = (getH(cx, cz + 1) - getH(cx, cz - 1)) / (2 * cellSize)
+		return math.sqrt(dhdx * dhdx + dhdz * dhdz)
+	end
+
+	-- Resolve material for a given grid cell, with slope-based override.
 	local function getMat(x, z)
+		local baseMat
 		if terrainGrid.materials then
-			local idx = z * terrainGrid.width + x + 1
+			local idx = z * gridW + x + 1
 			local name = terrainGrid.materials[idx]
 			if name then
 				local ok, m = pcall(function() return Enum.Material[name] end)
-				if ok and m then return m end
+				if ok and m then baseMat = m end
 			end
 		end
-		local name = terrainGrid.material
-		local ok, m = pcall(function() return Enum.Material[name] end)
-		if ok and m then return m end
-		return Enum.Material.Grass
+		if not baseMat then
+			local name = terrainGrid.material
+			local ok, m = pcall(function() return Enum.Material[name] end)
+			if ok and m then baseMat = m else baseMat = Enum.Material.Grass end
+		end
+
+		local slope = computeSlope(x, z)
+		if slope > 1.0 then          -- > ~45°
+			return Enum.Material.Rock
+		elseif slope > 0.47 then     -- > ~25°
+			return Enum.Material.Ground
+		end
+		return baseMat
 	end
 
-	-- Fill voxels from terrain grid cells
-	for cellZ = 0, terrainGrid.depth - 1 do
-		for cellX = 0, terrainGrid.width - 1 do
-			local idx = cellZ * terrainGrid.width + cellX + 1
-			local surfH = terrainGrid.heights[idx] or 0
+	-- Fill voxels from terrain grid cells, using per-voxel interpolated height
+	-- so transitions between cells produce smooth slopes rather than flat plateaus.
+	for cellZ = 0, gridD - 1 do
+		for cellX = 0, gridW - 1 do
 			local mat = getMat(cellX, cellZ)
-
-			local worldSurfY = origin.y + surfH
-			local worldBotY  = worldSurfY - TERRAIN_THICKNESS
 
 			local wx0 = origin.x + cellX * cellSize
 			local wz0 = origin.z + cellZ * cellSize
 			local wx1 = wx0 + cellSize
 			local wz1 = wz0 + cellSize
 
-			-- Convert to 1-indexed voxel indices within the region
+			-- Voxel column range for this cell in X and Z
 			local vx0 = math.max(1, math.floor((wx0 - rMinX) / VOXEL_SIZE) + 1)
 			local vx1 = math.min(vX, math.ceil((wx1 - rMinX) / VOXEL_SIZE))
 			local vz0 = math.max(1, math.floor((wz0 - rMinZ) / VOXEL_SIZE) + 1)
 			local vz1 = math.min(vZ, math.ceil((wz1 - rMinZ) / VOXEL_SIZE))
-			local vy0 = math.max(1, math.floor((worldBotY - rMinY) / VOXEL_SIZE) + 1)
-			local vy1 = math.min(vY, math.ceil((worldSurfY - rMinY) / VOXEL_SIZE))
 
 			for ix = vx0, vx1 do
+				-- Fractional X position of this voxel centre within the cell [0,1]
+				local voxelWorldX = rMinX + (ix - 0.5) * VOXEL_SIZE
+				local fracX = math.clamp((voxelWorldX - wx0) / cellSize, 0, 1)
+
 				for iz = vz0, vz1 do
+					-- Fractional Z position of this voxel centre within the cell [0,1]
+					local voxelWorldZ = rMinZ + (iz - 0.5) * VOXEL_SIZE
+					local fracZ = math.clamp((voxelWorldZ - wz0) / cellSize, 0, 1)
+
+					-- Interpolated surface height for this column
+					local interpH = sampleInterpolatedHeight(cellX, cellZ, fracX, fracZ)
+					local worldSurfY = origin.y + interpH
+					local worldBotY  = worldSurfY - TERRAIN_THICKNESS
+
+					local vy0 = math.max(1, math.floor((worldBotY - rMinY) / VOXEL_SIZE) + 1)
+					local vy1 = math.min(vY, math.ceil((worldSurfY - rMinY) / VOXEL_SIZE))
+
 					for iy = vy0, vy1 do
 						materials[ix][iy][iz] = mat
 						occupancies[ix][iy][iz] = 1
