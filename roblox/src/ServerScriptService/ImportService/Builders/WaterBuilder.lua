@@ -8,27 +8,16 @@ local WaterBuilder = {}
 
 -- Water fills 2 studs deep from the surface so it looks like a body of water.
 local WATER_DEPTH = 2
-local WATER_SURFACE_SNAP_THRESHOLD = 2
 
 local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
 end
 
-local function resolveWaterSurfaceY(chunk, worldX, fallbackY, worldZ)
-    if not chunk then
-        return fallbackY or 0
+local function resolveWaterSurfaceY(water, fallbackY, chunk, worldX, worldZ)
+    if water.surfaceY then
+        return water.surfaceY
     end
-
-    local groundY = GroundSampler.sampleWorldHeight(chunk, worldX, worldZ)
-    if fallbackY == nil then
-        return groundY
-    end
-
-    if math.abs(fallbackY - groundY) <= WATER_SURFACE_SNAP_THRESHOLD then
-        return fallbackY
-    end
-
-    return groundY
+    return fallbackY
 end
 
 local function estimatePolygonSurfaceY(chunk, worldPts)
@@ -131,8 +120,8 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk)
         for i = 1, #water.points - 1 do
             local p1 = offsetPoint(water.points[i], originStuds)
             local p2 = offsetPoint(water.points[i + 1], originStuds)
-            local surfaceY1 = resolveWaterSurfaceY(chunk, p1.X, p1.Y, p1.Z)
-            local surfaceY2 = resolveWaterSurfaceY(chunk, p2.X, p2.Y, p2.Z)
+            local surfaceY1 = resolveWaterSurfaceY(water, p1.Y, chunk, p1.X, p1.Z)
+            local surfaceY2 = resolveWaterSurfaceY(water, p2.Y, chunk, p2.X, p2.Z)
             local resolvedP1 = Vector3.new(p1.X, surfaceY1, p1.Z)
             local resolvedP2 = Vector3.new(p2.X, surfaceY2, p2.Z)
             paintRibbonSegment(terrain, resolvedP1, resolvedP2, width)
@@ -143,7 +132,7 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk)
         for _, p in ipairs(water.footprint) do
             table.insert(worldPts, Vector3.new(p.x + originStuds.x, 0, p.z + originStuds.z))
         end
-        local surfaceY = estimatePolygonSurfaceY(chunk, worldPts)
+        local surfaceY = water.surfaceY or estimatePolygonSurfaceY(chunk, worldPts)
         local cy = surfaceY - WATER_DEPTH * 0.5
         -- Scanline fill for accurate polygon shape
         paintPolygonScanline(terrain, worldPts, cy, Enum.Material.Water)
