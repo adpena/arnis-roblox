@@ -27,8 +27,8 @@ def main() -> None:
         fail("Missing required files:\n" + "\n".join(str(path) for path in missing))
 
     manifest = json.loads((ROOT / "specs" / "sample-chunk-manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("schemaVersion") != "0.2.0":
-        fail("sample manifest schemaVersion must be 0.2.0")
+    if manifest.get("schemaVersion") != "0.3.0":
+        fail("sample manifest schemaVersion must be 0.3.0")
 
     if "meta" not in manifest or "chunks" not in manifest:
         fail("sample manifest missing meta or chunks")

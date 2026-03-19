@@ -58,6 +58,21 @@ cargo run --manifest-path rust/Cargo.toml -p arbx_cli -- sample --out specs/gene
 python scripts/run_all_checks.py
 ```
 
+### 3b) Run the repo audit directly
+
+This checks reachable-history large blobs, tracked ignored files, required ignore rules, secret
+findings via `gitleaks`, and repo size telemetry via `git-sizer`.
+
+```bash
+python scripts/repo_audit.py --strict
+```
+
+If the audit reports tracked generated artifacts, untrack them before pushing:
+
+```bash
+git rm --cached -r out roblox/out tmp
+```
+
 ### 4) Bring the Roblox project into Studio
 
 - Open `roblox/default.project.json` with Rojo.

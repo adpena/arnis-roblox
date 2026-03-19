@@ -18,6 +18,22 @@ def main() -> int:
     if code != 0:
         return code
 
+    code = run(
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            str(ROOT / "scripts" / "tests"),
+            "-p",
+            "test_*.py",
+            "-v",
+        ]
+    )
+    if code != 0:
+        return code
+
     cargo = shutil.which("cargo")
     if cargo:
         code = run([cargo, "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml")])
@@ -25,6 +41,10 @@ def main() -> int:
             return code
     else:
         print("[run_all_checks] cargo not found; skipping Rust tests.")
+
+    code = run([sys.executable, str(ROOT / "scripts" / "repo_audit.py"), "--strict"])
+    if code != 0:
+        return code
 
     print("[run_all_checks] Done.")
     return 0
