@@ -67,7 +67,6 @@ local CURB_THICKNESS = 0.35
 local ROAD_SURFACE_LIFT = 0.15
 local PAVEMENT_SURFACE_LIFT = 0.25
 local CURB_SURFACE_LIFT = 0.45
-local BRIDGE_THRESHOLD = 3 -- studs above ground to consider a road elevated (bridge)
 local BRIDGE_PILLAR_SPACING = 24
 local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
 local BRIDGE_GUARDRAIL_OFFSET = 0.15
@@ -97,34 +96,14 @@ local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
 end
 
-local function classifySegment(chunk, p1, p2)
-    if chunk and chunk.terrain then
-        local groundY1 = GroundSampler.sampleWorldHeight(chunk, p1.X, p1.Z)
-        local groundY2 = GroundSampler.sampleWorldHeight(chunk, p2.X, p2.Z)
-        local avgRoadY = (p1.Y + p2.Y) * 0.5
-        local avgGroundY = (groundY1 + groundY2) * 0.5
-        local heightDelta = avgRoadY - avgGroundY
-
-        if heightDelta > BRIDGE_THRESHOLD then
-            return "bridge", p1, p2
-        end
-
-        if heightDelta < -BRIDGE_THRESHOLD then
-            return "tunnel", p1, p2
-        end
-
-        return "ground", Vector3.new(p1.X, groundY1, p1.Z), Vector3.new(p2.X, groundY2, p2.Z)
-    end
-
-    local avgY = (p1.Y + p2.Y) * 0.5
-    if avgY > BRIDGE_THRESHOLD then
+local function classifySegment(road, p1, p2, chunk)
+    if road.elevated then
         return "bridge", p1, p2
-    end
-    if avgY < -BRIDGE_THRESHOLD then
+    elseif road.tunnel then
         return "tunnel", p1, p2
+    else
+        return "ground", p1, p2
     end
-
-    return "ground", p1, p2
 end
 
 local function paintStrip(terrain, p1, p2, width, thickness, material, surfaceLift, sideOffset)
@@ -319,7 +298,7 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk)
         local p1 = offsetPoint(road.points[i], originStuds)
         local p2 = offsetPoint(road.points[i + 1], originStuds)
 
-        local segmentMode, resolvedP1, resolvedP2 = classifySegment(chunk, p1, p2)
+        local segmentMode, resolvedP1, resolvedP2 = classifySegment(road, p1, p2, chunk)
         if segmentMode == "bridge" then
             paintBridgeSegment(parent, resolvedP1, resolvedP2, width, material, chunk)
         elseif segmentMode == "ground" then
