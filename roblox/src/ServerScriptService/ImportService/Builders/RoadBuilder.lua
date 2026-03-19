@@ -14,22 +14,23 @@ local SURFACE_MATERIAL = {
     concrete = Enum.Material.Concrete,
     ["concrete:plates"] = Enum.Material.Concrete,
     cobblestone = Enum.Material.Cobblestone,
-    paving_stones = Enum.Material.Pavement,
+    paving_stones = Enum.Material.Cobblestone,
     bricks = Enum.Material.Cobblestone,
     sett = Enum.Material.Cobblestone,
-    gravel = Enum.Material.Ground,
-    fine_gravel = Enum.Material.Ground,
+    gravel = Enum.Material.Pebble,
+    fine_gravel = Enum.Material.Pebble,
     compacted = Enum.Material.Ground,
-    pebblestone = Enum.Material.Ground,
+    pebblestone = Enum.Material.Pebble,
     rock = Enum.Material.Rock,
-    unpaved = Enum.Material.Mud,
-    dirt = Enum.Material.Mud,
-    earth = Enum.Material.Mud,
+    unpaved = Enum.Material.Ground,
+    dirt = Enum.Material.Ground,
+    earth = Enum.Material.Ground,
     grass = Enum.Material.Grass,
-    wood = Enum.Material.SmoothPlastic,
+    wood = Enum.Material.WoodPlanks,
     stepping_stones = Enum.Material.Pavement,
     paved = Enum.Material.Concrete,
     sand = Enum.Material.Sand,
+    metal = Enum.Material.DiamondPlate,
 }
 
 -- Maps road kind → Roblox terrain material for Terrain:FillBlock
@@ -495,6 +496,103 @@ local function paintCrosswalk(parent, position, direction, width)
     end
 end
 
+-- Scatter manhole covers along the centre of major road segments.
+-- Placement is fully deterministic: no math.random is used.
+local function scatterManholes(parent, p1, p2, width, road)
+    local majorKinds = { primary = true, secondary = true, tertiary = true, trunk = true }
+    if not majorKinds[road.kind] then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 40 then
+        return
+    end
+    dir = dir.Unit
+
+    local interval = 60
+    local seed = string.len(road.id or "")
+
+    for dist = 30, segLen - 30, interval do
+        -- Deterministic lateral offset derived from seed and integer distance
+        local lateralOffset = ((seed * 7 + math.floor(dist)) % 10 - 5) * (width * 0.06)
+        local pos = p1 + dir * dist
+        local perp = Vector3.new(-dir.Z, 0, dir.X)
+        local surfaceY = pos.Y + 0.15
+
+        local manhole = Instance.new("Part")
+        manhole.Name = "Manhole"
+        manhole.Shape = Enum.PartType.Cylinder
+        manhole.Size = Vector3.new(0.05, 2.5, 2.5)
+        manhole.Material = Enum.Material.DiamondPlate
+        manhole.Color = Color3.fromRGB(50, 50, 55)
+        manhole.Anchored = true
+        manhole.CanCollide = false
+        manhole.CastShadow = false
+        manhole.CFrame = CFrame.new(
+            pos.X + perp.X * lateralOffset,
+            surfaceY,
+            pos.Z + perp.Z * lateralOffset
+        ) * CFrame.Angles(0, 0, math.pi / 2)
+        CollectionService:AddTag(manhole, "LOD_Detail")
+        manhole.Parent = parent
+    end
+end
+
+-- Scatter drain grates along curb lines on roads with sidewalks.
+-- Placement is fully deterministic: no math.random is used.
+local function scatterDrainGrates(parent, p1, p2, width, sidewalkMode)
+    if sidewalkMode == "no" then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 30 then
+        return
+    end
+    dir = dir.Unit
+    local perp = Vector3.new(-dir.Z, 0, dir.X)
+
+    local interval = 40
+    local halfWidth = width * 0.5
+
+    for dist = 20, segLen - 20, interval do
+        local pos = p1 + dir * dist
+        local surfaceY = pos.Y + 0.12
+
+        for _, side in ipairs({ -1, 1 }) do
+            local wantLeft = (sidewalkMode == "both" or sidewalkMode == "left")
+            local wantRight = (sidewalkMode == "both" or sidewalkMode == "right")
+            if (side == -1 and wantLeft) or (side == 1 and wantRight) then
+                local grate = Instance.new("Part")
+                grate.Name = "DrainGrate"
+                grate.Size = Vector3.new(1.5, 0.05, 0.8)
+                grate.Material = Enum.Material.DiamondPlate
+                grate.Color = Color3.fromRGB(40, 40, 45)
+                grate.Anchored = true
+                grate.CanCollide = false
+                grate.CastShadow = false
+                grate.CFrame = CFrame.lookAt(
+                    Vector3.new(
+                        pos.X + perp.X * halfWidth * side * 0.95,
+                        surfaceY,
+                        pos.Z + perp.Z * halfWidth * side * 0.95
+                    ),
+                    Vector3.new(
+                        pos.X + perp.X * halfWidth * side * 0.95,
+                        surfaceY,
+                        pos.Z + perp.Z * halfWidth * side * 0.95
+                    ) + dir
+                )
+                CollectionService:AddTag(grate, "LOD_Detail")
+                grate.Parent = parent
+            end
+        end
+    end
+end
+
 -- Place PointLight lamp posts along a ground-level segment at fixed intervals.
 local function placeStreetLights(parent, p1, p2, width)
     local delta = p2 - p1
@@ -669,6 +767,8 @@ function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk, detailParen
             paintSegment(terrain, resolvedP1, resolvedP2, road, width, material, sidewalkMode)
             paintCenterline(parent, resolvedP1, resolvedP2, width)
             paintOnewayArrows(detailParent, resolvedP1, resolvedP2, width, road)
+            scatterManholes(detailParent, resolvedP1, resolvedP2, width, road)
+            scatterDrainGrates(detailParent, resolvedP1, resolvedP2, width, sidewalkMode)
             if road.lit and WorldConfig.EnableStreetLighting ~= false then
                 placeStreetLights(detailParent, resolvedP1, resolvedP2, width)
             end
@@ -919,6 +1019,8 @@ function RoadBuilder.MeshBuildDecorations(parent, roads, originStuds, _chunk)
             if not road.elevated then
                 paintCenterline(parent, p1, p2, width)
                 paintOnewayArrows(detailParent, p1, p2, width, road)
+                scatterManholes(detailParent, p1, p2, width, road)
+                scatterDrainGrates(detailParent, p1, p2, width, getSidewalkMode(road))
                 if road.lit and WorldConfig.EnableStreetLighting ~= false then
                     placeStreetLights(detailParent, p1, p2, width)
                 end
