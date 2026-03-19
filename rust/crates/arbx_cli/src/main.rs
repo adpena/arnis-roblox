@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use arbx_geo::{BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevationProvider, OffsetElevationProvider, TerrariumElevationProvider};
 use arbx_pipeline::{run_pipeline, NormalizeStage, TriangulateStage, ValidateStage};
-use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig};
+use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider};
 
 fn print_help() {
     println!("arbx_cli");
@@ -13,9 +13,10 @@ fn print_help() {
     println!("Commands:");
     println!("  sample [--out PATH] [--grid X,Z]   Emit the sample manifest");
     println!("  compile [--out PATH] [--source PATH] [--bbox MIN_LAT,MIN_LON,MAX_LAT,MAX_LON]");
-    println!("          [--live] [--cache-dir PATH]");
+    println!("          [--live] [--cache-dir PATH] [--satellite [TILE_DIR]]");
     println!("                                     Run the pipeline and emit a manifest");
     println!("                                     --live fetches from Overpass API (cached under out/overpass/)");
+    println!("                                     --satellite enriches roofs/terrain from satellite imagery (tiles cached under TILE_DIR, default: out/tiles/satellite)");
     println!("  config [--out PATH]               Emit a default world configuration JSON");
     println!("  stats <PATH>                       Print statistics for a manifest file");
     println!("  validate <PATH>                    Validate a manifest file");
@@ -81,6 +82,8 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut live = false;
     // --cache-dir: where to store cached Overpass responses (default: out/overpass).
     let mut cache_dir = "out/overpass".to_string();
+    // --satellite: optional satellite tile directory for material enrichment.
+    let mut satellite_dir: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -131,6 +134,18 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 let value = args.get(i + 1).ok_or("--cache-dir requires a path")?;
                 cache_dir = value.clone();
                 i += 2;
+            }
+            "--satellite" => {
+                // Optional tile directory argument: use it if the next token doesn't start with '-'
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        satellite_dir = Some(next.clone());
+                        i += 2;
+                        continue;
+                    }
+                }
+                satellite_dir = Some("out/tiles/satellite".to_string());
+                i += 1;
             }
             other => {
                 return Err(format!("unknown argument to compile: {other}"));
@@ -235,7 +250,15 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         }
     };
 
-    let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, elevation.as_ref()).to_json_pretty();
+    let mut sat_provider = satellite_dir.as_deref().map(SatelliteTileProvider::new);
+    let manifest = export_to_chunks(
+        ctx.features,
+        ctx.bbox,
+        &config,
+        elevation.as_ref(),
+        sat_provider.as_mut(),
+    )
+    .to_json_pretty();
     let duration = start.elapsed();
 
     if let Some(path) = out_path {

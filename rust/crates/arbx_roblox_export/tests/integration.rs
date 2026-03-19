@@ -20,7 +20,7 @@ fn full_pipeline_produces_valid_manifest() {
 
     let config = ExportConfig::default();
     let elevation = FlatElevationProvider { height: 0.0 };
-    let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation);
+    let manifest = export_to_chunks(ctx.features, ctx.bbox, &config, &elevation, None);
 
     // Verify manifest structure
     assert_eq!(manifest.schema_version, "0.4.0");
@@ -54,10 +54,10 @@ fn full_pipeline_deterministic_output() {
 
     // Run pipeline twice
     let ctx1 = arbx_pipeline::run_pipeline(&adapter, bbox, &stages).unwrap();
-    let manifest1 = export_to_chunks(ctx1.features, ctx1.bbox, &config, &elevation);
+    let manifest1 = export_to_chunks(ctx1.features, ctx1.bbox, &config, &elevation, None);
 
     let ctx2 = arbx_pipeline::run_pipeline(&adapter, bbox, &stages).unwrap();
-    let manifest2 = export_to_chunks(ctx2.features, ctx2.bbox, &config, &elevation);
+    let manifest2 = export_to_chunks(ctx2.features, ctx2.bbox, &config, &elevation, None);
 
     // Verify deterministic output
     assert_eq!(manifest1.chunks.len(), manifest2.chunks.len());
@@ -131,7 +131,7 @@ fn multi_chunk_export_correct() {
     let elevation = FlatElevationProvider { height: 0.0 };
     let bbox = BoundingBox::new(0.0, 0.0, 1.0, 1.0);
 
-    let manifest = export_to_chunks(features, bbox, &config, &elevation);
+    let manifest = export_to_chunks(features, bbox, &config, &elevation, None);
 
     // Buildings should be in different chunks
     assert!(manifest.chunks.len() >= 2, "Should have at least 2 chunks");

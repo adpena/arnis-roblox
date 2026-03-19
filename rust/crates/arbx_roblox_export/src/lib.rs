@@ -11,6 +11,7 @@ pub use manifest::{
     BuildingShell, Chunk, ChunkManifest, Color, GroundPoint, LanduseShell, ManifestMeta,
     PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
 };
+pub use arbx_geo::satellite::SatelliteTileProvider;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportConfig {
@@ -313,6 +314,7 @@ pub fn export_to_chunks(
     bbox: BoundingBox,
     config: &ExportConfig,
     elevation: &dyn ElevationProvider,
+    satellite: Option<&mut SatelliteTileProvider>,
 ) -> ChunkManifest {
     // Compute centroid of all feature X/Z coordinates and shift to origin
     let mut xz_pts = Vec::new();
@@ -351,7 +353,7 @@ pub fn export_to_chunks(
         chunker.ingest(feature, &config.style, elevation);
     }
 
-    let manifest = chunker.finish(ManifestMeta {
+    let mut manifest = chunker.finish(ManifestMeta {
         world_name: config.world_name.clone(),
         generator: "arbx_roblox_export".to_string(),
         source: "pipeline-export".to_string(),
@@ -361,6 +363,83 @@ pub fn export_to_chunks(
         total_features: 0,
         notes: vec!["exported via chunker from features".to_string()],
     });
+
+    // Post-pass: enrich buildings and terrain cells from satellite imagery
+    if let Some(sat) = satellite {
+        let center = bbox.center();
+        let mps = config.meters_per_stud;
+
+        for chunk in &mut manifest.chunks {
+            let origin = chunk.origin_studs;
+
+            // Enrich building roof colors from satellite
+            for building in &mut chunk.buildings {
+                // Skip if already has roof color from OSM tags
+                if building.roof_color.is_some() {
+                    continue;
+                }
+
+                // Compute chunk-relative centroid of the building footprint
+                let fp_center_x = building.footprint.iter().map(|p| p.x).sum::<f64>()
+                    / building.footprint.len() as f64;
+                let fp_center_z = building.footprint.iter().map(|p| p.z).sum::<f64>()
+                    / building.footprint.len() as f64;
+
+                // Convert chunk-relative stud coordinates back to world studs then to lat/lon
+                let world_x = fp_center_x + origin.x;
+                let world_z = fp_center_z + origin.z;
+
+                let lat = center.lat - (world_z * mps / 111_111.0);
+                let lon = center.lon
+                    + (world_x * mps / (111_111.0 * center.lat.to_radians().cos()));
+
+                if let Some(rgb) =
+                    sat.sample_pixel(arbx_geo::LatLon::new(lat, lon))
+                {
+                    let (r, g, b) = arbx_geo::satellite::roof_pixel_to_color(rgb);
+                    building.roof_color = Some(Color::new(r, g, b));
+
+                    // Also set roof material if not supplied by OSM
+                    if building.roof_material.is_none() {
+                        building.roof_material = Some(
+                            arbx_geo::satellite::classify_roof_material(rgb).to_string(),
+                        );
+                    }
+                }
+            }
+
+            // Enrich terrain per-cell materials from satellite ground classification
+            if let Some(terrain) = &mut chunk.terrain {
+                if let Some(materials) = &mut terrain.materials {
+                    let cell_size = terrain.cell_size_studs as f64;
+                    let default_mat = terrain.material.clone();
+                    for cz in 0..terrain.depth {
+                        for cx in 0..terrain.width {
+                            let idx = cz * terrain.width + cx;
+                            // Only override cells that still carry the chunk default material
+                            if materials[idx] != default_mat {
+                                continue;
+                            }
+
+                            let world_x = (cx as f64 * cell_size) + origin.x;
+                            let world_z = (cz as f64 * cell_size) + origin.z;
+
+                            let lat = center.lat - (world_z * mps / 111_111.0);
+                            let lon = center.lon
+                                + (world_x * mps / (111_111.0 * center.lat.to_radians().cos()));
+
+                            if let Some(rgb) =
+                                sat.sample_pixel(arbx_geo::LatLon::new(lat, lon))
+                            {
+                                materials[idx] = arbx_geo::satellite::classify_ground_material(rgb)
+                                    .to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     let mut total_features = 0;
     for chunk in &manifest.chunks {
@@ -372,7 +451,6 @@ pub fn export_to_chunks(
         total_features += chunk.landuse.len();
     }
 
-    let mut manifest = manifest;
     manifest.schema_version = "0.4.0".to_string();
     manifest.meta.total_features = total_features;
     manifest
@@ -388,6 +466,7 @@ pub fn export_features(
         BoundingBox::new(0.0, 0.0, 1.0, 1.0),
         config,
         elevation,
+        None,
     )
 }
 
