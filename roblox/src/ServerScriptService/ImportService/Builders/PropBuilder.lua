@@ -1,6 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local InstancePool = require(script.Parent.Parent.InstancePool)
-local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local RoadProfile = require(script.Parent.Parent.RoadProfile)
 local SpatialQuery = require(script.Parent.Parent.SpatialQuery)
 
@@ -22,6 +22,20 @@ local function getPrefabFolder()
     end
 
     return assetsFolder:FindFirstChild("Prefabs")
+end
+
+local function getPropDetailParent(parent)
+    local detailFolder = parent:FindFirstChild("Detail")
+    if detailFolder then
+        return detailFolder
+    end
+
+    detailFolder = Instance.new("Folder")
+    detailFolder.Name = "Detail"
+    detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+    CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+    detailFolder.Parent = parent
+    return detailFolder
 end
 
 local function hashId(id)
@@ -210,48 +224,101 @@ local function buildStreetLamp(x, y, z, parent)
     model.Name = "StreetLamp"
     model.Parent = parent
 
-    -- Pole
+    -- Main pole (cylinder standing upright)
     local pole = Instance.new("Part")
     pole.Name = "Pole"
+    pole.Shape = Enum.PartType.Cylinder
     pole.Anchored = true
-    pole.Size = Vector3.new(0.3, 10, 0.3)
-    pole.CFrame = CFrame.new(x, y + 5, z)
+    pole.Size = Vector3.new(12, 0.4, 0.4)
+    pole.CFrame = CFrame.new(x, y + 6, z) * CFrame.Angles(0, 0, math.pi / 2)
     pole.Material = Enum.Material.Metal
-    pole.Color = Color3.fromRGB(80, 80, 80)
+    pole.Color = Color3.fromRGB(70, 70, 75)
     pole.CastShadow = false
     pole.Parent = model
 
-    -- Arm
+    -- Arm (angled bracket extending from top)
     local arm = Instance.new("Part")
     arm.Name = "Arm"
     arm.Anchored = true
-    arm.Size = Vector3.new(1.5, 0.2, 0.2)
-    arm.CFrame = CFrame.new(x + 0.75, y + 9.8, z)
+    arm.Size = Vector3.new(0.2, 0.2, 3)
+    arm.CFrame = CFrame.new(x + 1, y + 12, z) * CFrame.Angles(0, 0, math.rad(-20))
     arm.Material = Enum.Material.Metal
-    arm.Color = Color3.fromRGB(80, 80, 80)
+    arm.Color = Color3.fromRGB(70, 70, 75)
     arm.CastShadow = false
     arm.Parent = model
 
-    -- Light head
+    -- Lamp housing (flattened ball for lantern silhouette)
     local head = Instance.new("Part")
     head.Name = "LightHead"
+    head.Shape = Enum.PartType.Ball
     head.Anchored = true
-    head.Size = Vector3.new(0.8, 0.4, 0.8)
-    head.CFrame = CFrame.new(x + 1.5, y + 9.6, z)
+    head.Size = Vector3.new(1.5, 0.8, 1.5)
+    head.CFrame = CFrame.new(x + 2, y + 11.8, z)
     head.Material = Enum.Material.Neon
-    head.Color = Color3.fromRGB(255, 240, 200)
+    head.Color = Color3.fromRGB(255, 244, 214)
     head.CastShadow = false
     head.Parent = model
 
     -- Point light
     local light = Instance.new("PointLight")
-    light.Brightness = 3
-    light.Range = 30
-    light.Color = Color3.fromRGB(255, 240, 200)
+    light.Brightness = 1.5
+    light.Range = 40
+    light.Color = Color3.fromRGB(255, 240, 210)
     light.Shadows = true
     light.Parent = head
 
+    CollectionService:AddTag(head, "StreetLight")
+    CollectionService:AddTag(head, "LOD_Detail")
+
     return model
+end
+
+-- Builds a multi-lobe canopy cluster for organic broadleaved silhouette
+local function buildRealisticCanopy(parent, trunkTop, canopyRadius, canopyColor, species)
+    -- Main canopy body
+    local mainLobe = Instance.new("Part")
+    mainLobe.Name = "CanopyMain"
+    mainLobe.Shape = Enum.PartType.Ball
+    mainLobe.Size = Vector3.new(canopyRadius * 2, canopyRadius * 1.6, canopyRadius * 2)
+    mainLobe.Material = Enum.Material.LeafyGrass
+    mainLobe.Color = canopyColor
+    mainLobe.Anchored = true
+    mainLobe.CanCollide = false
+    mainLobe.CastShadow = true
+    mainLobe.CFrame = CFrame.new(trunkTop + Vector3.new(0, canopyRadius * 0.5, 0))
+    mainLobe.Parent = parent
+
+    -- 3 secondary lobes offset from center for organic shape
+    local lobeCount = 3
+    local seed = string.len(species or "tree")
+    for i = 1, lobeCount do
+        local angle = (i / lobeCount) * math.pi * 2 + seed * 0.7
+        local offsetX = math.cos(angle) * canopyRadius * 0.4
+        local offsetZ = math.sin(angle) * canopyRadius * 0.4
+        local offsetY = (i % 2 == 0) and canopyRadius * 0.2 or -canopyRadius * 0.1
+        local lobeSize = canopyRadius * (0.6 + (i % 3) * 0.15)
+
+        local lobe = Instance.new("Part")
+        lobe.Name = "CanopyLobe" .. i
+        lobe.Shape = Enum.PartType.Ball
+        lobe.Size = Vector3.new(lobeSize * 2, lobeSize * 1.4, lobeSize * 2)
+        lobe.Material = Enum.Material.LeafyGrass
+        -- Slight colour variation per lobe
+        lobe.Color = Color3.new(
+            math.clamp(canopyColor.R + (i * 0.03 - 0.05), 0, 1),
+            math.clamp(canopyColor.G + (i * 0.02 - 0.03), 0, 1),
+            math.clamp(canopyColor.B + (i * 0.01 - 0.02), 0, 1)
+        )
+        lobe.Anchored = true
+        lobe.CanCollide = false
+        lobe.CastShadow = true
+        lobe.CFrame = CFrame.new(
+            trunkTop.X + offsetX,
+            trunkTop.Y + canopyRadius * 0.5 + offsetY,
+            trunkTop.Z + offsetZ
+        )
+        lobe.Parent = parent
+    end
 end
 
 -- Builds a simple procedural tree model (trunk + canopy)
@@ -316,48 +383,64 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
         return model
     end
 
-    -- Standard tree: trunk + shaped canopy
-    -- Trunk: Cylinder is axis-Z by default; rotate 90° on Z to stand upright
-    local trunk = Instance.new("Part")
-    trunk.Name = "Trunk"
-    trunk.Anchored = true
-    trunk.Size = Vector3.new(trunkR * 2, trunkH, trunkR * 2)
-    trunk.Shape = Enum.PartType.Cylinder
-    trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
-    trunk.Material = Enum.Material.Wood
-    trunk.Color = Color3.fromRGB(101, 79, 55)
-    trunk.CastShadow = false
-    trunk.Parent = model
+    -- Standard tree: tapered trunk + shaped canopy
+    local trunkColor = Color3.fromRGB(101, 79, 55)
+
+    -- Base trunk section (wider for taper effect)
+    local baseTrunk = Instance.new("Part")
+    baseTrunk.Name = "TrunkBase"
+    baseTrunk.Anchored = true
+    baseTrunk.Shape = Enum.PartType.Cylinder
+    baseTrunk.Size = Vector3.new(trunkH * 0.3, trunkR * 1.4, trunkR * 1.4)
+    baseTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.15, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+    baseTrunk.Material = Enum.Material.WoodPlanks
+    baseTrunk.Color = trunkColor
+    baseTrunk.CastShadow = false
+    baseTrunk.Parent = model
+
+    -- Upper trunk section (narrower)
+    local upperTrunk = Instance.new("Part")
+    upperTrunk.Name = "TrunkUpper"
+    upperTrunk.Anchored = true
+    upperTrunk.Shape = Enum.PartType.Cylinder
+    upperTrunk.Size = Vector3.new(trunkH * 0.7, trunkR, trunkR)
+    upperTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.65, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+    upperTrunk.Material = Enum.Material.WoodPlanks
+    upperTrunk.Color = trunkColor
+    upperTrunk.CastShadow = false
+    upperTrunk.Parent = model
 
     -- Canopy: shape depends on leafType
-    local canopy = Instance.new("Part")
-    canopy.Name = "Canopy"
-    canopy.Anchored = true
-    canopy.Material = Enum.Material.LeafyGrass
-    canopy.BrickColor = getCanopyColor(prop.species)
-    canopy.CastShadow = false
+    local trunkTop = worldPos + Vector3.new(0, trunkH, 0)
+    local canopyBrickColor = getCanopyColor(prop.species)
+    local canopyColor3 = canopyBrickColor.Color
 
     if leafType == "needleleaved" then
-        -- Cone-like: tall and narrow
+        -- Cone-like: tall and narrow single ball, no multi-lobe
+        local canopy = Instance.new("Part")
+        canopy.Name = "Canopy"
+        canopy.Anchored = true
+        canopy.Material = Enum.Material.LeafyGrass
+        canopy.BrickColor = canopyBrickColor
+        canopy.CastShadow = false
         canopy.Shape = Enum.PartType.Ball
         canopy.Size = Vector3.new(canopyR * 1.2, canopyR * 2.5, canopyR * 1.2)
-        canopy.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH + canopyR * 0.9, 0))
+        canopy.CFrame = CFrame.new(trunkTop + Vector3.new(0, canopyR * 0.9, 0))
+        canopy.Parent = model
     else
-        -- Broadleaved default: wide, round sphere
-        canopy.Shape = Enum.PartType.Ball
-        canopy.Size = Vector3.new(canopyR * 2, canopyR * 1.5, canopyR * 2)
-        canopy.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH + canopyR * 0.5, 0))
+        -- Broadleaved default: multi-lobe organic canopy
+        buildRealisticCanopy(model, trunkTop, canopyR, canopyColor3, prop.species or "tree")
     end
 
-    canopy.Parent = model
     model.Parent = parent
     return model
 end
 
 function PropBuilder.Build(parent, prop, originStuds, chunk)
+    local detailParent = getPropDetailParent(parent)
     if prop.kind == "tree" then
         -- Use manifest Y directly; DEM elevation is authoritative
-        return buildTree(parent, prop, originStuds, prop.position.y + originStuds.y)
+        return buildTree(detailParent, prop, originStuds, prop.position.y + originStuds.y)
     end
 
     if prop.kind == "street_lamp" or prop.kind == "amenity_street_lamp" then
@@ -365,24 +448,60 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         local wz = prop.position.z + originStuds.z
         wx, wz = alignRoadsideProp(prop, chunk, originStuds, wx, wz)
         local wy = resolveBaseY(chunk, wx, prop.position.y + originStuds.y, wz)
-        return buildStreetLamp(wx, wy, wz, parent)
+        return buildStreetLamp(wx, wy, wz, detailParent)
     end
 
     if prop.kind == "bench" then
         local wx = prop.position.x + originStuds.x
         local wz = prop.position.z + originStuds.z
         local wy = resolveBaseY(chunk, wx, prop.position.y + originStuds.y, wz)
-        local bench = Instance.new("Part")
-        bench.Name = "Bench"
-        bench.Anchored = true
-        bench.CanCollide = false
-        bench.CastShadow = false
-        bench.Size = Vector3.new(2, 0.25, 0.6)
-        bench.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, math.rad(prop.yawDegrees or 0), 0)
-        bench.Material = Enum.Material.WoodPlanks
-        bench.Color = Color3.fromRGB(139, 90, 43)
-        bench.Parent = parent
-        return bench
+        local yaw = math.rad(prop.yawDegrees or 0)
+
+        local model = Instance.new("Model")
+        model.Name = "Bench"
+
+        -- Seat plank
+        local seat = Instance.new("Part")
+        seat.Name = "Seat"
+        seat.Size = Vector3.new(5, 0.3, 1.5)
+        seat.Material = Enum.Material.WoodPlanks
+        seat.Color = Color3.fromRGB(120, 80, 45)
+        seat.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, yaw, 0)
+        seat.Anchored = true
+        seat.CanCollide = false
+        seat.CastShadow = false
+        seat.Parent = model
+
+        -- Backrest
+        local back = Instance.new("Part")
+        back.Name = "Backrest"
+        back.Size = Vector3.new(5, 1.2, 0.2)
+        back.Material = Enum.Material.WoodPlanks
+        back.Color = Color3.fromRGB(110, 72, 40)
+        back.CFrame = CFrame.new(wx, wy + 2.3, wz) * CFrame.Angles(0, yaw, 0)
+            * CFrame.new(0, 0, -0.65)
+        back.Anchored = true
+        back.CanCollide = false
+        back.CastShadow = false
+        back.Parent = model
+
+        -- Two metal legs
+        for _, legOffset in ipairs({-2, 2}) do
+            local leg = Instance.new("Part")
+            leg.Name = "Leg"
+            leg.Size = Vector3.new(0.3, 1.5, 1.5)
+            leg.Material = Enum.Material.Metal
+            leg.Color = Color3.fromRGB(60, 60, 65)
+            leg.CFrame = CFrame.new(wx, wy + 0.75, wz) * CFrame.Angles(0, yaw, 0)
+                * CFrame.new(legOffset, 0, 0)
+            leg.Anchored = true
+            leg.CanCollide = false
+            leg.CastShadow = false
+            leg.Parent = model
+        end
+
+        model.Parent = detailParent
+        return model
     end
 
     if prop.kind == "bus_stop" then
@@ -410,7 +529,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         sign.Material = Enum.Material.SmoothPlastic
         sign.Color = Color3.fromRGB(0, 80, 180)
         sign.Parent = model
-        model.Parent = parent
+        model.Parent = detailParent
         return model
     end
 
@@ -421,34 +540,52 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         local wy = resolveBaseY(chunk, wx, prop.position.y + originStuds.y, wz)
         local model = Instance.new("Model")
         model.Name = "TrafficSignal"
+
+        -- Pole
         local pole = Instance.new("Part")
+        pole.Name = "Pole"
         pole.Anchored = true
         pole.CastShadow = false
         pole.CanCollide = false
-        pole.Size = Vector3.new(0.25, 9, 0.25)
-        pole.CFrame = CFrame.new(wx, wy + 4.5, wz)
+        pole.Size = Vector3.new(0.4, 15, 0.4)
+        pole.CFrame = CFrame.new(wx, wy + 7.5, wz)
         pole.Material = Enum.Material.Metal
-        pole.Color = Color3.fromRGB(60, 60, 60)
+        pole.Color = Color3.fromRGB(60, 60, 65)
         pole.Parent = model
-        local head = Instance.new("Part")
-        head.Anchored = true
-        head.CastShadow = false
-        head.CanCollide = false
-        head.Size = Vector3.new(1, 2.5, 0.6)
-        head.CFrame = CFrame.new(wx, wy + 9.5, wz)
-        head.Material = Enum.Material.SmoothPlastic
-        head.Color = Color3.fromRGB(30, 30, 30)
-        head.Parent = model
-        local light = Instance.new("Part")
-        light.Anchored = true
-        light.CastShadow = false
-        light.CanCollide = false
-        light.Size = Vector3.new(0.6, 0.6, 0.2)
-        light.CFrame = CFrame.new(wx, wy + 9.0, wz + 0.3)
-        light.Material = Enum.Material.Neon
-        light.Color = Color3.fromRGB(0, 210, 80)
-        light.Parent = model
-        model.Parent = parent
+
+        -- Signal housing
+        local housing = Instance.new("Part")
+        housing.Name = "Housing"
+        housing.Anchored = true
+        housing.CastShadow = false
+        housing.CanCollide = false
+        housing.Size = Vector3.new(1.5, 4, 1)
+        housing.CFrame = CFrame.new(wx, wy + 13, wz)
+        housing.Material = Enum.Material.Metal
+        housing.Color = Color3.fromRGB(40, 40, 45)
+        housing.Parent = model
+
+        -- Three lights: red (top), yellow (middle), green (bottom)
+        local lightDefs = {
+            { r = 255, g = 50,  b = 50  },
+            { r = 255, g = 200, b = 50  },
+            { r = 50,  g = 200, b = 80  },
+        }
+        for li, lc in ipairs(lightDefs) do
+            local light = Instance.new("Part")
+            light.Name = "Light" .. li
+            light.Shape = Enum.PartType.Ball
+            light.Size = Vector3.new(0.8, 0.8, 0.8)
+            light.Material = Enum.Material.Neon
+            light.Color = Color3.fromRGB(lc.r, lc.g, lc.b)
+            light.CFrame = CFrame.new(wx, wy + 14.2 - (li - 1) * 1.2, wz + 0.5)
+            light.Anchored = true
+            light.CastShadow = false
+            light.CanCollide = false
+            light.Parent = model
+        end
+
+        model.Parent = detailParent
         return model
     end
 
@@ -466,7 +603,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         bin.CFrame = CFrame.new(wx, wy + 0.6, wz)
         bin.Material = Enum.Material.Metal
         bin.Color = Color3.fromRGB(70, 70, 70)
-        bin.Parent = parent
+        bin.Parent = detailParent
         return bin
     end
 
@@ -484,7 +621,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         hydrant.CFrame = CFrame.new(wx, wy + 0.5, wz)
         hydrant.Material = Enum.Material.SmoothPlastic
         hydrant.Color = Color3.fromRGB(220, 30, 30)
-        hydrant.Parent = parent
+        hydrant.Parent = detailParent
         return hydrant
     end
 
@@ -498,7 +635,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         -- could be improved by finding nearest road direction)
         local stripeCount = 6
         local stripeWidth = 1.5
-        local stripeLen = 12  -- studs across the road
+        local stripeLen = 12 -- studs across the road
         local gap = 1.2
 
         local crosswalkModel = Instance.new("Model")
@@ -518,7 +655,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
             stripe.Parent = crosswalkModel
         end
 
-        crosswalkModel.Parent = parent
+        crosswalkModel.Parent = detailParent
         return crosswalkModel
     end
 
@@ -529,12 +666,12 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         -- Circular basin + water center
         local basin = Instance.new("Part")
         basin.Shape = Enum.PartType.Cylinder
-        basin.Size = Vector3.new(1, 10, 10)  -- cylinder: height, diameter, diameter
+        basin.Size = Vector3.new(1, 10, 10) -- cylinder: height, diameter, diameter
         basin.Material = Enum.Material.Marble
         basin.Color = Color3.fromRGB(200, 195, 185)
-        basin.CFrame = CFrame.new(wx, wy + 0.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        basin.CFrame = CFrame.new(wx, wy + 0.5, wz) * CFrame.Angles(0, 0, math.pi / 2)
         basin.Anchored = true
-        basin.Parent = parent
+        basin.Parent = detailParent
         -- Water inside
         local water = Instance.new("Part")
         water.Shape = Enum.PartType.Cylinder
@@ -542,9 +679,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         water.Material = Enum.Material.Glass
         water.Color = Color3.fromRGB(100, 150, 200)
         water.Transparency = 0.3
-        water.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, 0, math.pi/2)
+        water.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, 0, math.pi / 2)
         water.Anchored = true
-        water.Parent = parent
+        water.Parent = detailParent
         return basin
     end
 
@@ -555,10 +692,10 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         local box = Instance.new("Part")
         box.Size = Vector3.new(2, 4, 2)
         box.Material = Enum.Material.Metal
-        box.Color = Color3.fromRGB(30, 60, 180)  -- blue USPS style
+        box.Color = Color3.fromRGB(30, 60, 180) -- blue USPS style
         box.CFrame = CFrame.new(wx, wy + 2, wz)
         box.Anchored = true
-        box.Parent = parent
+        box.Parent = detailParent
         return box
     end
 
@@ -572,7 +709,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         fountain.Color = Color3.fromRGB(140, 140, 150)
         fountain.CFrame = CFrame.new(wx, wy + 1.5, wz)
         fountain.Anchored = true
-        fountain.Parent = parent
+        fountain.Parent = detailParent
         return fountain
     end
 
@@ -585,9 +722,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         bollard.Size = Vector3.new(3, 1.5, 1.5)
         bollard.Material = Enum.Material.Metal
         bollard.Color = Color3.fromRGB(80, 80, 85)
-        bollard.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        bollard.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi / 2)
         bollard.Anchored = true
-        bollard.Parent = parent
+        bollard.Parent = detailParent
         return bollard
     end
 
@@ -601,7 +738,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         machine.Color = Color3.fromRGB(180, 30, 30)
         machine.CFrame = CFrame.new(wx, wy + 3, wz)
         machine.Anchored = true
-        machine.Parent = parent
+        machine.Parent = detailParent
         return machine
     end
 
@@ -616,7 +753,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         booth.Transparency = 0.3
         booth.CFrame = CFrame.new(wx, wy + 3.5, wz)
         booth.Anchored = true
-        booth.Parent = parent
+        booth.Parent = detailParent
         return booth
     end
 
@@ -641,7 +778,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         head.CFrame = CFrame.new(wx, wy + 4.5, wz)
         head.Anchored = true
         head.Parent = model
-        model.Parent = parent
+        model.Parent = detailParent
         return model
     end
 
@@ -655,9 +792,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         rack.Size = Vector3.new(3, 0.3, 0.3)
         rack.Material = Enum.Material.Metal
         rack.Color = Color3.fromRGB(120, 120, 125)
-        rack.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi/2)
+        rack.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi / 2)
         rack.Anchored = true
-        rack.Parent = parent
+        rack.Parent = detailParent
         return rack
     end
 
@@ -672,9 +809,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         base.Material = Enum.Material.Metal
         base.Color = Color3.fromRGB(140, 140, 145)
         base.Transparency = 0.4
-        base.CFrame = CFrame.new(wx, wy + towerHeight/2, wz)
+        base.CFrame = CFrame.new(wx, wy + towerHeight / 2, wz)
         base.Anchored = true
-        base.Parent = parent
+        base.Parent = detailParent
         return base
     end
 
@@ -688,9 +825,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         pole.Size = Vector3.new(poleHeight, 1, 1)
         pole.Material = Enum.Material.WoodPlanks
         pole.Color = Color3.fromRGB(100, 75, 50)
-        pole.CFrame = CFrame.new(wx, wy + poleHeight/2, wz) * CFrame.Angles(0, 0, math.pi/2)
+        pole.CFrame = CFrame.new(wx, wy + poleHeight / 2, wz) * CFrame.Angles(0, 0, math.pi / 2)
         pole.Anchored = true
-        pole.Parent = parent
+        pole.Parent = detailParent
         return pole
     end
 
@@ -704,9 +841,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         pole.Size = Vector3.new(fpHeight, 0.3, 0.3)
         pole.Material = Enum.Material.Metal
         pole.Color = Color3.fromRGB(180, 180, 185)
-        pole.CFrame = CFrame.new(wx, wy + fpHeight/2, wz) * CFrame.Angles(0, 0, math.pi/2)
+        pole.CFrame = CFrame.new(wx, wy + fpHeight / 2, wz) * CFrame.Angles(0, 0, math.pi / 2)
         pole.Anchored = true
-        pole.Parent = parent
+        pole.Parent = detailParent
         return pole
     end
 
@@ -731,7 +868,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         cam.CFrame = CFrame.new(wx + 0.5, wy + 5.2, wz)
         cam.Anchored = true
         cam.Parent = model
-        model.Parent = parent
+        model.Parent = detailParent
         return model
     end
 
@@ -753,7 +890,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
     )
 
     instance:PivotTo(CFrame.new(worldPos) * CFrame.Angles(0, math.rad(prop.yawDegrees or 0), 0))
-    instance.Parent = parent
+    instance.Parent = detailParent
 
     if prop.scale then
         -- Apply scale if the instance supports it (Models do via Scale property)
