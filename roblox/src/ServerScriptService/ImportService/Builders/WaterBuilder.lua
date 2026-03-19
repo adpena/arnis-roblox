@@ -1,8 +1,10 @@
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
 local GeoUtils = require(script.Parent.Parent.GeoUtils)
+local PolygonBatcher = require(script.Parent.Parent.PolygonBatcher)
 local _Logger = require(ReplicatedStorage.Shared.Logger)
 local WorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
@@ -12,6 +14,25 @@ local WaterBuilder = {}
 local WATER_DEPTH = 2
 -- How many studs below the water surface to carve terrain.
 local CARVE_DEPTH = WorldConfig.WaterCarveDepth or 4
+
+-- Creates a thin Glass Part on top of terrain water for reflections.
+-- Tagged LOD_Detail so the distance culling system can hide it at range.
+local function createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, sizeZ, name)
+    local surface = Instance.new("Part")
+    surface.Name = name or "WaterSurface"
+    surface.Size = Vector3.new(sizeX, 0.1, sizeZ)
+    surface.CFrame = CFrame.new(centerX, surfaceY + 0.05, centerZ)
+    surface.Material = Enum.Material.Glass
+    surface.Color = Color3.fromRGB(40, 80, 120)
+    surface.Transparency = 0.4
+    surface.Reflectance = 0.35
+    surface.Anchored = true
+    surface.CanCollide = false
+    surface.CastShadow = false
+    surface.Parent = parent
+    CollectionService:AddTag(surface, "LOD_Detail")
+    return surface
+end
 
 local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
@@ -79,42 +100,12 @@ end
 local SCAN_STEP = 4 -- studs resolution per scanline row
 local function paintPolygonScanline(terrain, worldPts, cy, material)
     material = material or Enum.Material.Water
-    if #worldPts < 3 then
-        return
-    end
-    local n = #worldPts
-    local minZ, maxZ = math.huge, -math.huge
-    for _, p in ipairs(worldPts) do
-        minZ = math.min(minZ, p.Z)
-        maxZ = math.max(maxZ, p.Z)
-    end
-    local z = minZ + SCAN_STEP * 0.5
-    while z <= maxZ do
-        -- Find X intersections with all edges at this Z
-        local xs = {}
-        for i = 1, n do
-            local p1 = worldPts[i]
-            local p2 = worldPts[(i % n) + 1]
-            local z1, z2 = p1.Z, p2.Z
-            if (z1 <= z and z < z2) or (z2 <= z and z < z1) then
-                local t = (z - z1) / (z2 - z1)
-                table.insert(xs, p1.X + t * (p2.X - p1.X))
-            end
-        end
-        table.sort(xs)
-        local i = 1
-        while i + 1 <= #xs do
-            local x0, x1 = xs[i], xs[i + 1]
-            if x1 - x0 > 0.1 then
-                terrain:FillBlock(
-                    CFrame.new((x0 + x1) * 0.5, cy, z),
-                    Vector3.new(x1 - x0, WATER_DEPTH, SCAN_STEP),
-                    material
-                )
-            end
-            i = i + 2
-        end
-        z = z + SCAN_STEP
+    for _, rect in ipairs(PolygonBatcher.BuildRects(worldPts, SCAN_STEP)) do
+        terrain:FillBlock(
+            CFrame.new(rect.centerX, cy, rect.centerZ),
+            Vector3.new(rect.width, WATER_DEPTH, rect.depth),
+            material
+        )
     end
 end
 
@@ -195,7 +186,7 @@ function WaterBuilder.Build(parent, water, originStuds, chunk, sampleGroundY)
     WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
 end
 
-function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk, sampleGroundY)
+function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
     local terrain = Workspace.Terrain
     sampleGroundY = sampleGroundY or GroundSampler.createSampler(chunk)
     -- Intermittent water bodies (seasonal streambeds) render as dry sand
@@ -215,6 +206,18 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk, sampleGr
             paintRibbonSegment(terrain, resolvedP1, resolvedP2, width, waterMaterial)
             -- Carve terrain below the ribbon channel after placing water material.
             carveRibbonChannel(terrain, resolvedP1, resolvedP2, width)
+            -- Reflective Glass overlay on top of terrain water.
+            -- Only added for real water, not intermittent sand streambeds.
+            if not water.intermittent then
+                local delta = resolvedP2 - resolvedP1
+                local segmentLength = delta.Magnitude
+                if segmentLength >= 0.01 then
+                    local midSurfaceY = (surfaceY1 + surfaceY2) * 0.5
+                    local midX = (resolvedP1.X + resolvedP2.X) * 0.5
+                    local midZ = (resolvedP1.Z + resolvedP2.Z) * 0.5
+                    createWaterSurface(parent, midX, midSurfaceY, midZ, width, segmentLength, "RibbonWaterSurface")
+                end
+            end
         end
     elseif water.footprint and #water.footprint >= 3 then
         -- Build world-space point array
@@ -250,6 +253,22 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk, sampleGr
         -- Carve terrain below water surface after placing water material.
         -- Island polygons (holes) are excluded so they stay solid.
         carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
+        -- Reflective Glass overlay covering the bounding box of the polygon.
+        -- Only added for real water bodies, not intermittent sand channels.
+        if not water.intermittent then
+            local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+            for _, p in ipairs(worldPts) do
+                minX = math.min(minX, p.X)
+                maxX = math.max(maxX, p.X)
+                minZ = math.min(minZ, p.Z)
+                maxZ = math.max(maxZ, p.Z)
+            end
+            local centerX = (minX + maxX) * 0.5
+            local centerZ = (minZ + maxZ) * 0.5
+            local sizeX = maxX - minX
+            local sizeZ = maxZ - minZ
+            createWaterSurface(parent, centerX, surfaceY, centerZ, sizeX, sizeZ, "PolygonWaterSurface")
+        end
     end
 end
 

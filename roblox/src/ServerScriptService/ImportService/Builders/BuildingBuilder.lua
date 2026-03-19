@@ -20,11 +20,11 @@ function MeshAccumulator.new(parent, materialName, material, color)
     self.materialName = materialName
     self.material = material
     self.color = color
-    self.vertices = {}   -- array of Vector3
-    self.normals = {}    -- array of Vector3
-    self.triangles = {}  -- array of {v1_idx, v2_idx, v3_idx} (1-indexed)
+    self.vertices = {} -- array of Vector3
+    self.normals = {} -- array of Vector3
+    self.triangles = {} -- array of {v1_idx, v2_idx, v3_idx} (1-indexed)
     self.meshCount = 0
-    self.MAX_TRIANGLES = 18000  -- headroom below 20K API limit
+    self.MAX_TRIANGLES = 18000 -- headroom below 20K API limit
     return self
 end
 
@@ -780,7 +780,9 @@ local function buildFoundation(parent, worldPts, baseY)
         local p1 = worldPts[i]
         local p2 = worldPts[(i % #worldPts) + 1]
         local edgeLen = (p2 - p1).Magnitude
-        if edgeLen < 1 then continue end
+        if edgeLen < 1 then
+            continue
+        end
 
         local mid = (p1 + p2) * 0.5
         local dir = (p2 - p1).Unit
@@ -797,7 +799,6 @@ local function buildFoundation(parent, worldPts, baseY)
             mid + Vector3.new(0, baseY + 0.75, 0),
             mid + Vector3.new(0, baseY + 0.75, 0) + dir
         ) * CFrame.new(0, 0, -0.1)
-        CollectionService:AddTag(foundation, "LOD_Detail")
         foundation.Parent = parent
     end
 end
@@ -807,7 +808,9 @@ local function buildCornice(parent, worldPts, topY)
         local p1 = worldPts[i]
         local p2 = worldPts[(i % #worldPts) + 1]
         local edgeLen = (p2 - p1).Magnitude
-        if edgeLen < 1 then continue end
+        if edgeLen < 1 then
+            continue
+        end
 
         local mid = (p1 + p2) * 0.5
         local dir = (p2 - p1).Unit
@@ -820,17 +823,36 @@ local function buildCornice(parent, worldPts, topY)
         cornice.Anchored = true
         cornice.CanCollide = false
         cornice.CastShadow = false
-        cornice.CFrame = CFrame.lookAt(
-            mid + Vector3.new(0, topY, 0),
-            mid + Vector3.new(0, topY, 0) + dir
-        ) * CFrame.new(0, 0, -0.15)
-        CollectionService:AddTag(cornice, "LOD_Detail")
+        cornice.CFrame = CFrame.lookAt(mid + Vector3.new(0, topY, 0), mid + Vector3.new(0, topY, 0) + dir)
+            * CFrame.new(0, 0, -0.15)
         cornice.Parent = parent
     end
 end
 
+local function buildPilasters(parent, worldPts, baseY, height, material, color)
+    for _, pt in ipairs(worldPts) do
+        local pilaster = Instance.new("Part")
+        pilaster.Name = "Pilaster"
+        pilaster.Size = Vector3.new(0.4, height, 0.4)
+        pilaster.Material = material
+        -- Slightly lighter than wall for contrast
+        pilaster.Color = Color3.new(
+            math.min(1, color.R * 1.15),
+            math.min(1, color.G * 1.15),
+            math.min(1, color.B * 1.15)
+        )
+        pilaster.Anchored = true
+        pilaster.CanCollide = false
+        pilaster.CastShadow = true
+        pilaster.CFrame = CFrame.new(pt.X, baseY + height * 0.5, pt.Z)
+        pilaster.Parent = parent
+    end
+end
+
 local function buildRooftopEquipment(parent, building, baseY, height, worldPts)
-    if not building.levels or building.levels < 5 then return end
+    if not building.levels or building.levels < 5 then
+        return
+    end
 
     local cx, cz = 0, 0
     for _, p in ipairs(worldPts) do
@@ -857,7 +879,6 @@ local function buildRooftopEquipment(parent, building, baseY, height, worldPts)
         unit.CFrame = CFrame.new(cx + offsetX * 0.3, roofY + 1, cz + offsetZ * 0.3)
         unit.Anchored = true
         unit.CanCollide = true
-        CollectionService:AddTag(unit, "LOD_Detail")
         unit.Parent = parent
     end
 end
@@ -1002,6 +1023,11 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         post.Parent = shellFolder
     end
 
+    -- Pilaster columns at each footprint corner for facade depth (levels >= 2 only)
+    if building.levels and building.levels >= 2 then
+        buildPilasters(detailFolder, worldPts, baseY, height, mat, color)
+    end
+
     -- Window bands for tall buildings (>= 3 floors, simple polygons only)
     -- Density varies by usage: read from WorldConfig.WindowSpacing when available,
     -- otherwise fall back to the local table. Gated by WorldConfig.EnableWindowRendering.
@@ -1067,7 +1093,6 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                     band.Transparency = 0.35
                     band:SetAttribute("BaseTransparency", 0.35)
                     band:SetAttribute("ArnisFacadePaneCount", numPanes)
-                    CollectionService:AddTag(band, "LOD_Detail")
                     band.Parent = detailFolder
 
                     -- Window sill: thin concrete ledge below each facade band
@@ -1082,7 +1107,6 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                     sill.CanCollide = false
                     sill.CastShadow = false
                     sill.CFrame = windowCFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)
-                    CollectionService:AddTag(sill, "LOD_Detail")
                     sill.Parent = detailFolder
                 end
             end
@@ -1125,7 +1149,6 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
         text.Font = Enum.Font.GothamBold
         text.Parent = nameLabel
 
-        CollectionService:AddTag(nameLabel, "LOD_Detail")
         nameLabel.Parent = detailFolder
     end
 
@@ -1193,6 +1216,15 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
         used = 0,
         max = (config.InstanceBudget and config.InstanceBudget.MaxWindowsPerChunk) or 10000,
     }
+
+    -- Detail mesh accumulator: merges opaque concrete foundation and cornice quads
+    -- across all buildings, replacing individual Part-based calls in this path.
+    local detailAcc = MeshAccumulator.new(
+        meshFolder,
+        "detail_concrete",
+        Enum.Material.Concrete,
+        Color3.fromRGB(180, 175, 168)
+    )
 
     local builtModelsById = {}
 
@@ -1396,12 +1428,7 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
         local n = #worldPts
         local numFloors = math.floor(height / FLOOR_H)
         local maxWindows = windowBudget.max
-        if
-            config.EnableWindowRendering ~= false
-            and numFloors >= 1
-            and n <= 8
-            and (n * numFloors * 2) <= 100
-        then
+        if config.EnableWindowRendering ~= false and numFloors >= 1 and n <= 8 and (n * numFloors * 2) <= 100 then
             local budgetExceeded = false
             for floor = 1, math.min(numFloors - 1, 10) do
                 if budgetExceeded then
@@ -1436,11 +1463,7 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
                         band.Size = Vector3.new(WALL_THICKNESS * 0.35, BAND_H * 0.8, bandLen)
                         band.CFrame = CFrame.lookAt(
                             Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
-                            Vector3.new(
-                                (p1w.X + p2w.X) * 0.5 + edgeUnitX,
-                                bandY,
-                                (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ
-                            )
+                            Vector3.new((p1w.X + p2w.X) * 0.5 + edgeUnitX, bandY, (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ)
                         )
                         band.Material = Enum.Material.Glass
                         band.Color = WIN_COLOR
@@ -1448,7 +1471,6 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
                         band.Transparency = 0.35
                         band:SetAttribute("BaseTransparency", 0.35)
                         band:SetAttribute("ArnisFacadePaneCount", numPanes)
-                        CollectionService:AddTag(band, "LOD_Detail")
                         band.Parent = detailFolder
 
                         -- Window sill
@@ -1463,24 +1485,53 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
                         sill.CanCollide = false
                         sill.CastShadow = false
                         sill.CFrame = windowCFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)
-                        CollectionService:AddTag(sill, "LOD_Detail")
                         sill.Parent = detailFolder
                     end
                 end
             end
         end
 
-        -- Foundation strip along the base of every wall edge
-        buildFoundation(detailFolder, worldPts, baseY)
+        -- Foundation and cornice quads merged into the shared detailAcc mesh
+        do
+            local nPts = #worldPts
+            for i = 1, nPts do
+                local p1 = worldPts[i]
+                local p2 = worldPts[(i % nPts) + 1]
+                local edgeVec = p2 - p1
+                local edgeLen = edgeVec.Magnitude
+                if edgeLen < 1 then
+                    continue
+                end
+
+                local dir = edgeVec.Unit
+                -- Outward normal (perpendicular to edge in XZ plane)
+                local outward = Vector3.new(-dir.Z, 0, dir.X) * 0.1
+
+                -- Foundation: slightly protruding quad at base (1.5 studs tall)
+                detailAcc:addQuad(
+                    p1 + outward + Vector3.new(0, baseY, 0),
+                    p2 + outward + Vector3.new(0, baseY, 0),
+                    p2 + outward + Vector3.new(0, baseY + 1.5, 0),
+                    p1 + outward + Vector3.new(0, baseY + 1.5, 0),
+                    outward.Unit
+                )
+
+                -- Cornice: thin strip at roofline (0.4 studs tall)
+                detailAcc:addQuad(
+                    p1 + outward + Vector3.new(0, baseY + height - 0.2, 0),
+                    p2 + outward + Vector3.new(0, baseY + height - 0.2, 0),
+                    p2 + outward + Vector3.new(0, baseY + height + 0.2, 0),
+                    p1 + outward + Vector3.new(0, baseY + height + 0.2, 0),
+                    outward.Unit
+                )
+            end
+        end
 
         -- Awning on commercial/retail/restaurant ground floors
         buildAwning(detailFolder, building, baseY, worldPts)
 
         -- Fill interior with terrain
         fillInterior(footprintData.footprintXZ, footprintData, baseY, getFloorMaterial(building))
-
-        -- Cornice trim at the roofline
-        buildCornice(detailFolder, worldPts, baseY + height)
 
         -- Rooftop equipment for tall buildings
         buildRooftopEquipment(detailFolder, building, baseY, height, worldPts)
@@ -1504,7 +1555,6 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
             text.Font = Enum.Font.GothamBold
             text.Parent = nameLabel
 
-            CollectionService:AddTag(nameLabel, "LOD_Detail")
             nameLabel.Parent = detailFolder
         end
     end
@@ -1513,6 +1563,8 @@ function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, con
     for _, acc in pairs(accumulators) do
         acc:flush()
     end
+    -- Flush the shared detail concrete accumulator (foundation + cornice quads)
+    detailAcc:flush()
 
     return builtModelsById
 end
