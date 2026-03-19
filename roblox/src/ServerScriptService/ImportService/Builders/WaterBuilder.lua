@@ -2,6 +2,7 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
+local GeoUtils = require(script.Parent.Parent.GeoUtils)
 local _Logger = require(ReplicatedStorage.Shared.Logger)
 
 local WaterBuilder = {}
@@ -41,23 +42,6 @@ local function estimatePolygonSurfaceY(chunk, worldPts, sampleGroundY)
 
     local centroidGroundY = sampleGroundY(sumX / #worldPts, sumZ / #worldPts)
     return math.min(minGroundY, centroidGroundY)
-end
-
--- Returns true if the point (px, pz) is inside the polygon defined by pts
--- using the ray-casting algorithm.
-local function pointInPolygon(px, pz, pts)
-    local n = #pts
-    local inside = false
-    local j = n
-    for i = 1, n do
-        local xi, zi = pts[i].X, pts[i].Z
-        local xj, zj = pts[j].X, pts[j].Z
-        if ((zi > pz) ~= (zj > pz)) and (px < (xj - xi) * (pz - zi) / (zj - zi) + xi) then
-            inside = not inside
-        end
-        j = i
-    end
-    return inside
 end
 
 -- Paint a ribbon water feature (river/stream) into terrain.
@@ -175,7 +159,7 @@ local function carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
                 local inHole = false
                 if holePtsList then
                     for _, holePts in ipairs(holePtsList) do
-                        if pointInPolygon(cx, z, holePts) then
+                        if GeoUtils.pointInPolygon(cx, z, holePts) then
                             inHole = true
                             break
                         end
@@ -247,12 +231,18 @@ function WaterBuilder.FallbackBuild(_parent, water, originStuds, chunk, sampleGr
             holePtsList = {}
             for _, hole in ipairs(water.holes) do
                 if #hole >= 3 then
-                    local holePts = {}
+                    -- Vector3 array for scanline fill (uses .X/.Z)
+                    local holePtsV3 = {}
+                    -- Plain {x, z} array for point-in-polygon test (uses .x/.z)
+                    local holePtsXZ = {}
                     for _, p in ipairs(hole) do
-                        table.insert(holePts, Vector3.new(p.x + originStuds.x, cy, p.z + originStuds.z))
+                        local wx = p.x + originStuds.x
+                        local wz = p.z + originStuds.z
+                        table.insert(holePtsV3, Vector3.new(wx, cy, wz))
+                        table.insert(holePtsXZ, { x = wx, z = wz })
                     end
-                    paintPolygonScanline(terrain, holePts, cy, Enum.Material.LeafyGrass)
-                    table.insert(holePtsList, holePts)
+                    paintPolygonScanline(terrain, holePtsV3, cy, Enum.Material.LeafyGrass)
+                    table.insert(holePtsList, holePtsXZ)
                 end
             end
         end
