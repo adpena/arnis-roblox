@@ -155,6 +155,9 @@ local customCamActive = false
 local camTargetFOV = DEFAULT_FOV
 local camCurrentPos = nil
 
+-- G-force tracking
+local lastCarVelocity = Vector3.zero
+
 -- Anti-fall-through safety net
 local lastSafePosition = Vector3.new(0, 100, 0)
 
@@ -267,6 +270,28 @@ local function isOnGround()
         or state == Enum.HumanoidStateType.Landed
 end
 
+-- Returns a table with gamepad axis/trigger values, or nil if no gamepad.
+-- Fields: thumbstickX, thumbstickY, rightTrigger, leftTrigger
+local function readGamepad()
+    local ok, state = pcall(function()
+        return UserInputService:GetGamepadState(Enum.UserInputType.Gamepad1)
+    end)
+    if not ok or not state then return nil end
+
+    local result = { thumbstickX = 0, thumbstickY = 0, rightTrigger = 0, leftTrigger = 0 }
+    for _, input in ipairs(state) do
+        if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+            result.thumbstickX = input.Position.X
+            result.thumbstickY = input.Position.Y
+        elseif input.KeyCode == Enum.KeyCode.ButtonR2 then
+            result.rightTrigger = input.Position.Z
+        elseif input.KeyCode == Enum.KeyCode.ButtonL2 then
+            result.leftTrigger = input.Position.Z
+        end
+    end
+    return result
+end
+
 --------------------------------------------------------------------------------
 -- HUD
 --------------------------------------------------------------------------------
@@ -295,7 +320,7 @@ controlHints.BackgroundColor3 = HUD_BG_COLOR
 controlHints.TextColor3 = HUD_TEXT_COLOR
 controlHints.Font = HUD_FONT
 controlHints.TextSize = 13
-controlHints.Text = "[V] Car   [J] Jetpack   [P] Parachute"
+controlHints.Text = "[V/Y] Car   [J/X] Jetpack   [P/A] Parachute"
 controlHints.Parent = hudContainer
 Instance.new("UICorner", controlHints).CornerRadius = UDim.new(0, 6)
 
@@ -380,16 +405,16 @@ local function setHUDMode(newMode)
 
     if isCar then
         modeIcon.Text = "CAR"
-        controlHints.Text = "[WASD] Drive   [Space] Brake   [H] Horn   [E] Exit"
+        controlHints.Text = "[WASD] Drive   [Space] Brake   [H] Horn   [E/B] Exit"
     elseif isJet then
         modeIcon.Text = "JET"
-        controlHints.Text = "[WASD] Move   [Space] Up   [Shift] Down   [J] Off"
+        controlHints.Text = "[WASD/LS] Move   [Space/RT] Up   [Shift/LT] Down   [J/X] Off"
     elseif isChute then
         modeIcon.Text = "CHUTE"
-        controlHints.Text = "[A/D] Steer   [S] Flare   [P] Cut away"
+        controlHints.Text = "[A/D/LS] Steer   [S] Flare   [P/B] Cut away"
     else
         modeIcon.Text = ""
-        controlHints.Text = "[V] Car   [J] Jetpack   [P] Parachute"
+        controlHints.Text = "[V/Y] Car   [J/X] Jetpack   [P/A] Parachute"
     end
 
     -- Show hints, start fade timer
@@ -1072,6 +1097,11 @@ local function updateCar(dt)
         carIdleVibration.Position = carBody.Position + Vector3.new(0, math.sin(tick() * 30) * vibAmt, 0)
     end
 
+    -- G-force camera shake: measure velocity delta since last frame
+    local velocityDelta = (carBody.AssemblyLinearVelocity - lastCarVelocity).Magnitude
+    local accelShake = math.clamp(velocityDelta * 0.001, 0, 0.02)
+    lastCarVelocity = carBody.AssemblyLinearVelocity
+
     carPrevSpeed = speed
 
     -- Chase camera
@@ -1093,8 +1123,14 @@ local function updateCar(dt)
         local tiltAngle = -steer * CAR_CAM_TILT_FACTOR
         local lookTarget = carCF.Position + carCF.LookVector * 20
 
+        -- G-force shake offset (noise-based, barely perceptible)
+        local t = tick()
+        local shakeX = (math.noise(t * 10,      0) * 2 - 1) * accelShake
+        local shakeY = (math.noise(t * 10 + 100, 0) * 2 - 1) * accelShake
+        local shakeOffset = Vector3.new(shakeX, shakeY, 0)
+
         camera.CameraType = Enum.CameraType.Scriptable
-        camera.CFrame = CFrame.new(camCurrentPos, lookTarget) * CFrame.Angles(0, 0, tiltAngle)
+        camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget) * CFrame.Angles(0, 0, tiltAngle)
 
         -- Speed-based FOV
         local fovTarget = CAR_FOV_MIN + (speed / CAR_FOV_SPEED_RANGE) * (CAR_FOV_MAX - CAR_FOV_MIN)
@@ -1325,6 +1361,7 @@ local function updateJetpack(dt)
     local thrustDir = Vector3.new(0, 0, 0)
     local isThrusting = false
 
+    -- Keyboard
     if UserInputService:IsKeyDown(Enum.KeyCode.W) then
         thrustDir = thrustDir + Vector3.new(look.X, 0, look.Z).Unit
         isThrusting = true
@@ -1342,6 +1379,29 @@ local function updateJetpack(dt)
         isThrusting = true
     end
 
+    -- Gamepad thumbstick (additive to keyboard)
+    local gp = readGamepad()
+    if gp then
+        local stickMag = math.sqrt(gp.thumbstickX^2 + gp.thumbstickY^2)
+        if stickMag > 0.1 then
+            local flatLook  = Vector3.new(look.X,  0, look.Z)
+            local flatRight = Vector3.new(right.X, 0, right.Z)
+            -- Normalize only if non-zero to avoid NaN
+            if flatLook.Magnitude  > 0.001 then flatLook  = flatLook.Unit  end
+            if flatRight.Magnitude > 0.001 then flatRight = flatRight.Unit end
+            thrustDir = thrustDir + flatLook * gp.thumbstickY + flatRight * gp.thumbstickX
+            isThrusting = true
+        end
+    end
+
+    -- Clamp thrustDir to horizontal unit (after combining all sources)
+    local thrustH = Vector3.new(thrustDir.X, 0, thrustDir.Z)
+    if thrustH.Magnitude > 1 then
+        thrustDir = thrustH.Unit
+    else
+        thrustDir = thrustH
+    end
+
     local verticalThrust = 0
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
         verticalThrust = 1
@@ -1349,6 +1409,20 @@ local function updateJetpack(dt)
     elseif UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
         verticalThrust = -0.5
         isThrusting = true
+    end
+
+    -- Gamepad triggers for vertical (additive, clamped)
+    if gp then
+        if gp.rightTrigger > 0.05 then
+            verticalThrust = math.max(verticalThrust, gp.rightTrigger)
+            isThrusting = true
+        end
+        if gp.leftTrigger > 0.05 then
+            -- descend is -0.5 max; scale trigger to same range
+            local descendVal = -0.5 * gp.leftTrigger
+            verticalThrust = math.min(verticalThrust, descendVal)
+            isThrusting = true
+        end
     end
 
     -- Thrust ramp (gradual buildup over JETPACK_RAMP_TIME)
@@ -1493,32 +1567,44 @@ local function deployParachute()
     -- Rectangular canopy from multiple panels
     local canopyRoot = Instance.new("Part")
     canopyRoot.Name = "CanopyRoot"
-    canopyRoot.Size = Vector3.new(1, 1, 1)
+    canopyRoot.Size = Vector3.new(2, 2, 2)  -- some volume for physics presence
     canopyRoot.Transparency = 1
     canopyRoot.CanCollide = false
-    canopyRoot.Massless = true
+    canopyRoot.Massless = false              -- real mass enables pendulum swing
+    canopyRoot.CustomPhysicalProperties = PhysicalProperties.new(0.05, 0, 0, 0, 0)
     canopyRoot.Anchored = false
     canopyRoot.CFrame = hrp.CFrame * CFrame.new(0, 18, 0)
     canopyRoot.Parent = char
     tagPart(canopyRoot, PARACHUTE_TAG)
 
-    -- Weld canopy root to follow player (via RodConstraint for sway)
+    -- Weld canopy root to follow player via BallSocketConstraint (allows swing)
     local rootAttachHRP = Instance.new("Attachment")
     rootAttachHRP.Position = Vector3.new(0, 2, 0)
     rootAttachHRP.Parent = hrp
     tagPart(rootAttachHRP, PARACHUTE_TAG)
 
     local rootAttachCanopy = Instance.new("Attachment")
-    rootAttachCanopy.Position = Vector3.new(0, 0, 0)
+    rootAttachCanopy.Position = Vector3.new(0, -8, 0)  -- bottom of the "rope"
     rootAttachCanopy.Parent = canopyRoot
     tagPart(rootAttachCanopy, PARACHUTE_TAG)
 
-    local mainRod = Instance.new("RodConstraint")
-    mainRod.Attachment0 = rootAttachHRP
-    mainRod.Attachment1 = rootAttachCanopy
-    mainRod.Length = 16
-    mainRod.Visible = false
-    mainRod.Parent = canopyRoot
+    -- BallSocketConstraint: keeps canopy tethered at correct distance, allows swing
+    local mainSocket = Instance.new("BallSocketConstraint")
+    mainSocket.Attachment0 = rootAttachHRP
+    mainSocket.Attachment1 = rootAttachCanopy
+    mainSocket.LimitsEnabled = true
+    mainSocket.UpperAngle = 25          -- max pendulum swing angle (degrees)
+    mainSocket.Restitution = 0          -- no bounce
+    mainSocket.Visible = false
+    mainSocket.Parent = canopyRoot
+    tagPart(mainSocket, PARACHUTE_TAG)
+
+    -- Keep canopy floating above player with a small upward BodyForce
+    local canopyLift = Instance.new("BodyForce")
+    canopyLift.Name = "CanopyLift"
+    canopyLift.Force = Vector3.new(0, workspace.Gravity * 0.08 * 1.25, 0) -- float at ~1.25× gravity
+    canopyLift.Parent = canopyRoot
+    tagPart(canopyLift, PARACHUTE_TAG)
 
     chuteCanopy = canopyRoot
 
@@ -1695,6 +1781,12 @@ local function updateParachute(dt)
         flareInput = 1
     end
 
+    -- Gamepad thumbstick X for parachute steering (additive, clamped to -1..1)
+    local gpChute = readGamepad()
+    if gpChute and math.abs(gpChute.thumbstickX) > 0.1 then
+        steerInput = math.clamp(steerInput + gpChute.thumbstickX, -1, 1)
+    end
+
     -- Update heading
     chuteHeading = chuteHeading + steerInput * CHUTE_TURN_RATE * dt
 
@@ -1753,15 +1845,17 @@ local function updateParachute(dt)
             * CFrame.Angles(math.rad(-10 - flareInput * 15), 0, 0)  -- slight forward lean, more on flare
     end
 
-    -- Canopy position follows player (above)
+    -- Pendulum swing: apply a small lateral impulse opposite to turn direction
+    -- so the canopy visibly swings when the player steers.
     if chuteCanopy then
-        local targetCF = hrp.CFrame * CFrame.new(0, 16, 0) * CFrame.Angles(0, chuteHeading, 0)
-        chuteCanopy.CFrame = chuteCanopy.CFrame:Lerp(targetCF, 0.1)
-
-        -- Canopy billowing: scale Y with speed
-        local speedFrac = math.clamp(vel.Magnitude / 50, 0.5, 1.5)
-        -- We can't scale weld children easily, but we can slightly adjust the
-        -- rod length to simulate billow
+        if math.abs(steerInput) > 0.1 then
+            -- Push canopy laterally against the turn (rope swings outward)
+            local rightVec = CFrame.Angles(0, chuteHeading, 0).RightVector
+            local swingForce = rightVec * steerInput * -60 * dt
+            -- Apply as a small velocity nudge (mass is 0.05 kg)
+            chuteCanopy.AssemblyLinearVelocity =
+                chuteCanopy.AssemblyLinearVelocity + swingForce
+        end
     end
 
     -- Sound
@@ -1981,6 +2075,41 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             camera.CameraType = Enum.CameraType.Custom
             camera.FieldOfView = DEFAULT_FOV
             setHUDMode(mode)
+        end
+
+    -- Gamepad button bindings
+    elseif keyCode == Enum.KeyCode.ButtonY then
+        -- ButtonY mirrors V key: toggle car
+        if mode == "car" then
+            exitCar()
+        else
+            task.spawn(transitionToCar)
+        end
+
+    elseif keyCode == Enum.KeyCode.ButtonX then
+        -- ButtonX mirrors J key: toggle jetpack
+        if mode == "jetpack" then
+            cleanupJetpack()
+        else
+            task.spawn(transitionToJetpack)
+        end
+
+    elseif keyCode == Enum.KeyCode.ButtonA and mode ~= "car" then
+        -- ButtonA mirrors P key: toggle parachute (not while driving)
+        if mode == "parachute" then
+            retractParachute()
+        else
+            task.spawn(transitionToParachute)
+        end
+
+    elseif keyCode == Enum.KeyCode.ButtonB then
+        -- ButtonB exits the current active mode
+        if mode == "car" then
+            exitCar()
+        elseif mode == "jetpack" then
+            cleanupJetpack()
+        elseif mode == "parachute" then
+            retractParachute()
         end
     end
 end)
