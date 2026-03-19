@@ -1,5 +1,3 @@
-local Workspace = game:GetService("Workspace")
-
 local BarrierBuilder = {}
 
 local BARRIER_HEIGHT = {
@@ -36,7 +34,7 @@ local BARRIER_MATERIAL = {
 	default        = Enum.Material.SmoothPlastic,
 }
 
-function BarrierBuilder.BuildAll(chunk, _parent)
+function BarrierBuilder.BuildAll(chunk, parent)
 	local barriers = chunk.barriers
 	if not barriers or #barriers == 0 then return 0 end
 	local origin = chunk.originStuds
@@ -55,8 +53,18 @@ function BarrierBuilder.BuildAll(chunk, _parent)
 				local mid = (p1 + p2) * 0.5
 				local len = (p2 - p1).Magnitude
 				if len > 0.1 then
-					local cf = CFrame.lookAt(mid, p2) * CFrame.new(0, height * 0.5, 0)
-					Workspace.Terrain:FillBlock(cf, Vector3.new(thickness, height, len), mat)
+					local dir  = (p2 - p1).Unit
+					local part = Instance.new("Part")
+					part.Name      = kind
+					part.Size      = Vector3.new(thickness, height, len)
+					part.Material  = mat
+					part.Anchored  = true
+					part.CanCollide = true
+					part.CFrame    = CFrame.lookAt(
+						mid + Vector3.new(0, height * 0.5, 0),
+						mid + Vector3.new(0, height * 0.5, 0) + dir
+					)
+					part.Parent = parent
 					count = count + 1
 				end
 			end
