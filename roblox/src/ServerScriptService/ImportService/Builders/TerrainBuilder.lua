@@ -26,7 +26,7 @@ function TerrainBuilder.Clear(chunk)
 	terrain:FillBlock(clearCFrame, clearSize, Enum.Material.Air)
 end
 
-local VOXEL_SIZE = 4
+local VOXEL_SIZE = 2
 local TERRAIN_THICKNESS = 8 -- studs below the surface to fill
 
 function TerrainBuilder.Build(_parent, chunk)
@@ -136,11 +136,55 @@ function TerrainBuilder.Build(_parent, chunk)
 		end
 	end
 
-	local region = Region3.new(
-		Vector3.new(rMinX, rMinY, rMinZ),
-		Vector3.new(rMaxX, rMaxY, rMaxZ)
-	)
-	terrain:WriteVoxels(region, VOXEL_SIZE, materials, occupancies)
+	local dimX = vX
+	local dimY = vY
+	local dimZ = vZ
+
+	local MAX_VOXELS_PER_CALL = 500000
+	local totalVoxels = dimX * dimY * dimZ
+
+	if totalVoxels <= MAX_VOXELS_PER_CALL then
+		local region = Region3.new(
+			Vector3.new(rMinX, rMinY, rMinZ),
+			Vector3.new(rMaxX, rMaxY, rMaxZ)
+		)
+		terrain:WriteVoxels(region, VOXEL_SIZE, materials, occupancies)
+	else
+		-- Write in Z-strips to avoid exceeding Roblox WriteVoxels limits.
+		-- Each strip covers the full X and Y range but only a subset of Z slices.
+		local stripDepth = math.max(1, math.floor(MAX_VOXELS_PER_CALL / (dimX * dimY)))
+		local iz = 1
+		while iz <= dimZ do
+			local iz1 = math.min(iz + stripDepth - 1, dimZ)
+			local stripLen = iz1 - iz + 1
+
+			-- Build sub-arrays for this Z strip
+			local subMat = table.create(dimX)
+			local subOcc = table.create(dimX)
+			for ix = 1, dimX do
+				subMat[ix] = table.create(dimY)
+				subOcc[ix] = table.create(dimY)
+				for iy = 1, dimY do
+					subMat[ix][iy] = table.create(stripLen)
+					subOcc[ix][iy] = table.create(stripLen)
+					for s = 1, stripLen do
+						subMat[ix][iy][s] = materials[ix][iy][iz + s - 1]
+						subOcc[ix][iy][s] = occupancies[ix][iy][iz + s - 1]
+					end
+				end
+			end
+
+			local zWorldMin = rMinZ + (iz - 1) * VOXEL_SIZE
+			local zWorldMax = rMinZ + iz1 * VOXEL_SIZE
+			local stripRegion = Region3.new(
+				Vector3.new(rMinX, rMinY, zWorldMin),
+				Vector3.new(rMaxX, rMaxY, zWorldMax)
+			)
+			terrain:WriteVoxels(stripRegion, VOXEL_SIZE, subMat, subOcc)
+
+			iz = iz1 + 1
+		end
+	end
 end
 
 return TerrainBuilder
