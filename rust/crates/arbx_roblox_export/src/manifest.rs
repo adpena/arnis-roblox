@@ -129,6 +129,8 @@ pub struct PropInstance {
     pub yaw_degrees: f64,
     pub scale: f64,
     pub species: Option<String>,
+    pub height: Option<f64>,
+    pub leaf_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -671,6 +673,16 @@ impl PropInstance {
             out.push_str(",\n");
             write_key(out, indent + 2, "species");
             write_string(out, s);
+        }
+        if let Some(h) = self.height {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "height");
+            write_number(out, h);
+        }
+        if let Some(ref lt) = self.leaf_type {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "leafType");
+            write_string(out, lt);
         }
         out.push('\n');
         write_indent(out, indent);

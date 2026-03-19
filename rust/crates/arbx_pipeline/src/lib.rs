@@ -81,6 +81,8 @@ pub struct PropFeature {
     pub yaw_degrees: f64,
     pub scale: f64,
     pub species: Option<String>,
+    pub height: Option<f64>,
+    pub leaf_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -533,6 +535,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -544,6 +548,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -557,6 +563,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -568,6 +576,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -581,6 +591,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -592,6 +604,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species: None,
+                        height: None,
+                        leaf_type: None,
                     }));
                     continue;
                 }
@@ -618,6 +632,9 @@ impl SourceAdapter for OverpassAdapter {
                             }
                         });
 
+                    let tree_height = tags.get("height").and_then(|h| h.parse::<f64>().ok());
+                    let leaf_type = tags.get("leaf_type").cloned();
+
                     features.push(Feature::Prop(PropFeature {
                         id: format!("tree_{}", el.id),
                         kind: "tree".to_string(),
@@ -625,6 +642,8 @@ impl SourceAdapter for OverpassAdapter {
                         yaw_degrees: 0.0,
                         scale: 1.0,
                         species,
+                        height: tree_height,
+                        leaf_type,
                     }));
                 }
             }

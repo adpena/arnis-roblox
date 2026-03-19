@@ -431,6 +431,8 @@ impl Chunker {
                     yaw_degrees: f.yaw_degrees,
                     scale: f.scale,
                     species: f.species,
+                    height: f.height,
+                    leaf_type: f.leaf_type,
                 });
             }
             Feature::Landuse(f) => {
