@@ -33,45 +33,8 @@ CHUNK_REF_RE = re.compile(
     re.MULTILINE,
 )
 SCHEMA_RE = re.compile(r'return \{schemaVersion="(?P<schema>[^"]+)"')
-ORIGIN_RE = re.compile(r"originStuds\s*=\s*\{\s*x\s*=\s*(?P<x>[^,]+),\s*y\s*=\s*(?P<y>[^,]+),\s*z\s*=\s*(?P<z>[^}]+)\s*\}")
-FEATURE_COUNT_RE = re.compile(r"featureCount\s*=\s*(?P<value>\d+)")
-STREAMING_COST_RE = re.compile(r"streamingCost\s*=\s*(?P<value>\d+)")
 SHARD_NAME_RE = re.compile(r'"([^"]+)"')
 NUMERIC_STRING_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
-
-
-def _extract_lua_table(text: str, field_name: str) -> str | None:
-    match = re.search(rf"{re.escape(field_name)}\s*=\s*\{{", text)
-    if match is None:
-        return None
-
-    start = text.find("{", match.start())
-    if start < 0:
-        return None
-
-    depth = 0
-    in_string = False
-    escape = False
-    for index in range(start, len(text)):
-        char = text[index]
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-            continue
-
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start + 1 : index]
-    raise SystemExit(f"could not parse {field_name} table")
 
 
 def _split_top_level_items(text: str) -> list[str]:
@@ -139,6 +102,16 @@ def _parse_lua_table_value(text: str) -> list[Any] | dict[str, Any]:
     return [_parse_lua_value(item) for item in items]
 
 
+def _parse_top_level_fields(text: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for item in _split_top_level_items(text):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", item):
+            continue
+        key, value = item.split("=", 1)
+        result[key.strip()] = _parse_lua_value(value)
+    return result
+
+
 def _format_lua_value(value: Any) -> str:
     if isinstance(value, dict):
         return "{ " + ", ".join(f"{key} = {_format_lua_value(nested)}" for key, nested in value.items()) + " }"
@@ -163,27 +136,26 @@ def parse_source_index(source_text: str) -> tuple[str, dict[str, dict[str, Any]]
     chunk_refs: dict[str, dict[str, Any]] = {}
     for match in CHUNK_REF_RE.finditer(source_text):
         body = match.group("body")
-        origin_match = ORIGIN_RE.search(body)
-        if origin_match is None:
+        fields = _parse_top_level_fields(body)
+        origin_studs = fields.get("originStuds")
+        if not isinstance(origin_studs, dict):
+            raise SystemExit(f'could not parse originStuds for chunk {match.group("id")}')
+        if any(axis not in origin_studs for axis in ("x", "y", "z")):
             raise SystemExit(f'could not parse originStuds for chunk {match.group("id")}')
         chunk_refs[match.group("id")] = {
-            "x": origin_match.group("x"),
-            "y": origin_match.group("y"),
-            "z": origin_match.group("z"),
+            "x": origin_studs["x"],
+            "y": origin_studs["y"],
+            "z": origin_studs["z"],
             "shards": SHARD_NAME_RE.findall(match.group("shards")),
         }
-        feature_count_match = FEATURE_COUNT_RE.search(body)
-        if feature_count_match is not None:
-            chunk_refs[match.group("id")]["featureCount"] = feature_count_match.group("value")
-        streaming_cost_match = STREAMING_COST_RE.search(body)
-        if streaming_cost_match is not None:
-            chunk_refs[match.group("id")]["streamingCost"] = streaming_cost_match.group("value")
-        partition_version_match = re.search(r'partitionVersion\s*=\s*"(?P<value>[^"]+)"', body)
-        if partition_version_match is not None:
-            chunk_refs[match.group("id")]["partitionVersion"] = partition_version_match.group("value")
-        subplans_text = _extract_lua_table(body, "subplans")
-        if subplans_text is not None:
-            chunk_refs[match.group("id")]["subplans"] = _parse_lua_table_value(subplans_text)
+        if fields.get("featureCount") is not None:
+            chunk_refs[match.group("id")]["featureCount"] = fields["featureCount"]
+        if fields.get("streamingCost") is not None:
+            chunk_refs[match.group("id")]["streamingCost"] = fields["streamingCost"]
+        if fields.get("partitionVersion") is not None:
+            chunk_refs[match.group("id")]["partitionVersion"] = fields["partitionVersion"]
+        if fields.get("subplans") is not None:
+            chunk_refs[match.group("id")]["subplans"] = fields["subplans"]
 
     return schema_match.group("schema"), chunk_refs
 

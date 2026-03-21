@@ -107,14 +107,16 @@ Each chunk carries:
 Generated Lua shard indexes also carry lightweight `chunkRefs` metadata used only for scheduling and
 lazy loading. In addition to `id`, `originStuds`, and `shards`, generated indexes may include:
 
-- `featureCount`: coarse count of chunk-level authored content
-- `streamingCost`: weighted estimate of import cost used for chunk scheduling
+- `featureCount`: optional coarse aggregate hint for chunk-level authored content
+- `streamingCost`: optional aggregate hint for weighted import cost used by chunk scheduling
 - `partitionVersion`: scheduling-layer contract tag for the attached subplans
 - `subplans`: ordered scheduling metadata with per-subplan `id`, `layer`, `featureCount`, `streamingCost`, and optional `bounds`
 
 These fields do not change manifest truth or chunk contents. They exist so preview/runtime loaders
 can choose a better import order without dropping any source geometry or metadata. `partitionVersion`
-and `subplans` are additive index metadata only, not alternate manifest truth.
+and `subplans` are additive index metadata only, not alternate manifest truth. When `subplans` are
+present, top-level `featureCount` and `streamingCost` remain optional aggregate hints rather than
+required fields.
 
 ### Scheduling-layer migration notes
 

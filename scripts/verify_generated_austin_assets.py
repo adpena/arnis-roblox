@@ -14,8 +14,6 @@ STALE_FACADE_PATTERN = re.compile(r"\bfacadeStyle\s*=")
 PREVIEW_SPLIT_PATTERN = "AustinPreviewManifestIndex_*_*.lua"
 CHUNK_COUNT_RE = re.compile(r"\bchunkCount\s*=\s*(\d+)")
 FRAGMENT_COUNT_RE = re.compile(r"\bfragmentCount\s*=\s*(\d+)")
-FEATURE_COUNT_RE = re.compile(r"\bfeatureCount\s*=\s*\d+")
-STREAMING_COST_RE = re.compile(r"\bstreamingCost\s*=\s*\d+")
 CHUNK_REF_RE = re.compile(
     r'\{\s*id\s*=\s*"(?P<id>[^"]+)"(?P<body>[\s\S]*?)shards\s*=\s*\{(?P<shards>[\s\S]*?)\}\s*,?\s*\}',
     re.MULTILINE,
@@ -187,16 +185,19 @@ def _is_integer_scalar(value: Any) -> bool:
 def _validate_chunk_scheduling_metadata(chunk_id: str, body: str, *, label: str) -> list[str]:
     errors: list[str] = []
     fields = _parse_top_level_fields(body)
+    has_subplans = fields.get("subplans") is not None
 
     feature_count = fields.get("featureCount")
     if feature_count is None:
-        errors.append(f"{label} chunk {chunk_id} is missing featureCount")
+        if not has_subplans:
+            errors.append(f"{label} chunk {chunk_id} is missing featureCount")
     elif not _is_integer_scalar(feature_count):
         errors.append(f"{label} chunk {chunk_id} has malformed featureCount")
 
     streaming_cost = fields.get("streamingCost")
     if streaming_cost is None:
-        errors.append(f"{label} chunk {chunk_id} is missing streamingCost")
+        if not has_subplans:
+            errors.append(f"{label} chunk {chunk_id} is missing streamingCost")
     elif not _is_numeric_scalar(streaming_cost):
         errors.append(f"{label} chunk {chunk_id} has malformed streamingCost")
 

@@ -80,6 +80,24 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_source_index_reads_top_level_totals_not_subplan_counts(self) -> None:
+        module = load_module()
+        schema, chunk_refs = module.parse_source_index(
+            "\n".join(
+                [
+                    "return {schemaVersion=\"0.4.0\",chunkRefs={",
+                    '{id="0_0",originStuds={x=0,y=1,z=2},partitionVersion="subplans.v1",subplans={{id="terrain",layer="terrain",featureCount=1,streamingCost=40.0},{id="roads",layer="roads",featureCount=2,streamingCost=4.5}},featureCount=13,streamingCost=62,shards={"AustinManifestIndex_001","AustinManifestIndex_002"}},',
+                    "}}",
+                ]
+            )
+        )
+
+        self.assertEqual(schema, "0.4.0")
+        self.assertEqual(chunk_refs["0_0"]["featureCount"], "13")
+        self.assertEqual(chunk_refs["0_0"]["streamingCost"], "62")
+        self.assertEqual(chunk_refs["0_0"]["subplans"][0]["featureCount"], "1")
+        self.assertEqual(chunk_refs["0_0"]["subplans"][0]["streamingCost"], "40.0")
+
     def test_write_preview_index_emits_streaming_metadata(self) -> None:
         module = load_module()
 

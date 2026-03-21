@@ -388,6 +388,133 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                 f"expected malformed subplan field type error, got {errors}",
             )
 
+    def test_collect_errors_accepts_subplans_without_top_level_aggregate_hints(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertEqual(errors, [], f"expected subplans to make top-level aggregate hints optional, got {errors}")
+
+    def test_collect_errors_rejects_malformed_optional_aggregate_hints_with_subplans(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = "many", partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0 } }, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 10, streamingCost = 20, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 9, streamingCost = 18, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("runtime chunk 0_0 has malformed featureCount" in error for error in errors),
+                f"expected malformed optional aggregate hint error, got {errors}",
+            )
+
     def test_collect_errors_reports_missing_chunk_scheduling_metadata(self) -> None:
         verifier = load_module()
 
