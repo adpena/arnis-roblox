@@ -18,6 +18,12 @@
       "items": {
         "$ref": "#/$defs/chunk"
       }
+    },
+    "chunkRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/chunkRef"
+      }
     }
   },
   "$defs": {
@@ -85,6 +91,59 @@
         "y": { "type": "number" },
         "z": { "type": "number" }
       },
+      "additionalProperties": false
+    },
+    "subplanBounds": {
+      "type": "object",
+      "required": ["minX", "minY", "maxX", "maxY"],
+      "properties": {
+        "minX": { "type": "number" },
+        "minY": { "type": "number" },
+        "maxX": { "type": "number" },
+        "maxY": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "chunkSubplan": {
+      "type": "object",
+      "required": ["id", "layer", "featureCount", "streamingCost"],
+      "properties": {
+        "id": { "type": "string" },
+        "layer": { "type": "string" },
+        "featureCount": { "type": "integer", "minimum": 0 },
+        "streamingCost": { "type": "number", "minimum": 0 },
+        "bounds": { "$ref": "#/$defs/subplanBounds" }
+      },
+      "additionalProperties": false
+    },
+    "chunkRef": {
+      "type": "object",
+      "required": ["id", "originStuds"],
+      "properties": {
+        "id": { "type": "string" },
+        "originStuds": { "$ref": "#/$defs/point3" },
+        "featureCount": { "type": "integer", "minimum": 0 },
+        "streamingCost": { "type": "number", "minimum": 0 },
+        "partitionVersion": { "type": "string" },
+        "subplans": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/chunkSubplan" }
+        },
+        "shards": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["subplans"]
+          },
+          "then": {
+            "required": ["partitionVersion"]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "color": {

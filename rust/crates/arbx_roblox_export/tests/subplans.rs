@@ -1,13 +1,13 @@
 use arbx_geo::{BoundingBox, FlatElevationProvider, Footprint, LatLon, Vec2, Vec3};
 use arbx_pipeline::{
-    BuildingFeature, Feature, LanduseFeature, PropFeature, RoadFeature, WaterFeature,
-    WaterPolygonFeature,
+    BarrierFeature, BuildingFeature, Feature, LanduseFeature, PropFeature, RailFeature,
+    RoadFeature, WaterFeature, WaterPolygonFeature,
 };
 use arbx_roblox_export::chunker::Chunker;
-use arbx_roblox_export::manifest::ManifestMeta;
+use arbx_roblox_export::manifest::{ChunkManifest, ManifestMeta};
 use arbx_roblox_export::materials::StyleMapper;
 
-fn build_test_manifest_json() -> serde_json::Value {
+fn build_test_manifest() -> ChunkManifest {
     let elevation = FlatElevationProvider { height: 0.0 };
     let style = StyleMapper::default();
     let mut chunker = Chunker::new(256, 0.3, 2, LatLon::new(30.2672, -97.7431));
@@ -102,7 +102,7 @@ fn build_test_manifest_json() -> serde_json::Value {
         chunker.ingest(feature, &style, &elevation);
     }
 
-    let manifest = chunker.finish(ManifestMeta {
+    chunker.finish(ManifestMeta {
         world_name: "SubplanFixture".to_string(),
         generator: "subplans-test".to_string(),
         source: "synthetic".to_string(),
@@ -111,53 +111,98 @@ fn build_test_manifest_json() -> serde_json::Value {
         bbox: BoundingBox::new(30.2670, -97.7440, 30.2680, -97.7430),
         total_features: 5,
         notes: vec!["subplan fixture".to_string()],
-    });
-
-    serde_json::from_str(&manifest.to_json_pretty()).expect("manifest JSON should parse")
+    })
 }
 
-fn chunk_ref<'a>(manifest: &'a serde_json::Value, chunk_id: &str) -> &'a serde_json::Value {
-    manifest["chunkRefs"]
-        .as_array()
-        .expect("manifest should include chunkRefs")
+fn build_test_manifest_with_rails_and_barriers() -> ChunkManifest {
+    let elevation = FlatElevationProvider { height: 0.0 };
+    let style = StyleMapper::default();
+    let mut chunker = Chunker::new(256, 0.3, 2, LatLon::new(30.2672, -97.7431));
+
+    for feature in [
+        Feature::Road(RoadFeature {
+            id: "road_main".to_string(),
+            kind: "primary".to_string(),
+            lanes: Some(2),
+            width_studs: 12.0,
+            has_sidewalk: false,
+            surface: None,
+            elevated: Some(false),
+            tunnel: Some(false),
+            sidewalk: None,
+            points: vec![Vec3::new(24.0, 0.0, 48.0), Vec3::new(200.0, 0.0, 48.0)],
+            maxspeed: None,
+            lit: None,
+            oneway: None,
+            layer: None,
+        }),
+        Feature::Rail(RailFeature {
+            id: "rail_main".to_string(),
+            kind: "rail".to_string(),
+            lanes: Some(1),
+            width_studs: 8.0,
+            points: vec![Vec3::new(24.0, 0.0, 80.0), Vec3::new(200.0, 0.0, 80.0)],
+        }),
+        Feature::Barrier(BarrierFeature {
+            id: "wall_main".to_string(),
+            kind: "wall".to_string(),
+            points: vec![Vec3::new(24.0, 0.0, 112.0), Vec3::new(200.0, 0.0, 112.0)],
+        }),
+    ] {
+        chunker.ingest(feature, &style, &elevation);
+    }
+
+    chunker.finish(ManifestMeta {
+        world_name: "SubplanConsistencyFixture".to_string(),
+        generator: "subplans-test".to_string(),
+        source: "synthetic".to_string(),
+        meters_per_stud: 0.3,
+        chunk_size_studs: 256,
+        bbox: BoundingBox::new(30.2670, -97.7440, 30.2680, -97.7430),
+        total_features: 3,
+        notes: vec!["subplan consistency fixture".to_string()],
+    })
+}
+
+fn chunk_ref<'a>(
+    manifest: &'a ChunkManifest,
+    chunk_id: &str,
+) -> &'a arbx_roblox_export::ChunkRef {
+    manifest
+        .chunk_refs
         .iter()
-        .find(|entry| entry["id"] == chunk_id)
+        .find(|entry| entry.id == chunk_id)
         .expect("chunkRef should exist for chunk")
 }
 
 #[test]
 fn subplans_partition_version_and_order_are_deterministic() {
-    let manifest_a = build_test_manifest_json();
-    let manifest_b = build_test_manifest_json();
+    let manifest_a = build_test_manifest();
+    let manifest_b = build_test_manifest();
 
     let chunk_ref_a = chunk_ref(&manifest_a, "0_0");
     let chunk_ref_b = chunk_ref(&manifest_b, "0_0");
 
-    assert_eq!(chunk_ref_a["partitionVersion"], "subplans.v1");
-    assert_eq!(chunk_ref_a["partitionVersion"], chunk_ref_b["partitionVersion"]);
+    assert_eq!(chunk_ref_a.partition_version, "subplans.v1");
+    assert_eq!(chunk_ref_a.partition_version, chunk_ref_b.partition_version);
 
-    let subplans_a = chunk_ref_a["subplans"]
-        .as_array()
-        .expect("chunkRef should include ordered coarse subplans");
-    let subplans_b = chunk_ref_b["subplans"]
-        .as_array()
-        .expect("chunkRef should include ordered coarse subplans");
-
-    let ordered_layers_a: Vec<_> = subplans_a
+    let ordered_layers_a: Vec<_> = chunk_ref_a
+        .subplans
         .iter()
         .map(|subplan| {
             (
-                subplan["id"].as_str().unwrap().to_string(),
-                subplan["layer"].as_str().unwrap().to_string(),
+                subplan.id.clone(),
+                subplan.layer.clone(),
             )
         })
         .collect();
-    let ordered_layers_b: Vec<_> = subplans_b
+    let ordered_layers_b: Vec<_> = chunk_ref_b
+        .subplans
         .iter()
         .map(|subplan| {
             (
-                subplan["id"].as_str().unwrap().to_string(),
-                subplan["layer"].as_str().unwrap().to_string(),
+                subplan.id.clone(),
+                subplan.layer.clone(),
             )
         })
         .collect();
@@ -178,19 +223,17 @@ fn subplans_partition_version_and_order_are_deterministic() {
 
 #[test]
 fn subplans_layer_feature_counts_and_streaming_costs_match_canonical_chunk_contents() {
-    let manifest = build_test_manifest_json();
+    let manifest = build_test_manifest();
     let chunk_ref = chunk_ref(&manifest, "0_0");
-    let subplans = chunk_ref["subplans"]
-        .as_array()
-        .expect("chunkRef should include subplans");
 
-    let per_layer: Vec<_> = subplans
+    let per_layer: Vec<_> = chunk_ref
+        .subplans
         .iter()
         .map(|subplan| {
             (
-                subplan["layer"].as_str().unwrap().to_string(),
-                subplan["featureCount"].as_u64().unwrap(),
-                subplan["streamingCost"].as_f64().unwrap(),
+                subplan.layer.clone(),
+                subplan.feature_count as u64,
+                subplan.streaming_cost,
             )
         })
         .collect();
@@ -210,42 +253,88 @@ fn subplans_layer_feature_counts_and_streaming_costs_match_canonical_chunk_conte
 
 #[test]
 fn subplans_emission_preserves_canonical_counts_identity_and_semantics() {
-    let manifest = build_test_manifest_json();
-    let chunks = manifest["chunks"]
-        .as_array()
-        .expect("manifest should include chunks");
+    let manifest = build_test_manifest();
+    let chunks = &manifest.chunks;
     assert_eq!(chunks.len(), 1);
 
     let chunk = &chunks[0];
-    assert!(chunk.get("terrain").is_some(), "terrain should remain canonical");
-    assert_eq!(chunk["roads"].as_array().unwrap().len(), 1);
-    assert_eq!(chunk["buildings"].as_array().unwrap().len(), 1);
-    assert_eq!(chunk["water"].as_array().unwrap().len(), 1);
-    assert_eq!(chunk["props"].as_array().unwrap().len(), 1);
-    assert_eq!(chunk["landuse"].as_array().unwrap().len(), 1);
+    assert!(chunk.terrain.is_some(), "terrain should remain canonical");
+    assert_eq!(chunk.roads.len(), 1);
+    assert_eq!(chunk.buildings.len(), 1);
+    assert_eq!(chunk.water.len(), 1);
+    assert_eq!(chunk.props.len(), 1);
+    assert_eq!(chunk.landuse.len(), 1);
 
-    assert_eq!(chunk["roads"][0]["id"], "road_main");
-    assert_eq!(chunk["buildings"][0]["id"], "building_main");
-    assert_eq!(chunk["water"][0]["id"], "water_pond");
-    assert_eq!(chunk["props"][0]["id"], "tree_oak");
-    assert_eq!(chunk["landuse"][0]["id"], "park_green");
+    assert_eq!(chunk.roads[0].id, "road_main");
+    assert_eq!(chunk.buildings[0].id, "building_main");
+    assert_eq!(chunk.water[0].id, "water_pond");
+    assert_eq!(chunk.props[0].id, "tree_oak");
+    assert_eq!(chunk.landuse[0].id, "park_green");
 
     assert_eq!(
-        chunk["water"][0]["holes"].as_array().unwrap().len(),
+        chunk.water[0].holes.len(),
         1,
         "water holes should remain intact"
     );
     assert_eq!(
-        chunk["landuse"][0]["material"],
+        chunk.landuse[0].material,
         "Grass",
         "landuse material semantics should remain intact"
     );
     assert_eq!(
-        chunk["buildings"][0]["roofMaterial"],
-        "Slate",
+        chunk.buildings[0].roof_material.as_deref(),
+        Some("Slate"),
         "building material semantics should remain intact"
     );
 
+    let canonical_json: serde_json::Value =
+        serde_json::from_str(&manifest.to_json_pretty()).expect("manifest JSON should parse");
+    assert!(
+        canonical_json.get("chunkRefs").is_some(),
+        "compiled JSON artifact should export additive chunkRefs metadata for the current pipeline"
+    );
+    assert_eq!(
+        canonical_json["chunkRefs"][0]["partitionVersion"],
+        "subplans.v1"
+    );
+    assert!(
+        canonical_json["chunkRefs"][0].get("shards").is_none(),
+        "compile-time JSON chunkRefs should not serialize Lua shard names"
+    );
+
     let chunk_ref = chunk_ref(&manifest, "0_0");
-    assert_eq!(chunk_ref["partitionVersion"], "subplans.v1");
+    assert_eq!(chunk_ref.partition_version, "subplans.v1");
+}
+
+#[test]
+fn subplans_chunk_ref_aggregate_hints_cover_authored_chunk_content_even_when_subplans_omit_layers() {
+    let manifest = build_test_manifest_with_rails_and_barriers();
+    let chunk_ref = chunk_ref(&manifest, "0_0");
+
+    let feature_count_from_subplans: usize =
+        chunk_ref.subplans.iter().map(|subplan| subplan.feature_count).sum();
+    let streaming_cost_from_subplans: f64 =
+        chunk_ref.subplans.iter().map(|subplan| subplan.streaming_cost).sum();
+
+    assert_eq!(chunk_ref.feature_count, 4);
+    assert_eq!(chunk_ref.streaming_cost, 17.0);
+    assert!(
+        chunk_ref.feature_count > feature_count_from_subplans,
+        "chunkRef featureCount should remain an aggregate authored-content hint"
+    );
+    assert!(
+        chunk_ref.streaming_cost > streaming_cost_from_subplans,
+        "chunkRef streamingCost should remain an aggregate authored-content hint"
+    );
+
+    let ordered_layers: Vec<_> = chunk_ref
+        .subplans
+        .iter()
+        .map(|subplan| subplan.layer.as_str())
+        .collect();
+    assert_eq!(
+        ordered_layers,
+        vec!["terrain", "landuse", "roads", "buildings", "water", "props"],
+        "coarse-subplan contract should not grow new rails/barriers layers in v1"
+    );
 }

@@ -16,6 +16,7 @@ The schema lives in `specs/chunk-manifest.schema.json`.
 - `schemaVersion`
 - `meta`
 - `chunks` (must contain at least one chunk)
+- optional `chunkRefs` scheduling metadata for compile/export artifacts
 
 ## Meta section
 
@@ -102,10 +103,16 @@ Each chunk carries:
 - landuse
 - barriers
 
-## Sharded index metadata
+## Compile-time scheduling metadata
 
-Generated Lua shard indexes also carry lightweight `chunkRefs` metadata used only for scheduling and
-lazy loading. In addition to `id`, `originStuds`, and `shards`, generated indexes may include:
+Compiled JSON artifacts may carry optional top-level `chunkRefs` metadata so the current Python
+sharding pipeline can preserve Rust-authored scheduling hints into generated Lua indexes. These
+entries are additive scheduling metadata only. They do not change manifest truth, schemaVersion
+authority, or canonical chunk geometry/content in `chunks`.
+
+Compile-time JSON `chunkRefs` carry scheduling metadata only and do not include shard names.
+Generated Lua shard indexes carry the same metadata plus `shards` for lazy loading. In addition to
+`id`, `originStuds`, and optional `shards`, generated indexes may include:
 
 - `featureCount`: optional coarse aggregate hint for chunk-level authored content
 - `streamingCost`: optional aggregate hint for weighted import cost used by chunk scheduling
@@ -116,7 +123,8 @@ These fields do not change manifest truth or chunk contents. They exist so previ
 can choose a better import order without dropping any source geometry or metadata. `partitionVersion`
 and `subplans` are additive index metadata only, not alternate manifest truth. When `subplans` are
 present, top-level `featureCount` and `streamingCost` remain optional aggregate hints rather than
-required fields.
+required fields. Those aggregate hints continue to reflect canonical authored chunk content at the
+chunk level, even when a `subplans.v1` coarse plan omits explicit rails or barriers subplans.
 
 ### Scheduling-layer migration notes
 
@@ -126,6 +134,7 @@ When the subplan scheduling contract changes:
 - update the loader/verifier contract notes in this file
 - keep the manifest `schemaVersion` unchanged unless the manifest structure itself changes
 - treat subplan ordering, thresholds, and bounds semantics as scheduler policy, not manifest schema changes
+- document any intentional gap between chunk-level aggregate hints and emitted coarse subplan layers
 
 ## Representation choices in this scaffold
 

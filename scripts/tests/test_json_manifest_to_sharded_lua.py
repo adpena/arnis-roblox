@@ -9,9 +9,25 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "json_manifest_to_sharded_lua.py"
+SCHEMA = ROOT / "specs" / "chunk-manifest.schema.json"
 
 
 class JsonManifestToShardedLuaTests(unittest.TestCase):
+    def test_schema_allows_compile_time_chunk_refs_without_shards(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        chunk_ref = schema["$defs"]["chunkRef"]
+
+        self.assertNotIn(
+            "shards",
+            chunk_ref.get("required", []),
+            "compile-time JSON chunkRefs must remain valid without Lua index shard names",
+        )
+        self.assertIn(
+            "shards",
+            chunk_ref["properties"],
+            "schema should still allow shard names for generated index artifacts",
+        )
+
     def test_chunk_refs_include_streaming_metadata(self) -> None:
         manifest = {
             "schemaVersion": "0.4.0",
@@ -207,6 +223,104 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
             self.assertIn('subplans={{id="terrain",layer="terrain",featureCount=7,streamingCost=40.0}', index_text)
             self.assertNotIn("featureCount=2", index_text)
             self.assertNotIn("streamingCost=16", index_text)
+
+    def test_chunk_refs_preserve_aggregate_hints_when_subplans_omit_rails_and_barriers(self) -> None:
+        manifest = {
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SubplanAggregateHintTest",
+                "generator": "test",
+                "source": "test",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256,
+                "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
+            },
+            "chunkRefs": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
+                    "featureCount": 4,
+                    "streamingCost": 17.0,
+                    "partitionVersion": "subplans.v1",
+                    "subplans": [
+                        {
+                            "id": "terrain",
+                            "layer": "terrain",
+                            "featureCount": 0,
+                            "streamingCost": 0.0,
+                        },
+                        {
+                            "id": "landuse",
+                            "layer": "landuse",
+                            "featureCount": 0,
+                            "streamingCost": 0.0,
+                        },
+                        {
+                            "id": "roads",
+                            "layer": "roads",
+                            "featureCount": 1,
+                            "streamingCost": 4.0,
+                        },
+                        {
+                            "id": "buildings",
+                            "layer": "buildings",
+                            "featureCount": 0,
+                            "streamingCost": 0.0,
+                        },
+                        {
+                            "id": "water",
+                            "layer": "water",
+                            "featureCount": 0,
+                            "streamingCost": 0.0,
+                        },
+                        {
+                            "id": "props",
+                            "layer": "props",
+                            "featureCount": 0,
+                            "streamingCost": 0.0,
+                        },
+                    ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
+                    "roads": [{}],
+                    "rails": [{}],
+                    "barriers": [{}],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            manifest_path = temp_root / "manifest.json"
+            out_dir = temp_root / "out"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "--json",
+                    str(manifest_path),
+                    "--output-dir",
+                    str(out_dir),
+                    "--index-name",
+                    "TestManifestIndex",
+                    "--shard-folder",
+                    "TestManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            index_text = (out_dir / "TestManifestIndex.lua").read_text(encoding="utf-8")
+            self.assertIn("featureCount=4", index_text)
+            self.assertIn("streamingCost=17.0", index_text)
+            self.assertIn('partitionVersion="subplans.v1"', index_text)
+            self.assertIn('{id="roads",layer="roads",featureCount=1,streamingCost=4.0}', index_text)
 
     def test_chunk_refs_keep_canonical_chunk_origin_when_index_metadata_disagrees(self) -> None:
         manifest = {
