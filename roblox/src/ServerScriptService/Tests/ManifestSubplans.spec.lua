@@ -1,6 +1,7 @@
 return function()
     local ManifestLoader = require(script.Parent.Parent.ImportService.ManifestLoader)
     local Assert = require(script.Parent.Assert)
+    local ServerStorage = game:GetService("ServerStorage")
 
     local container = Instance.new("Folder")
     container.Name = "ManifestSubplansSpecTemp"
@@ -50,6 +51,7 @@ return function()
                 },
                 totalFeatures = 1,
             },
+            shardFolder = "ManifestSubplansChunks",
             shards = { "TestShard_001" },
             chunkRefs = {
                 {
@@ -71,6 +73,25 @@ return function()
         }
     ]]
     indexModule.Parent = container
+
+    local sampleData = ServerStorage:FindFirstChild("SampleData")
+    local createdSampleData = false
+    if not sampleData then
+        sampleData = Instance.new("Folder")
+        sampleData.Name = "SampleData"
+        sampleData.Parent = ServerStorage
+        createdSampleData = true
+    end
+
+    local sampleShardFolder = Instance.new("Folder")
+    sampleShardFolder.Name = "ManifestSubplansChunks"
+    sampleShardFolder.Parent = sampleData
+
+    local sampleShardModule = shardModule:Clone()
+    sampleShardModule.Parent = sampleShardFolder
+
+    local sampleIndexModule = indexModule:Clone()
+    sampleIndexModule.Parent = sampleData
 
     local ok, err = xpcall(function()
         local handle = ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, 0, {
@@ -108,8 +129,57 @@ return function()
         Assert.truthy(type(frozen.chunkRefs[1].subplans) == "table", "expected frozen handle to keep subplans table")
         Assert.equal(frozen.chunkRefs[1].subplans[1].id, "terrain", "expected frozen handle to keep subplan metadata")
         Assert.equal(frozen.chunkRefs[1].shards[1], "TestShard_001", "expected frozen handle to keep shard metadata")
+
+        local materializedFromHandle = handle:MaterializeManifest()
+        Assert.equal(#materializedFromHandle.chunkRefs, 1, "expected materialized handle manifest to keep chunk refs")
+        Assert.equal(
+            materializedFromHandle.chunkRefs[1].partitionVersion,
+            "subplans.v1",
+            "expected materialized handle manifest to keep partitionVersion"
+        )
+        Assert.equal(
+            materializedFromHandle.chunkRefs[1].subplans[1].id,
+            "terrain",
+            "expected materialized handle manifest to keep subplans"
+        )
+        Assert.equal(
+            materializedFromHandle.chunkRefs[1].shards[1],
+            "TestShard_001",
+            "expected materialized handle manifest to keep rebuilt shard metadata"
+        )
+
+        local materializedFromIndex = ManifestLoader.LoadFromShardedModuleIndex(indexModule, shardFolder, 0)
+        Assert.equal(#materializedFromIndex.chunkRefs, 1, "expected direct sharded manifest load to keep chunk refs")
+        Assert.equal(
+            materializedFromIndex.chunkRefs[1].partitionVersion,
+            "subplans.v1",
+            "expected direct sharded manifest load to keep partitionVersion"
+        )
+        Assert.equal(
+            materializedFromIndex.chunkRefs[1].subplans[1].id,
+            "terrain",
+            "expected direct sharded manifest load to keep subplans"
+        )
+
+        local namedSampleManifest = ManifestLoader.LoadNamedShardedSample("ManifestSubplansIndex", 0)
+        Assert.equal(#namedSampleManifest.chunkRefs, 1, "expected named sharded sample load to keep chunk refs")
+        Assert.equal(
+            namedSampleManifest.chunkRefs[1].partitionVersion,
+            "subplans.v1",
+            "expected named sharded sample load to keep partitionVersion"
+        )
+        Assert.equal(
+            namedSampleManifest.chunkRefs[1].subplans[1].id,
+            "terrain",
+            "expected named sharded sample load to keep subplans"
+        )
     end, debug.traceback)
 
+    sampleShardFolder:Destroy()
+    sampleIndexModule:Destroy()
+    if createdSampleData then
+        sampleData:Destroy()
+    end
     container:Destroy()
 
     if not ok then

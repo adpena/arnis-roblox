@@ -6,6 +6,7 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 
 local ManifestLoader = {}
 local SAMPLE_DATA_TIMEOUT_SECONDS = 5
+local normalizeChunkRefs
 
 local function cloneArray(values)
     if type(values) ~= "table" then
@@ -52,6 +53,14 @@ local function cloneChunkRef(chunkRef)
     return cloned
 end
 
+local function cloneChunkRefs(chunkRefs)
+    local clonedChunkRefs = {}
+    for _, chunkRef in ipairs(chunkRefs or {}) do
+        table.insert(clonedChunkRefs, cloneChunkRef(chunkRef))
+    end
+    return clonedChunkRefs
+end
+
 local function buildChunkRefSeedMap(chunkRefs)
     local chunkRefsById = {}
     for _, chunkRef in ipairs(chunkRefs or {}) do
@@ -95,12 +104,18 @@ local function requireModule(module, freshRequire)
     return result
 end
 
-local function newManifest(index)
-    return {
+local function newManifest(index, chunkRefs)
+    local manifest = {
         schemaVersion = index.schemaVersion,
         meta = index.meta,
         chunks = {},
     }
+
+    if type(chunkRefs) == "table" and #chunkRefs > 0 then
+        manifest.chunkRefs = cloneChunkRefs(chunkRefs)
+    end
+
+    return manifest
 end
 
 local function mergeChunkFragment(chunksById, chunkOrder, chunk)
@@ -135,8 +150,8 @@ local function mergeChunkFragment(chunksById, chunkOrder, chunk)
     end
 end
 
-local function finalizeManifest(index, chunksById, chunkOrder)
-    local manifest = newManifest(index)
+local function finalizeManifest(index, chunksById, chunkOrder, chunkRefs)
+    local manifest = newManifest(index, chunkRefs)
     for _, chunkId in ipairs(chunkOrder) do
         table.insert(manifest.chunks, chunksById[chunkId])
     end
@@ -187,6 +202,7 @@ local function loadShardedManifest(indexModule, timeoutSeconds)
         error(("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(shardFolderName))
     end
 
+    local chunkRefs = normalizeChunkRefs(index, shardFolder, timeoutSeconds)
     local chunksById = {}
     local chunkOrder = {}
 
@@ -208,7 +224,7 @@ local function loadShardedManifest(indexModule, timeoutSeconds)
         end
     end
 
-    return finalizeManifest(index, chunksById, chunkOrder)
+    return finalizeManifest(index, chunksById, chunkOrder, chunkRefs)
 end
 
 local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seedChunkRefsById)
@@ -262,6 +278,15 @@ local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seed
     return chunkRefs
 end
 
+function normalizeChunkRefs(index, shardFolder, timeoutSeconds)
+    local chunkRefs = index.chunkRefs
+    if chunkRefsNeedShardRebuild(chunkRefs) then
+        return buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, buildChunkRefSeedMap(chunkRefs))
+    end
+
+    return cloneChunkRefs(chunkRefs)
+end
+
 function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeoutSeconds, options)
     local freshRequire = type(options) == "table" and options.freshRequire == true
     local index = requireModule(indexModule, freshRequire)
@@ -275,16 +300,7 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     local shardCache = {}
     local chunkCache = {}
     local chunkFingerprintCache = {}
-    local chunkRefs = index.chunkRefs
-    if chunkRefsNeedShardRebuild(chunkRefs) then
-        chunkRefs = buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, buildChunkRefSeedMap(chunkRefs))
-    else
-        local clonedChunkRefs = {}
-        for _, chunkRef in ipairs(chunkRefs) do
-            table.insert(clonedChunkRefs, cloneChunkRef(chunkRef))
-        end
-        chunkRefs = clonedChunkRefs
-    end
+    local chunkRefs = normalizeChunkRefs(index, shardFolder, timeoutSeconds)
 
     local chunkRefById = {}
     for _, chunkRef in ipairs(chunkRefs) do
@@ -342,7 +358,7 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
             end
         end
 
-        local validated = finalizeManifest(index, chunksById, chunkOrder)
+        local validated = finalizeManifest(index, chunksById, chunkOrder, { chunkRef })
         local chunk = validated.chunks[1]
         if not chunk then
             error(("Failed to materialize chunk id: %s"):format(tostring(chunkId)))
@@ -430,7 +446,7 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
             table.insert(chunkIds, chunkRef.id)
         end
 
-        local manifest = newManifest(index)
+        local manifest = newManifest(index, self.chunkRefs)
         manifest.chunks = self:LoadChunks(chunkIds)
         return ChunkSchema.validateManifest(manifest)
     end
@@ -573,7 +589,7 @@ function ManifestLoader.FreezeHandleForChunkIds(handle, chunkIds)
         local manifest = newManifest({
             schemaVersion = self.schemaVersion,
             meta = self.meta,
-        })
+        }, self.chunkRefs)
         manifest.chunks = self:LoadChunks(frozenChunkIds)
         return ChunkSchema.validateManifest(manifest)
     end
