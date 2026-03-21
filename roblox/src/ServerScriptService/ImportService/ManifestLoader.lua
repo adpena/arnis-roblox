@@ -7,6 +7,73 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 local ManifestLoader = {}
 local SAMPLE_DATA_TIMEOUT_SECONDS = 5
 
+local function cloneArray(values)
+    if type(values) ~= "table" then
+        return values
+    end
+
+    local copy = {}
+    for index, value in ipairs(values) do
+        if type(value) == "table" then
+            copy[index] = table.clone(value)
+        else
+            copy[index] = value
+        end
+    end
+    return copy
+end
+
+local function cloneChunkRef(chunkRef)
+    local cloned = {
+        id = chunkRef.id,
+        originStuds = chunkRef.originStuds and table.clone(chunkRef.originStuds) or nil,
+    }
+
+    if type(chunkRef.shards) == "table" then
+        cloned.shards = cloneArray(chunkRef.shards)
+    end
+
+    if chunkRef.featureCount ~= nil then
+        cloned.featureCount = chunkRef.featureCount
+    end
+
+    if chunkRef.streamingCost ~= nil then
+        cloned.streamingCost = chunkRef.streamingCost
+    end
+
+    if chunkRef.partitionVersion ~= nil then
+        cloned.partitionVersion = chunkRef.partitionVersion
+    end
+
+    if type(chunkRef.subplans) == "table" then
+        cloned.subplans = cloneArray(chunkRef.subplans)
+    end
+
+    return cloned
+end
+
+local function buildChunkRefSeedMap(chunkRefs)
+    local chunkRefsById = {}
+    for _, chunkRef in ipairs(chunkRefs or {}) do
+        chunkRefsById[chunkRef.id] = chunkRef
+    end
+    return chunkRefsById
+end
+
+local function chunkRefsNeedShardRebuild(chunkRefs)
+    if type(chunkRefs) ~= "table" or #chunkRefs == 0 then
+        return true
+    end
+
+    for _, chunkRef in ipairs(chunkRefs) do
+        if type(chunkRef.shards) ~= "table" or #chunkRef.shards == 0 then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function requireModule(module, freshRequire)
     if not freshRequire then
         return require(module)
@@ -144,7 +211,7 @@ local function loadShardedManifest(indexModule, timeoutSeconds)
     return finalizeManifest(index, chunksById, chunkOrder)
 end
 
-local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds)
+local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seedChunkRefsById)
     local chunkRefsById = {}
     local chunkOrder = {}
 
@@ -159,11 +226,28 @@ local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds)
         for _, chunk in ipairs(shardData.chunks or {}) do
             local chunkRef = chunkRefsById[chunk.id]
             if not chunkRef then
+                local seedChunkRef = seedChunkRefsById and seedChunkRefsById[chunk.id]
                 chunkRef = {
                     id = chunk.id,
-                    originStuds = chunk.originStuds or { x = 0, y = 0, z = 0 },
+                    originStuds = chunk.originStuds or (seedChunkRef and seedChunkRef.originStuds and table.clone(
+                        seedChunkRef.originStuds
+                    )) or { x = 0, y = 0, z = 0 },
                     shards = {},
                 }
+                if seedChunkRef then
+                    if seedChunkRef.featureCount ~= nil then
+                        chunkRef.featureCount = seedChunkRef.featureCount
+                    end
+                    if seedChunkRef.streamingCost ~= nil then
+                        chunkRef.streamingCost = seedChunkRef.streamingCost
+                    end
+                    if seedChunkRef.partitionVersion ~= nil then
+                        chunkRef.partitionVersion = seedChunkRef.partitionVersion
+                    end
+                    if type(seedChunkRef.subplans) == "table" then
+                        chunkRef.subplans = cloneArray(seedChunkRef.subplans)
+                    end
+                end
                 chunkRefsById[chunk.id] = chunkRef
                 table.insert(chunkOrder, chunk.id)
             end
@@ -192,8 +276,14 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     local chunkCache = {}
     local chunkFingerprintCache = {}
     local chunkRefs = index.chunkRefs
-    if type(chunkRefs) ~= "table" or #chunkRefs == 0 then
-        chunkRefs = buildChunkRefsFromShards(index, shardFolder, timeoutSeconds)
+    if chunkRefsNeedShardRebuild(chunkRefs) then
+        chunkRefs = buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, buildChunkRefSeedMap(chunkRefs))
+    else
+        local clonedChunkRefs = {}
+        for _, chunkRef in ipairs(chunkRefs) do
+            table.insert(clonedChunkRefs, cloneChunkRef(chunkRef))
+        end
+        chunkRefs = clonedChunkRefs
     end
 
     local chunkRefById = {}
@@ -405,11 +495,7 @@ function ManifestLoader.FreezeHandleForChunkIds(handle, chunkIds)
     local frozenChunkRefById = {}
     for _, chunkRef in ipairs(handle.chunkRefs or {}) do
         if frozenChunkIdSet[chunkRef.id] then
-            local frozenRef = {
-                id = chunkRef.id,
-                originStuds = chunkRef.originStuds,
-                shards = chunkRef.shards,
-            }
+            local frozenRef = cloneChunkRef(chunkRef)
             frozenChunkRefById[chunkRef.id] = frozenRef
             table.insert(frozenChunkRefs, frozenRef)
         end
