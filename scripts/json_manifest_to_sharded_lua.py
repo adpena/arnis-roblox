@@ -104,9 +104,13 @@ def empty_chunk_fragment(chunk: dict[str, Any]) -> dict[str, Any]:
     return fragment
 
 
+def strip_index_only_fields(chunk: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in chunk.items() if key not in INDEX_ONLY_FIELDS}
+
+
 def fragment_chunk(chunk: dict[str, Any], max_bytes: int | None) -> list[dict[str, Any]]:
     if max_bytes is None:
-        return [chunk]
+        return [strip_index_only_fields(chunk)]
 
     base = empty_chunk_fragment(chunk)
     if lua_len({"chunks": [base]}) > max_bytes:
@@ -175,29 +179,30 @@ def chunk_streaming_cost(chunk: dict[str, Any]) -> int:
     return total
 
 
-def chunk_ref_metadata(chunk: dict[str, Any]) -> dict[str, Any]:
-    has_subplans = chunk.get("subplans") is not None
+def chunk_ref_metadata(chunk: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = metadata or {}
+    has_subplans = metadata.get("subplans") is not None
     chunk_ref = {
         "id": chunk["id"],
-        "originStuds": chunk.get("originStuds", {"x": 0, "y": 0, "z": 0}),
+        "originStuds": metadata.get("originStuds", chunk.get("originStuds", {"x": 0, "y": 0, "z": 0})),
         "shards": [],
     }
-    feature_count = chunk.get("featureCount")
+    feature_count = metadata.get("featureCount")
     if feature_count is None and not has_subplans:
         feature_count = chunk_feature_count(chunk)
     if feature_count is not None:
         chunk_ref["featureCount"] = feature_count
 
-    streaming_cost = chunk.get("streamingCost")
+    streaming_cost = metadata.get("streamingCost")
     if streaming_cost is None and not has_subplans:
         streaming_cost = chunk_streaming_cost(chunk)
     if streaming_cost is not None:
         chunk_ref["streamingCost"] = streaming_cost
 
-    if chunk.get("partitionVersion") is not None:
-        chunk_ref["partitionVersion"] = chunk["partitionVersion"]
-    if chunk.get("subplans") is not None:
-        chunk_ref["subplans"] = chunk["subplans"]
+    if metadata.get("partitionVersion") is not None:
+        chunk_ref["partitionVersion"] = metadata["partitionVersion"]
+    if metadata.get("subplans") is not None:
+        chunk_ref["subplans"] = metadata["subplans"]
     return chunk_ref
 
 
@@ -218,11 +223,21 @@ def main() -> int:
     if not isinstance(source_chunks, list) or not source_chunks:
         raise SystemExit("manifest must contain a non-empty chunks array")
 
+    source_chunk_refs = data.get("chunkRefs", [])
+    chunk_ref_metadata_by_id: dict[str, dict[str, Any]] = {}
+    if source_chunk_refs is not None:
+        if not isinstance(source_chunk_refs, list):
+            raise SystemExit("chunkRefs must be an array when present")
+        for chunk_ref in source_chunk_refs:
+            if not isinstance(chunk_ref, dict) or "id" not in chunk_ref:
+                raise SystemExit("chunkRefs entries must be objects with an id")
+            chunk_ref_metadata_by_id[chunk_ref["id"]] = chunk_ref
+
     chunks: list[dict[str, Any]] = []
     chunk_ref_by_id: dict[str, dict[str, Any]] = {}
     for chunk in source_chunks:
         chunk_id = chunk["id"]
-        chunk_ref_by_id[chunk_id] = chunk_ref_metadata(chunk)
+        chunk_ref_by_id[chunk_id] = chunk_ref_metadata(chunk, chunk_ref_metadata_by_id.get(chunk_id))
         chunks.extend(fragment_chunk(chunk, args.max_bytes))
 
     output_dir = Path(args.output_dir)

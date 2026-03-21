@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from json_manifest_to_sharded_lua import CHUNK_LIST_FIELDS, lua_len, write_lua_module
+from json_manifest_to_sharded_lua import CHUNK_LIST_FIELDS, INDEX_ONLY_FIELDS, lua_len, write_lua_module
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -255,6 +255,8 @@ def base_preview_chunk_fragment(chunk: dict) -> dict:
     fragment: dict = {"id": chunk["id"]}
     for key, value in chunk.items():
         if key == "id":
+            continue
+        if key in INDEX_ONLY_FIELDS:
             continue
         if key in CHUNK_LIST_FIELDS and isinstance(value, list):
             continue

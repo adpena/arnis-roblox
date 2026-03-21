@@ -22,6 +22,7 @@ CHUNK_REF_RE = re.compile(
 )
 SHARD_NAME_RE = re.compile(r"\"([^\"]+)\"")
 NUMERIC_STRING_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+INTEGER_STRING_RE = re.compile(r"^-?\d+$")
 
 
 def _extract_lua_table(text: str, field_name: str) -> str | None:
@@ -123,6 +124,16 @@ def _parse_lua_table_value(text: str) -> list[Any] | dict[str, Any]:
     return [_parse_lua_value(item) for item in items]
 
 
+def _parse_top_level_fields(text: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for item in _split_top_level_items(text):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", item):
+            continue
+        key, value = item.split("=", 1)
+        result[key.strip()] = _parse_lua_value(value)
+    return result
+
+
 def runtime_shard_dir(root: Path) -> Path:
     return root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
 
@@ -161,6 +172,37 @@ def _parse_preview_chunk_refs(index_text: str) -> dict[str, list[str]]:
     return chunk_refs
 
 
+def _is_string_scalar(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def _is_numeric_scalar(value: Any) -> bool:
+    return isinstance(value, str) and NUMERIC_STRING_RE.match(value) is not None
+
+
+def _is_integer_scalar(value: Any) -> bool:
+    return isinstance(value, str) and INTEGER_STRING_RE.match(value) is not None
+
+
+def _validate_chunk_scheduling_metadata(chunk_id: str, body: str, *, label: str) -> list[str]:
+    errors: list[str] = []
+    fields = _parse_top_level_fields(body)
+
+    feature_count = fields.get("featureCount")
+    if feature_count is None:
+        errors.append(f"{label} chunk {chunk_id} is missing featureCount")
+    elif not _is_integer_scalar(feature_count):
+        errors.append(f"{label} chunk {chunk_id} has malformed featureCount")
+
+    streaming_cost = fields.get("streamingCost")
+    if streaming_cost is None:
+        errors.append(f"{label} chunk {chunk_id} is missing streamingCost")
+    elif not _is_numeric_scalar(streaming_cost):
+        errors.append(f"{label} chunk {chunk_id} has malformed streamingCost")
+
+    return errors
+
+
 def _validate_chunk_subplans(chunk_id: str, body: str) -> list[str]:
     errors: list[str] = []
     subplans_text = _extract_lua_table(body, "subplans")
@@ -189,9 +231,25 @@ def _validate_chunk_subplans(chunk_id: str, body: str) -> list[str]:
             )
             continue
 
+        if not _is_string_scalar(subplan["id"]):
+            errors.append(f"chunk {chunk_id} has malformed subplan {index} id")
+        if not _is_string_scalar(subplan["layer"]):
+            errors.append(f"chunk {chunk_id} has malformed subplan {subplan.get('id', index)} layer")
+        if not _is_integer_scalar(subplan["featureCount"]):
+            errors.append(f"chunk {chunk_id} has malformed subplan {subplan.get('id', index)} featureCount")
+        if not _is_numeric_scalar(subplan["streamingCost"]):
+            errors.append(f"chunk {chunk_id} has malformed subplan {subplan.get('id', index)} streamingCost")
+
         bounds = subplan.get("bounds")
-        if bounds is not None and not isinstance(bounds, dict):
-            errors.append(f"chunk {chunk_id} has malformed subplan {subplan['id']} bounds")
+        if bounds is not None:
+            if not isinstance(bounds, dict):
+                errors.append(f"chunk {chunk_id} has malformed subplan {subplan['id']} bounds")
+            else:
+                for key in ("minX", "minY", "maxX", "maxY"):
+                    if key not in bounds:
+                        errors.append(f"chunk {chunk_id} has malformed subplan {subplan['id']} bounds missing {key}")
+                    elif not _is_numeric_scalar(bounds[key]):
+                        errors.append(f"chunk {chunk_id} has malformed subplan {subplan['id']} bounds {key}")
 
     return errors
 
@@ -213,10 +271,9 @@ def collect_errors(root: Path) -> list[str]:
     runtime_index = runtime_index_path(root)
     if runtime_index.exists() and sample_shards:
         runtime_index_text = runtime_index.read_text(encoding="utf-8")
-        if FEATURE_COUNT_RE.search(runtime_index_text) is None or STREAMING_COST_RE.search(runtime_index_text) is None:
-            errors.append("runtime index is missing chunk scheduling metadata")
         runtime_chunk_refs = _parse_preview_chunk_refs(runtime_index_text)
         for match in CHUNK_REF_RE.finditer(runtime_index_text):
+            errors.extend(_validate_chunk_scheduling_metadata(match.group("id"), match.group("body"), label="runtime"))
             errors.extend(_validate_chunk_subplans(match.group("id"), match.group("body")))
         referenced_runtime_shards = sorted(
             {shard_name for shard_names in runtime_chunk_refs.values() for shard_name in shard_names}
@@ -265,14 +322,13 @@ def collect_errors(root: Path) -> list[str]:
         return errors
 
     index_text = index_path.read_text(encoding="utf-8")
-    if FEATURE_COUNT_RE.search(index_text) is None or STREAMING_COST_RE.search(index_text) is None:
-        errors.append("preview index is missing chunk scheduling metadata")
     chunk_refs = _parse_preview_chunk_refs(index_text)
     if not chunk_refs:
         errors.append("preview index does not contain any chunk refs")
         return errors
 
     for match in CHUNK_REF_RE.finditer(index_text):
+        errors.extend(_validate_chunk_scheduling_metadata(match.group("id"), match.group("body"), label="preview"))
         errors.extend(_validate_chunk_subplans(match.group("id"), match.group("body")))
 
     chunk_ids = set(chunk_refs)

@@ -181,6 +181,213 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                 f"expected runtime malformed subplan error, got {errors}",
             )
 
+    def test_collect_errors_rejects_partial_preview_chunk_scheduling_metadata(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 10, streamingCost = 20, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 9, streamingCost = 18, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any('chunk -1_-1 is missing streamingCost' in error for error in errors),
+                f"expected per-chunk preview scheduling metadata error, got {errors}",
+            )
+
+    def test_collect_errors_rejects_partial_runtime_chunk_scheduling_metadata(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, shards = { "AustinManifestIndex_001" } },',
+                        '        { id = "1_0", originStuds = { x = 256, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 10, streamingCost = 20, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 9, streamingCost = 18, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any('runtime chunk 0_0 is missing streamingCost' in error for error in errors),
+                f"expected per-chunk runtime scheduling metadata error, got {errors}",
+            )
+
+    def test_collect_errors_rejects_malformed_subplan_bounds_shape(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 1,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, partitionVersion = "subplans.v1", subplans = { { id = "terrain", layer = "terrain", featureCount = 1, streamingCost = 40.0, bounds = { minX = 0, maxX = 128, maxY = 128 } } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("bounds" in error for error in errors),
+                f"expected malformed bounds error, got {errors}",
+            )
+
+    def test_collect_errors_rejects_malformed_subplan_field_types(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 1,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, partitionVersion = "subplans.v1", subplans = { { id = { value = "terrain" }, layer = "terrain", featureCount = "many", streamingCost = "fast" } }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("subplan" in error and ("id" in error or "featureCount" in error or "streamingCost" in error) for error in errors),
+                f"expected malformed subplan field type error, got {errors}",
+            )
+
     def test_collect_errors_reports_missing_chunk_scheduling_metadata(self) -> None:
         verifier = load_module()
 
@@ -242,11 +449,11 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
             errors = verifier.collect_errors(root)
 
             self.assertTrue(
-                any("runtime index is missing chunk scheduling metadata" in error for error in errors),
+                any("runtime chunk 0_0 is missing featureCount" in error for error in errors),
                 f"expected runtime metadata error, got {errors}",
             )
             self.assertTrue(
-                any("preview index is missing chunk scheduling metadata" in error for error in errors),
+                any("preview chunk -1_-1 is missing featureCount" in error for error in errors),
                 f"expected preview metadata error, got {errors}",
             )
 

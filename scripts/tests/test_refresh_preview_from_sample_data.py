@@ -168,6 +168,33 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             self.assertIn('bounds = { minX = 0, minY = 0, maxX = 128, maxY = 128 }', written)
             self.assertIn('id = "roads"', written)
 
+    def test_preview_shard_fragments_strip_index_only_subplan_metadata(self) -> None:
+        module = load_module()
+
+        fragments = module.fragment_preview_chunk(
+            {
+                "id": "0_0",
+                "originStuds": {"x": 0, "y": 0, "z": 0},
+                "partitionVersion": "subplans.v1",
+                "subplans": [
+                    {
+                        "id": "terrain",
+                        "layer": "terrain",
+                        "featureCount": 1,
+                        "streamingCost": 40.0,
+                    }
+                ],
+                "roads": [{"id": "road_1"}],
+            },
+            50_000,
+        )
+
+        self.assertGreaterEqual(len(fragments), 1)
+        self.assertNotIn("partitionVersion", fragments[0])
+        self.assertNotIn("subplans", fragments[0])
+        self.assertNotIn("partitionVersion", fragments[-1])
+        self.assertNotIn("subplans", fragments[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

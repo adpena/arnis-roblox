@@ -77,7 +77,7 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
                 "chunkSizeStuds": 256,
                 "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
             },
-            "chunks": [
+            "chunkRefs": [
                 {
                     "id": "0_0",
                     "originStuds": {"x": 0, "y": 0, "z": 0},
@@ -97,6 +97,12 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
                             "streamingCost": 4.5,
                         },
                     ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
                     "roads": [{}, {}],
                 }
             ],
@@ -142,7 +148,7 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
                 "chunkSizeStuds": 256,
                 "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
             },
-            "chunks": [
+            "chunkRefs": [
                 {
                     "id": "0_0",
                     "originStuds": {"x": 0, "y": 0, "z": 0},
@@ -161,6 +167,12 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
                             "streamingCost": 4.5,
                         },
                     ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
                     "roads": [{}],
                     "buildings": [{}],
                 }
@@ -195,6 +207,67 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
             self.assertIn('subplans={{id="terrain",layer="terrain",featureCount=7,streamingCost=40.0}', index_text)
             self.assertNotIn("featureCount=2", index_text)
             self.assertNotIn("streamingCost=16", index_text)
+
+    def test_chunk_level_subplan_fields_are_ignored_without_index_chunk_ref_metadata(self) -> None:
+        manifest = {
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "BoundaryTest",
+                "generator": "test",
+                "source": "test",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256,
+                "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
+                    "partitionVersion": "subplans.v1",
+                    "subplans": [
+                        {
+                            "id": "roads",
+                            "layer": "roads",
+                            "featureCount": 2,
+                            "streamingCost": 4.5,
+                        }
+                    ],
+                    "roads": [{}, {}],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            manifest_path = temp_root / "manifest.json"
+            out_dir = temp_root / "out"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "--json",
+                    str(manifest_path),
+                    "--output-dir",
+                    str(out_dir),
+                    "--index-name",
+                    "TestManifestIndex",
+                    "--shard-folder",
+                    "TestManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            index_text = (out_dir / "TestManifestIndex.lua").read_text(encoding="utf-8")
+            shard_text = (out_dir / "TestManifestChunks" / "TestManifestIndex_001.lua").read_text(encoding="utf-8")
+            self.assertNotIn('partitionVersion="subplans.v1"', index_text)
+            self.assertNotIn("subplans={{", index_text)
+            self.assertIn("featureCount=2", index_text)
+            self.assertIn("streamingCost=8", index_text)
+            self.assertNotIn('partitionVersion="subplans.v1"', shard_text)
+            self.assertNotIn("subplans={{", shard_text)
 
 
 if __name__ == "__main__":
