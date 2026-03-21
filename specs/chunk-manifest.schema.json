@@ -139,7 +139,8 @@
         "hasSidewalk": { "type": "boolean" },
         "elevated": { "type": "boolean", "default": false },
         "tunnel": { "type": "boolean", "default": false },
-        "sidewalk": { "type": "string", "enum": ["both", "left", "right", "no"] },
+        "sidewalk": { "type": "string", "enum": ["both", "left", "right", "no", "separate"] },
+        "subkind": { "type": "string" },
         "surface": { "type": "string" },
         "maxspeed": { "type": "integer", "minimum": 0 },
         "lit": { "type": "boolean" },
@@ -312,6 +313,7 @@
     },
     "chunk": {
       "type": "object",
+      "$comment": "Generated chunk indexes may attach additive scheduling metadata such as partitionVersion and subplans, but the manifest chunk schema remains the source of truth for geometry and authored content.",
       "required": ["id", "originStuds"],
       "properties": {
         "id": { "type": "string" },

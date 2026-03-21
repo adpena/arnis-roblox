@@ -51,12 +51,13 @@ This keeps chunk moves, reloads, and local editing much cleaner.
 - Canonical scale: `metersPerStud = 0.3` (1 stud ≈ 0.3m, matching Roblox humanoid proportions).
 - Rust exporter is the single elevation authority — all Y positions are authoritative from DEM sampling.
 - Terrain resolution configurable: default `cellSizeStuds = 2` (128x128 grid, 16,384 cells), configurable 1-32 via CLI `--terrain-cell-size`. Voxel size configurable via WorldConfig (default 1).
-- New road fields: `elevated` (bool), `tunnel` (bool), `sidewalk` (string).
+- New road fields: `elevated` (bool), `tunnel` (bool), `sidewalk` (string), `subkind` (string).
 - Building `color` renamed to `wallColor`; new fields: `roofColor`, `roofShape`, `roofMaterial`, `usage`, `minHeight`.
 - New water field: `surfaceY` (authoritative surface elevation for polygon water).
 - New prop fields: `height`, `leafType`.
 - Lua builders no longer re-sample ground or apply snap thresholds — they read manifest values directly.
 - Migration from 0.3.0 scales all stud-space coordinates by `oldMps / 0.3`.
+- Index-side scheduling metadata is versioned separately via `partitionVersion`; changing the subplan contract does not require a manifest schema bump unless the manifest shape itself changes.
 
 ### 0.3.0
 - Documents the richer manifest surface already supported by the exporter and importer.
@@ -101,6 +102,29 @@ Each chunk carries:
 - landuse
 - barriers
 
+## Sharded index metadata
+
+Generated Lua shard indexes also carry lightweight `chunkRefs` metadata used only for scheduling and
+lazy loading. In addition to `id`, `originStuds`, and `shards`, generated indexes may include:
+
+- `featureCount`: coarse count of chunk-level authored content
+- `streamingCost`: weighted estimate of import cost used for chunk scheduling
+- `partitionVersion`: scheduling-layer contract tag for the attached subplans
+- `subplans`: ordered scheduling metadata with per-subplan `id`, `layer`, `featureCount`, `streamingCost`, and optional `bounds`
+
+These fields do not change manifest truth or chunk contents. They exist so preview/runtime loaders
+can choose a better import order without dropping any source geometry or metadata. `partitionVersion`
+and `subplans` are additive index metadata only, not alternate manifest truth.
+
+### Scheduling-layer migration notes
+
+When the subplan scheduling contract changes:
+
+- bump `partitionVersion`
+- update the loader/verifier contract notes in this file
+- keep the manifest `schemaVersion` unchanged unless the manifest structure itself changes
+- treat subplan ordering, thresholds, and bounds semantics as scheduler policy, not manifest schema changes
+
 ## Representation choices in this scaffold
 
 ### Terrain
@@ -122,8 +146,10 @@ This is intentionally basic so the contract stabilizes before the representation
 
 ### Roads, rails, water, and barriers
 
-Polyline-based ribbons with width and points. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
-`tunnel`, and `sidewalk` (both/left/right/no) flags. Additional optional OSM-derived road fields:
+Polyline-based ribbons with width and points. `widthStuds` is the canonical rendered ribbon width emitted by
+the Rust pipeline; Luau consumers should use it directly instead of re-deriving width from `lanes`. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
+`tunnel`, `sidewalk` (both/left/right/no/separate), and `subkind` (OSM subtype such as `sidewalk`, `crossing`,
+or other path-specific detail) flags. Additional optional OSM-derived road fields:
 `maxspeed` (integer km/h speed limit), `lit` (boolean street lighting), `oneway` (boolean direction
 constraint), and `layer` (integer vertical stacking level for overpasses/underpasses). Water polygons
 carry `holes` for islands/cutouts, `surfaceY` for authoritative surface elevation, `width` (real-world

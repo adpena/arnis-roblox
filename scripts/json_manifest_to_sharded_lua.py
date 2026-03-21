@@ -68,6 +68,14 @@ def lua_len(value: Any) -> int:
     return len(out.getvalue().encode("utf-8"))
 
 
+def clear_existing_shards(shard_dir: Path, index_name: str) -> None:
+    if not shard_dir.exists():
+        return
+    pattern = f"{index_name}_*.lua"
+    for existing in shard_dir.glob(pattern):
+        existing.unlink()
+
+
 CHUNK_LIST_FIELDS = [
     "roads",
     "rails",
@@ -78,11 +86,17 @@ CHUNK_LIST_FIELDS = [
     "barriers",
     "rooms",
 ]
+INDEX_ONLY_FIELDS = {
+    "partitionVersion",
+    "subplans",
+}
 
 
 def empty_chunk_fragment(chunk: dict[str, Any]) -> dict[str, Any]:
     fragment = {}
     for key, value in chunk.items():
+        if key in INDEX_ONLY_FIELDS:
+            continue
         if key in CHUNK_LIST_FIELDS and isinstance(value, list):
             fragment[key] = []
         else:
@@ -130,6 +144,52 @@ def fragment_chunk(chunk: dict[str, Any], max_bytes: int | None) -> list[dict[st
     return fragments
 
 
+def chunk_feature_count(chunk: dict[str, Any]) -> int:
+    total = 0
+    for key in ("roads", "rails", "buildings", "water", "props", "landuse", "barriers"):
+        value = chunk.get(key)
+        if isinstance(value, list):
+            total += len(value)
+    if chunk.get("terrain") is not None:
+        total += 1
+    return total
+
+
+def chunk_streaming_cost(chunk: dict[str, Any]) -> int:
+    weights = {
+        "roads": 4,
+        "rails": 3,
+        "buildings": 12,
+        "water": 2,
+        "props": 1,
+        "landuse": 6,
+        "barriers": 2,
+    }
+    total = 0
+    for key, weight in weights.items():
+        value = chunk.get(key)
+        if isinstance(value, list):
+            total += len(value) * weight
+    if chunk.get("terrain") is not None:
+        total += 8
+    return total
+
+
+def chunk_ref_metadata(chunk: dict[str, Any]) -> dict[str, Any]:
+    chunk_ref = {
+        "id": chunk["id"],
+        "originStuds": chunk.get("originStuds", {"x": 0, "y": 0, "z": 0}),
+        "featureCount": chunk.get("featureCount", chunk_feature_count(chunk)),
+        "streamingCost": chunk.get("streamingCost", chunk_streaming_cost(chunk)),
+        "shards": [],
+    }
+    if chunk.get("partitionVersion") is not None:
+        chunk_ref["partitionVersion"] = chunk["partitionVersion"]
+    if chunk.get("subplans") is not None:
+        chunk_ref["subplans"] = chunk["subplans"]
+    return chunk_ref
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Convert JSON manifest to sharded Lua modules")
     parser.add_argument("--json", required=True, help="Input JSON manifest path")
@@ -151,15 +211,12 @@ def main() -> int:
     chunk_ref_by_id: dict[str, dict[str, Any]] = {}
     for chunk in source_chunks:
         chunk_id = chunk["id"]
-        chunk_ref_by_id[chunk_id] = {
-            "id": chunk_id,
-            "originStuds": chunk.get("originStuds", {"x": 0, "y": 0, "z": 0}),
-            "shards": [],
-        }
+        chunk_ref_by_id[chunk_id] = chunk_ref_metadata(chunk)
         chunks.extend(fragment_chunk(chunk, args.max_bytes))
 
     output_dir = Path(args.output_dir)
     shard_dir = output_dir / args.shard_folder
+    clear_existing_shards(shard_dir, args.index_name)
     shard_names = []
 
     shard_count = (len(chunks) + args.chunks_per_shard - 1) // args.chunks_per_shard
