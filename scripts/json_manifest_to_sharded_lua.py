@@ -184,7 +184,7 @@ def chunk_ref_metadata(chunk: dict[str, Any], metadata: dict[str, Any] | None = 
     has_subplans = metadata.get("subplans") is not None
     chunk_ref = {
         "id": chunk["id"],
-        "originStuds": metadata.get("originStuds", chunk.get("originStuds", {"x": 0, "y": 0, "z": 0})),
+        "originStuds": chunk.get("originStuds", {"x": 0, "y": 0, "z": 0}),
         "shards": [],
     }
     feature_count = metadata.get("featureCount")

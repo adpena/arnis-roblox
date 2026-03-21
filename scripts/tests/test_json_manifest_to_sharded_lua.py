@@ -208,6 +208,68 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
             self.assertNotIn("featureCount=2", index_text)
             self.assertNotIn("streamingCost=16", index_text)
 
+    def test_chunk_refs_keep_canonical_chunk_origin_when_index_metadata_disagrees(self) -> None:
+        manifest = {
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "CanonicalOriginTest",
+                "generator": "test",
+                "source": "test",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256,
+                "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
+            },
+            "chunkRefs": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 999, "y": 888, "z": 777},
+                    "partitionVersion": "subplans.v1",
+                    "subplans": [
+                        {
+                            "id": "terrain",
+                            "layer": "terrain",
+                            "featureCount": 1,
+                            "streamingCost": 40.0,
+                        }
+                    ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 1, "y": 2, "z": 3},
+                    "roads": [{}],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            manifest_path = temp_root / "manifest.json"
+            out_dir = temp_root / "out"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "--json",
+                    str(manifest_path),
+                    "--output-dir",
+                    str(out_dir),
+                    "--index-name",
+                    "TestManifestIndex",
+                    "--shard-folder",
+                    "TestManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            index_text = (out_dir / "TestManifestIndex.lua").read_text(encoding="utf-8")
+            self.assertIn('originStuds={x=1,y=2,z=3}', index_text)
+            self.assertNotIn('originStuds={x=999,y=888,z=777}', index_text)
+
     def test_chunk_level_subplan_fields_are_ignored_without_index_chunk_ref_metadata(self) -> None:
         manifest = {
             "schemaVersion": "0.4.0",

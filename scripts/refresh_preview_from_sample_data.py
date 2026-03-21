@@ -311,25 +311,32 @@ def main() -> int:
         chunk_ref = source_chunk_refs.get(chunk_id)
         if chunk_ref is None:
             raise SystemExit(f"missing chunk {chunk_id} in AustinManifestIndex.lua")
-        if chunk_id not in source_chunks:
+        source_chunk = source_chunks.get(chunk_id)
+        if source_chunk is None:
             raise SystemExit(f"missing chunk {chunk_id} in {SOURCE_JSON}")
+        origin_studs = source_chunk.get("originStuds")
+        if not isinstance(origin_studs, dict) or any(axis not in origin_studs for axis in ("x", "y", "z")):
+            raise SystemExit(f"missing canonical originStuds for chunk {chunk_id} in {SOURCE_JSON}")
+        preview_chunk_ref: dict[str, Any] = {
+            "x": origin_studs["x"],
+            "y": origin_studs["y"],
+            "z": origin_studs["z"],
+            "shards": [],
+        }
+        if chunk_ref.get("featureCount") is not None:
+            preview_chunk_ref["featureCount"] = chunk_ref["featureCount"]
+        if chunk_ref.get("streamingCost") is not None:
+            preview_chunk_ref["streamingCost"] = chunk_ref["streamingCost"]
+        if chunk_ref.get("partitionVersion") is not None:
+            preview_chunk_ref["partitionVersion"] = chunk_ref["partitionVersion"]
+        if chunk_ref.get("subplans") is not None:
+            preview_chunk_ref["subplans"] = chunk_ref["subplans"]
         preview_chunk_refs.append(
             (
                 chunk_id,
-                {
-                    "x": chunk_ref["x"],
-                    "y": chunk_ref["y"],
-                    "z": chunk_ref["z"],
-                    "featureCount": chunk_ref.get("featureCount"),
-                    "streamingCost": chunk_ref.get("streamingCost"),
-                    "shards": [],
-                },
+                preview_chunk_ref,
             )
         )
-        if chunk_ref.get("partitionVersion") is not None:
-            preview_chunk_refs[-1][1]["partitionVersion"] = chunk_ref["partitionVersion"]
-        if chunk_ref.get("subplans") is not None:
-            preview_chunk_refs[-1][1]["subplans"] = chunk_ref["subplans"]
 
     shutil.rmtree(PREVIEW_SHARDS, ignore_errors=True)
     PREVIEW_SHARDS.mkdir(parents=True, exist_ok=True)
