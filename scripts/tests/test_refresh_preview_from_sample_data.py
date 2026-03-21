@@ -238,7 +238,7 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 encoding="utf-8",
             )
             source_json.write_text(
-                '{"chunks":['
+                '{"schemaVersion":"0.4.0","chunks":['
                 '{"id":"-1_-1","originStuds":{"x":-256,"y":1,"z":-256}},'
                 '{"id":"0_-1","originStuds":{"x":0,"y":2,"z":-256}},'
                 '{"id":"-1_0","originStuds":{"x":-256,"y":3,"z":0}},'
@@ -274,6 +274,67 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             self.assertIn("originStuds = { x = 0, y = 4, z = 0 }", written)
             self.assertNotIn("originStuds = { x = 999, y = 888, z = 777 }", written)
             self.assertIn('partitionVersion = "subplans.v1"', written)
+
+    def test_main_uses_schema_version_from_source_json_when_runtime_index_is_stale(self) -> None:
+        module = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_index = temp_root / "AustinManifestIndex.lua"
+            source_json = temp_root / "austin-manifest.json"
+            preview_dir = temp_root / "StudioPreview"
+            preview_index = preview_dir / "AustinPreviewManifestIndex.lua"
+            preview_shards = preview_dir / "AustinPreviewManifestChunks"
+
+            source_index.write_text(
+                "\n".join(
+                    [
+                        'return {schemaVersion="0.4.0",chunkRefs={',
+                        '{id="-1_-1",originStuds={x=-256,y=1,z=-256},shards={"AustinManifestIndex_001"}},',
+                        '{id="0_-1",originStuds={x=0,y=2,z=-256},shards={"AustinManifestIndex_001"}},',
+                        '{id="-1_0",originStuds={x=-256,y=3,z=0},shards={"AustinManifestIndex_001"}},',
+                        '{id="0_0",originStuds={x=0,y=4,z=0},featureCount=13,streamingCost=62,shards={"AustinManifestIndex_001"}},',
+                        "}}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            source_json.write_text(
+                '{"schemaVersion":"0.5.0","chunks":['
+                '{"id":"-1_-1","originStuds":{"x":-256,"y":1,"z":-256}},'
+                '{"id":"0_-1","originStuds":{"x":0,"y":2,"z":-256}},'
+                '{"id":"-1_0","originStuds":{"x":-256,"y":3,"z":0}},'
+                '{"id":"0_0","originStuds":{"x":0,"y":4,"z":0},"roads":[{"id":"road_1"}]}'
+                "]}",
+                encoding="utf-8",
+            )
+
+            original_source_index = module.SOURCE_INDEX
+            original_source_json = module.SOURCE_JSON
+            original_preview_dir = module.PREVIEW_DIR
+            original_preview_index = module.PREVIEW_INDEX
+            original_preview_shards = module.PREVIEW_SHARDS
+            original_max_preview_bytes = module.MAX_PREVIEW_BYTES
+            module.SOURCE_INDEX = source_index
+            module.SOURCE_JSON = source_json
+            module.PREVIEW_DIR = preview_dir
+            module.PREVIEW_INDEX = preview_index
+            module.PREVIEW_SHARDS = preview_shards
+            module.MAX_PREVIEW_BYTES = 50_000
+            try:
+                exit_code = module.main()
+            finally:
+                module.SOURCE_INDEX = original_source_index
+                module.SOURCE_JSON = original_source_json
+                module.PREVIEW_DIR = original_preview_dir
+                module.PREVIEW_INDEX = original_preview_index
+                module.PREVIEW_SHARDS = original_preview_shards
+                module.MAX_PREVIEW_BYTES = original_max_preview_bytes
+
+            self.assertEqual(exit_code, 0)
+            written = preview_index.read_text(encoding="utf-8")
+            self.assertIn('schemaVersion = "0.5.0"', written)
+            self.assertNotIn('schemaVersion = "0.4.0"', written)
 
 
 if __name__ == "__main__":

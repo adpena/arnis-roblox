@@ -302,8 +302,11 @@ def fragment_preview_chunk(chunk: dict, max_bytes: int) -> list[dict]:
 
 def main() -> int:
     source_text = SOURCE_INDEX.read_text(encoding="utf-8")
-    schema_version, source_chunk_refs = parse_source_index(source_text)
+    _, source_chunk_refs = parse_source_index(source_text)
     source_manifest = json.loads(SOURCE_JSON.read_text(encoding="utf-8"))
+    schema_version = source_manifest.get("schemaVersion")
+    if not isinstance(schema_version, str) or not schema_version:
+        raise SystemExit(f"missing schemaVersion in {SOURCE_JSON}")
     source_chunks = {chunk["id"]: chunk for chunk in source_manifest.get("chunks", [])}
 
     preview_chunk_refs: list[tuple[str, dict[str, Any]]] = []
