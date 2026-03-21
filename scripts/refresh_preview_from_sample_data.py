@@ -28,13 +28,42 @@ MAX_PREVIEW_BYTES = 199_999
 
 TARGET_CHUNK_IDS = ["-1_-1", "0_-1", "-1_0", "0_0"]
 
-CHUNK_REF_RE = re.compile(
-    r'\{\s*id\s*=\s*"(?P<id>[^"]+)"(?P<body>[\s\S]*?)shards\s*=\s*\{(?P<shards>[\s\S]*?)\}\s*,?\s*\}',
-    re.MULTILINE,
-)
 SCHEMA_RE = re.compile(r'return \{schemaVersion="(?P<schema>[^"]+)"')
-SHARD_NAME_RE = re.compile(r'"([^"]+)"')
 NUMERIC_STRING_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+
+
+def _extract_lua_table(text: str, field_name: str) -> str | None:
+    match = re.search(rf"{re.escape(field_name)}\s*=\s*\{{", text)
+    if match is None:
+        return None
+
+    start = text.find("{", match.start())
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : index]
+    raise SystemExit(f"could not parse {field_name} table")
 
 
 def _split_top_level_items(text: str) -> list[str]:
@@ -102,14 +131,21 @@ def _parse_lua_table_value(text: str) -> list[Any] | dict[str, Any]:
     return [_parse_lua_value(item) for item in items]
 
 
-def _parse_top_level_fields(text: str) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for item in _split_top_level_items(text):
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", item):
-            continue
-        key, value = item.split("=", 1)
-        result[key.strip()] = _parse_lua_value(value)
-    return result
+def _parse_chunk_ref_entries(index_text: str) -> list[dict[str, Any]]:
+    chunk_refs_text = _extract_lua_table(index_text, "chunkRefs")
+    if chunk_refs_text is None:
+        return []
+
+    parsed_chunk_refs = _parse_lua_table_value(chunk_refs_text)
+    if not isinstance(parsed_chunk_refs, list):
+        raise SystemExit("could not parse chunkRefs from AustinManifestIndex.lua")
+
+    entries: list[dict[str, Any]] = []
+    for index, chunk_ref in enumerate(parsed_chunk_refs):
+        if not isinstance(chunk_ref, dict):
+            raise SystemExit(f"could not parse chunkRef entry at index {index}")
+        entries.append(chunk_ref)
+    return entries
 
 
 def _format_lua_value(value: Any) -> str:
@@ -134,28 +170,32 @@ def parse_source_index(source_text: str) -> tuple[str, dict[str, dict[str, Any]]
         raise SystemExit("could not parse schemaVersion from AustinManifestIndex.lua")
 
     chunk_refs: dict[str, dict[str, Any]] = {}
-    for match in CHUNK_REF_RE.finditer(source_text):
-        body = match.group("body")
-        fields = _parse_top_level_fields(body)
-        origin_studs = fields.get("originStuds")
+    for entry in _parse_chunk_ref_entries(source_text):
+        chunk_id = entry.get("id")
+        if not isinstance(chunk_id, str):
+            raise SystemExit("could not parse chunkRef id from AustinManifestIndex.lua")
+        origin_studs = entry.get("originStuds")
         if not isinstance(origin_studs, dict):
-            raise SystemExit(f'could not parse originStuds for chunk {match.group("id")}')
+            raise SystemExit(f"could not parse originStuds for chunk {chunk_id}")
         if any(axis not in origin_studs for axis in ("x", "y", "z")):
-            raise SystemExit(f'could not parse originStuds for chunk {match.group("id")}')
-        chunk_refs[match.group("id")] = {
+            raise SystemExit(f"could not parse originStuds for chunk {chunk_id}")
+        shard_names = entry.get("shards")
+        if not isinstance(shard_names, list) or not all(isinstance(shard_name, str) for shard_name in shard_names):
+            raise SystemExit(f"could not parse shards for chunk {chunk_id}")
+        chunk_refs[chunk_id] = {
             "x": origin_studs["x"],
             "y": origin_studs["y"],
             "z": origin_studs["z"],
-            "shards": SHARD_NAME_RE.findall(match.group("shards")),
+            "shards": shard_names,
         }
-        if fields.get("featureCount") is not None:
-            chunk_refs[match.group("id")]["featureCount"] = fields["featureCount"]
-        if fields.get("streamingCost") is not None:
-            chunk_refs[match.group("id")]["streamingCost"] = fields["streamingCost"]
-        if fields.get("partitionVersion") is not None:
-            chunk_refs[match.group("id")]["partitionVersion"] = fields["partitionVersion"]
-        if fields.get("subplans") is not None:
-            chunk_refs[match.group("id")]["subplans"] = fields["subplans"]
+        if entry.get("featureCount") is not None:
+            chunk_refs[chunk_id]["featureCount"] = entry["featureCount"]
+        if entry.get("streamingCost") is not None:
+            chunk_refs[chunk_id]["streamingCost"] = entry["streamingCost"]
+        if entry.get("partitionVersion") is not None:
+            chunk_refs[chunk_id]["partitionVersion"] = entry["partitionVersion"]
+        if entry.get("subplans") is not None:
+            chunk_refs[chunk_id]["subplans"] = entry["subplans"]
 
     return schema_match.group("schema"), chunk_refs
 

@@ -14,11 +14,6 @@ STALE_FACADE_PATTERN = re.compile(r"\bfacadeStyle\s*=")
 PREVIEW_SPLIT_PATTERN = "AustinPreviewManifestIndex_*_*.lua"
 CHUNK_COUNT_RE = re.compile(r"\bchunkCount\s*=\s*(\d+)")
 FRAGMENT_COUNT_RE = re.compile(r"\bfragmentCount\s*=\s*(\d+)")
-CHUNK_REF_RE = re.compile(
-    r'\{\s*id\s*=\s*"(?P<id>[^"]+)"(?P<body>[\s\S]*?)shards\s*=\s*\{(?P<shards>[\s\S]*?)\}\s*,?\s*\}',
-    re.MULTILINE,
-)
-SHARD_NAME_RE = re.compile(r"\"([^\"]+)\"")
 NUMERIC_STRING_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 INTEGER_STRING_RE = re.compile(r"^-?\d+$")
 
@@ -122,14 +117,21 @@ def _parse_lua_table_value(text: str) -> list[Any] | dict[str, Any]:
     return [_parse_lua_value(item) for item in items]
 
 
-def _parse_top_level_fields(text: str) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for item in _split_top_level_items(text):
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", item):
-            continue
-        key, value = item.split("=", 1)
-        result[key.strip()] = _parse_lua_value(value)
-    return result
+def _parse_index_chunk_ref_entries(index_text: str) -> list[dict[str, Any]]:
+    chunk_refs_text = _extract_lua_table(index_text, "chunkRefs")
+    if chunk_refs_text is None:
+        return []
+
+    parsed_chunk_refs = _parse_lua_table_value(chunk_refs_text)
+    if not isinstance(parsed_chunk_refs, list):
+        raise SystemExit("could not parse chunkRefs table")
+
+    entries: list[dict[str, Any]] = []
+    for index, chunk_ref in enumerate(parsed_chunk_refs):
+        if not isinstance(chunk_ref, dict):
+            raise SystemExit(f"could not parse chunkRef entry at index {index}")
+        entries.append(chunk_ref)
+    return entries
 
 
 def runtime_shard_dir(root: Path) -> Path:
@@ -163,9 +165,13 @@ def _find_stale_fields(shard_paths: list[Path]) -> list[str]:
 
 def _parse_preview_chunk_refs(index_text: str) -> dict[str, list[str]]:
     chunk_refs: dict[str, list[str]] = {}
-    for match in CHUNK_REF_RE.finditer(index_text):
-        chunk_id = match.group("id")
-        shard_names = SHARD_NAME_RE.findall(match.group("shards"))
+    for chunk_ref in _parse_index_chunk_ref_entries(index_text):
+        chunk_id = chunk_ref.get("id")
+        shard_names = chunk_ref.get("shards")
+        if not isinstance(chunk_id, str):
+            continue
+        if not isinstance(shard_names, list) or not all(isinstance(shard_name, str) for shard_name in shard_names):
+            continue
         chunk_refs[chunk_id] = shard_names
     return chunk_refs
 
@@ -182,19 +188,19 @@ def _is_integer_scalar(value: Any) -> bool:
     return isinstance(value, str) and INTEGER_STRING_RE.match(value) is not None
 
 
-def _validate_chunk_scheduling_metadata(chunk_id: str, body: str, *, label: str) -> list[str]:
+def _validate_chunk_scheduling_metadata(chunk_ref: dict[str, Any], *, label: str) -> list[str]:
     errors: list[str] = []
-    fields = _parse_top_level_fields(body)
-    has_subplans = fields.get("subplans") is not None
+    chunk_id = chunk_ref.get("id", "<unknown>")
+    has_subplans = chunk_ref.get("subplans") is not None
 
-    feature_count = fields.get("featureCount")
+    feature_count = chunk_ref.get("featureCount")
     if feature_count is None:
         if not has_subplans:
             errors.append(f"{label} chunk {chunk_id} is missing featureCount")
     elif not _is_integer_scalar(feature_count):
         errors.append(f"{label} chunk {chunk_id} has malformed featureCount")
 
-    streaming_cost = fields.get("streamingCost")
+    streaming_cost = chunk_ref.get("streamingCost")
     if streaming_cost is None:
         if not has_subplans:
             errors.append(f"{label} chunk {chunk_id} is missing streamingCost")
@@ -204,16 +210,16 @@ def _validate_chunk_scheduling_metadata(chunk_id: str, body: str, *, label: str)
     return errors
 
 
-def _validate_chunk_subplans(chunk_id: str, body: str) -> list[str]:
+def _validate_chunk_subplans(chunk_ref: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    subplans_text = _extract_lua_table(body, "subplans")
-    if subplans_text is None:
+    chunk_id = chunk_ref.get("id", "<unknown>")
+    parsed_subplans = chunk_ref.get("subplans")
+    if parsed_subplans is None:
         return errors
 
-    if re.search(r'partitionVersion\s*=\s*"[^"]+"', body) is None:
+    if not _is_string_scalar(chunk_ref.get("partitionVersion")):
         errors.append(f"chunk {chunk_id} has subplans but is missing partitionVersion")
 
-    parsed_subplans = _parse_lua_table_value(subplans_text)
     if not isinstance(parsed_subplans, list):
         errors.append(f"chunk {chunk_id} has malformed subplans table")
         return errors
@@ -272,10 +278,11 @@ def collect_errors(root: Path) -> list[str]:
     runtime_index = runtime_index_path(root)
     if runtime_index.exists() and sample_shards:
         runtime_index_text = runtime_index.read_text(encoding="utf-8")
+        runtime_chunk_ref_entries = _parse_index_chunk_ref_entries(runtime_index_text)
         runtime_chunk_refs = _parse_preview_chunk_refs(runtime_index_text)
-        for match in CHUNK_REF_RE.finditer(runtime_index_text):
-            errors.extend(_validate_chunk_scheduling_metadata(match.group("id"), match.group("body"), label="runtime"))
-            errors.extend(_validate_chunk_subplans(match.group("id"), match.group("body")))
+        for chunk_ref in runtime_chunk_ref_entries:
+            errors.extend(_validate_chunk_scheduling_metadata(chunk_ref, label="runtime"))
+            errors.extend(_validate_chunk_subplans(chunk_ref))
         referenced_runtime_shards = sorted(
             {shard_name for shard_names in runtime_chunk_refs.values() for shard_name in shard_names}
         )
@@ -323,14 +330,15 @@ def collect_errors(root: Path) -> list[str]:
         return errors
 
     index_text = index_path.read_text(encoding="utf-8")
+    preview_chunk_ref_entries = _parse_index_chunk_ref_entries(index_text)
     chunk_refs = _parse_preview_chunk_refs(index_text)
     if not chunk_refs:
         errors.append("preview index does not contain any chunk refs")
         return errors
 
-    for match in CHUNK_REF_RE.finditer(index_text):
-        errors.extend(_validate_chunk_scheduling_metadata(match.group("id"), match.group("body"), label="preview"))
-        errors.extend(_validate_chunk_subplans(match.group("id"), match.group("body")))
+    for chunk_ref in preview_chunk_ref_entries:
+        errors.extend(_validate_chunk_scheduling_metadata(chunk_ref, label="preview"))
+        errors.extend(_validate_chunk_subplans(chunk_ref))
 
     chunk_ids = set(chunk_refs)
     if chunk_ids != EXPECTED_PREVIEW_CHUNK_IDS:

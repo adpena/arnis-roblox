@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -9,6 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "refresh_preview_from_sample_data.py"
+GENERATOR_SCRIPT = ROOT / "scripts" / "json_manifest_to_sharded_lua.py"
 
 
 def load_module():
@@ -97,6 +100,83 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
         self.assertEqual(chunk_refs["0_0"]["streamingCost"], "62")
         self.assertEqual(chunk_refs["0_0"]["subplans"][0]["featureCount"], "1")
         self.assertEqual(chunk_refs["0_0"]["subplans"][0]["streamingCost"], "40.0")
+
+    def test_parse_source_index_accepts_generator_emitted_chunk_refs(self) -> None:
+        module = load_module()
+        manifest = {
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "PreviewParseIntegrationTest",
+                "generator": "test",
+                "source": "test",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256,
+                "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
+            },
+            "chunkRefs": [
+                {
+                    "id": "0_0",
+                    "partitionVersion": "subplans.v1",
+                    "subplans": [
+                        {
+                            "id": "terrain",
+                            "layer": "terrain",
+                            "featureCount": 1,
+                            "streamingCost": 40.0,
+                        }
+                    ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 1, "z": 2},
+                    "roads": [{}],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            manifest_path = temp_root / "manifest.json"
+            out_dir = temp_root / "out"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(GENERATOR_SCRIPT),
+                    "--json",
+                    str(manifest_path),
+                    "--output-dir",
+                    str(out_dir),
+                    "--index-name",
+                    "TestManifestIndex",
+                    "--shard-folder",
+                    "TestManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            schema, chunk_refs = module.parse_source_index(
+                (out_dir / "TestManifestIndex.lua").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(schema, "0.4.0")
+        self.assertEqual(chunk_refs["0_0"]["shards"], ["TestManifestIndex_001"])
+        self.assertEqual(chunk_refs["0_0"]["partitionVersion"], "subplans.v1")
+        self.assertEqual(
+            chunk_refs["0_0"]["subplans"],
+            [
+                {
+                    "id": "terrain",
+                    "layer": "terrain",
+                    "featureCount": "1",
+                    "streamingCost": "40.0",
+                }
+            ],
+        )
 
     def test_write_preview_index_emits_streaming_metadata(self) -> None:
         module = load_module()

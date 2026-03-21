@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import tempfile
 from pathlib import Path
 import unittest
@@ -8,6 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "verify_generated_austin_assets.py"
+GENERATOR_SCRIPT = ROOT / "scripts" / "json_manifest_to_sharded_lua.py"
 
 
 def load_module():
@@ -77,6 +80,97 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                 any("partitionVersion" in error for error in errors),
                 f"expected missing partitionVersion error, got {errors}",
             )
+
+    def test_collect_errors_accepts_generator_emitted_runtime_chunk_refs_with_subplans(self) -> None:
+        verifier = load_module()
+        manifest = {
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "VerifierIntegrationTest",
+                "generator": "test",
+                "source": "test",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256,
+                "bbox": {"minLat": 0, "minLon": 0, "maxLat": 1, "maxLon": 1},
+            },
+            "chunkRefs": [
+                {
+                    "id": "0_0",
+                    "partitionVersion": "subplans.v1",
+                    "subplans": [
+                        {
+                            "id": "terrain",
+                            "layer": "terrain",
+                            "featureCount": 1,
+                            "streamingCost": 40.0,
+                        }
+                    ],
+                }
+            ],
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": {"x": 0, "y": 0, "z": 0},
+                    "roads": [{}],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_output_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+            manifest_path = root / "manifest.json"
+
+            runtime_output_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(GENERATOR_SCRIPT),
+                    "--json",
+                    str(manifest_path),
+                    "--output-dir",
+                    str(runtime_output_dir),
+                    "--index-name",
+                    "AustinManifestIndex",
+                    "--shard-folder",
+                    "AustinManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 10, streamingCost = 20, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 9, streamingCost = 18, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertEqual(errors, [], f"expected generator-emitted runtime chunkRefs to verify cleanly, got {errors}")
 
     def test_collect_errors_rejects_malformed_subplan_tables(self) -> None:
         verifier = load_module()
