@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
+use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
@@ -9,6 +9,7 @@ use crate::manifest::{
     PropInstance, RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
+use crate::subplans::derive_chunk_ref;
 
 pub fn world_to_chunk(position: Vec3, chunk_size_studs: i32) -> ChunkId {
     let size = chunk_size_studs as f64;
@@ -627,11 +628,13 @@ impl Chunker {
         }
 
         chunks.sort_by_key(|c| (c.id.z, c.id.x));
+        let chunk_refs = chunks.iter().map(derive_chunk_ref).collect();
 
         ChunkManifest {
             schema_version: "0.4.0".to_string(),
             meta,
             chunks,
+            chunk_refs,
         }
     }
 }

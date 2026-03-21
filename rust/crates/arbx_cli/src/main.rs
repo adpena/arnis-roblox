@@ -401,8 +401,9 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         &config,
         elevation.as_ref(),
         sat_provider.as_mut(),
-    )
-    .to_json_pretty();
+    );
+    // Rust export remains the single authoritative partition function for additive chunkRefs metadata.
+    let manifest = manifest.to_json_pretty();
     let duration = start.elapsed();
 
     if let Some(path) = out_path {

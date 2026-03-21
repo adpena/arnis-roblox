@@ -1,6 +1,7 @@
 pub mod chunker;
 pub mod manifest;
 pub mod materials;
+pub mod subplans;
 
 use arbx_geo::{BoundingBox, ChunkId, ElevationProvider, LatLon, PerlinElevationProvider, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
@@ -12,6 +13,7 @@ pub use manifest::{
     ManifestMeta, PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
 };
 pub use arbx_geo::satellite::SatelliteTileProvider;
+pub use subplans::{ChunkRef, ChunkSubplan, SubplanBounds, PARTITION_VERSION};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportConfig {
