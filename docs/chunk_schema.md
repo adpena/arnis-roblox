@@ -51,7 +51,7 @@ This keeps chunk moves, reloads, and local editing much cleaner.
 - Canonical scale: `metersPerStud = 0.3` (1 stud ≈ 0.3m, matching Roblox humanoid proportions).
 - Rust exporter is the single elevation authority — all Y positions are authoritative from DEM sampling.
 - Terrain resolution configurable: default `cellSizeStuds = 2` (128x128 grid, 16,384 cells), configurable 1-32 via CLI `--terrain-cell-size`. Voxel size configurable via WorldConfig (default 1).
-- New road fields: `elevated` (bool), `tunnel` (bool), `sidewalk` (string), `subkind` (string).
+- New road fields: `elevated` (bool), `tunnel` (bool), `sidewalk` (string).
 - Building `color` renamed to `wallColor`; new fields: `roofColor`, `roofShape`, `roofMaterial`, `usage`, `minHeight`.
 - New water field: `surfaceY` (authoritative surface elevation for polygon water).
 - New prop fields: `height`, `leafType`.
@@ -146,10 +146,8 @@ This is intentionally basic so the contract stabilizes before the representation
 
 ### Roads, rails, water, and barriers
 
-Polyline-based ribbons with width and points. `widthStuds` is the canonical rendered ribbon width emitted by
-the Rust pipeline; Luau consumers should use it directly instead of re-deriving width from `lanes`. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
-`tunnel`, `sidewalk` (both/left/right/no/separate), and `subkind` (OSM subtype such as `sidewalk`, `crossing`,
-or other path-specific detail) flags. Additional optional OSM-derived road fields:
+Polyline-based ribbons with width and points. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
+`tunnel`, and `sidewalk` (both/left/right/no) flags. Additional optional OSM-derived road fields:
 `maxspeed` (integer km/h speed limit), `lit` (boolean street lighting), `oneway` (boolean direction
 constraint), and `layer` (integer vertical stacking level for overpasses/underpasses). Water polygons
 carry `holes` for islands/cutouts, `surfaceY` for authoritative surface elevation, `width` (real-world

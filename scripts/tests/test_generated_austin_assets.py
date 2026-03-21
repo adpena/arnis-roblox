@@ -116,6 +116,71 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                 f"expected malformed subplan error, got {errors}",
             )
 
+    def test_collect_errors_rejects_malformed_runtime_subplan_tables(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, partitionVersion = "subplans.v1", subplans = { "not-a-table" }, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("malformed subplan" in error for error in errors),
+                f"expected runtime malformed subplan error, got {errors}",
+            )
+
     def test_collect_errors_reports_missing_chunk_scheduling_metadata(self) -> None:
         verifier = load_module()
 

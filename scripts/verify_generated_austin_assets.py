@@ -216,6 +216,8 @@ def collect_errors(root: Path) -> list[str]:
         if FEATURE_COUNT_RE.search(runtime_index_text) is None or STREAMING_COST_RE.search(runtime_index_text) is None:
             errors.append("runtime index is missing chunk scheduling metadata")
         runtime_chunk_refs = _parse_preview_chunk_refs(runtime_index_text)
+        for match in CHUNK_REF_RE.finditer(runtime_index_text):
+            errors.extend(_validate_chunk_subplans(match.group("id"), match.group("body")))
         referenced_runtime_shards = sorted(
             {shard_name for shard_names in runtime_chunk_refs.values() for shard_name in shard_names}
         )

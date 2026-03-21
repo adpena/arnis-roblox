@@ -176,13 +176,24 @@ def chunk_streaming_cost(chunk: dict[str, Any]) -> int:
 
 
 def chunk_ref_metadata(chunk: dict[str, Any]) -> dict[str, Any]:
+    has_subplans = chunk.get("subplans") is not None
     chunk_ref = {
         "id": chunk["id"],
         "originStuds": chunk.get("originStuds", {"x": 0, "y": 0, "z": 0}),
-        "featureCount": chunk.get("featureCount", chunk_feature_count(chunk)),
-        "streamingCost": chunk.get("streamingCost", chunk_streaming_cost(chunk)),
         "shards": [],
     }
+    feature_count = chunk.get("featureCount")
+    if feature_count is None and not has_subplans:
+        feature_count = chunk_feature_count(chunk)
+    if feature_count is not None:
+        chunk_ref["featureCount"] = feature_count
+
+    streaming_cost = chunk.get("streamingCost")
+    if streaming_cost is None and not has_subplans:
+        streaming_cost = chunk_streaming_cost(chunk)
+    if streaming_cost is not None:
+        chunk_ref["streamingCost"] = streaming_cost
+
     if chunk.get("partitionVersion") is not None:
         chunk_ref["partitionVersion"] = chunk["partitionVersion"]
     if chunk.get("subplans") is not None:
