@@ -1,0 +1,16 @@
+title = "arnis-roblox"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "GitHub Actions secret placeholders"
+regexes = [
+  '''\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}''',
+]
+
+[[allowlists]]
+description = "Sample docs and generated architecture notes may mention token prefixes as examples"
+paths = [
+  '''^docs/superpowers/''',
+]

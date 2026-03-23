@@ -3,27 +3,27 @@ local AmbientLife = {}
 local CollectionService = game:GetService("CollectionService")
 
 -- Car colors (deterministic from position)
-local CAR_COLORS = {
-    Color3.fromRGB(30, 30, 35),     -- black
-    Color3.fromRGB(200, 200, 205),   -- silver
-    Color3.fromRGB(240, 240, 240),   -- white
-    Color3.fromRGB(50, 60, 100),     -- dark blue
-    Color3.fromRGB(140, 25, 25),     -- dark red
-    Color3.fromRGB(60, 80, 60),      -- forest green
-    Color3.fromRGB(120, 100, 70),    -- tan
-    Color3.fromRGB(80, 80, 85),      -- dark grey
-}
+local CAR_COLORS = table.freeze({
+    Color3.fromRGB(30, 30, 35), -- black
+    Color3.fromRGB(200, 200, 205), -- silver
+    Color3.fromRGB(240, 240, 240), -- white
+    Color3.fromRGB(50, 60, 100), -- dark blue
+    Color3.fromRGB(140, 25, 25), -- dark red
+    Color3.fromRGB(60, 80, 60), -- forest green
+    Color3.fromRGB(120, 100, 70), -- tan
+    Color3.fromRGB(80, 80, 85), -- dark grey
+})
 
 local NPC_COUNT_PER_CHUNK = 8 -- keep it light
 
-local NPC_SHIRT_COLORS = {
+local NPC_SHIRT_COLORS = table.freeze({
     Color3.fromRGB(60, 80, 140),
     Color3.fromRGB(180, 50, 50),
     Color3.fromRGB(50, 120, 60),
     Color3.fromRGB(200, 180, 100),
     Color3.fromRGB(100, 100, 110),
     Color3.fromRGB(80, 60, 120),
-}
+})
 
 local function hashPosition(x, z)
     return math.floor(math.abs(x * 7.3 + z * 13.7)) % 1000
@@ -90,15 +90,22 @@ local function createParkedCar(parent, position, direction, color)
 end
 
 function AmbientLife.PlaceParkedCars(parent, roads, originStuds)
-    if not roads then return end
+    if not roads then
+        return
+    end
     local ox, oy, oz = originStuds.x, originStuds.y, originStuds.z
-    local parkingKinds = { residential = true, secondary = true, tertiary = true, unclassified = true }
+    local parkingKinds =
+        { residential = true, secondary = true, tertiary = true, unclassified = true }
     local carCount = 0
     local MAX_CARS_PER_CHUNK = 30
 
     for _, road in ipairs(roads) do
-        if not parkingKinds[road.kind] then continue end
-        if not road.points or #road.points < 2 then continue end
+        if not parkingKinds[road.kind] then
+            continue
+        end
+        if not road.points or #road.points < 2 then
+            continue
+        end
 
         local halfWidth = (road.widthStuds or 10) * 0.5
 
@@ -110,16 +117,22 @@ function AmbientLife.PlaceParkedCars(parent, roads, originStuds)
 
             local dir = (wx2 - wx1)
             local segLen = dir.Magnitude
-            if segLen < 25 then continue end
+            if segLen < 25 then
+                continue
+            end
             dir = dir.Unit
             local perp = Vector3.new(-dir.Z, 0, dir.X)
 
             -- Place cars every ~25 studs, deterministic
             for dist = 15, segLen - 15, 25 do
-                if carCount >= MAX_CARS_PER_CHUNK then return end
+                if carCount >= MAX_CARS_PER_CHUNK then
+                    return
+                end
 
                 local hash = hashPosition(wx1.X + dist, wx1.Z + dist)
-                if hash % 3 ~= 0 then continue end -- only 1/3 of spots filled
+                if hash % 3 ~= 0 then
+                    continue
+                end -- only 1/3 of spots filled
 
                 local pos = wx1 + dir * dist + perp * (halfWidth + 4) -- parked alongside
                 local surfaceY = (wx1.Y + wx2.Y) * 0.5
@@ -134,14 +147,22 @@ function AmbientLife.PlaceParkedCars(parent, roads, originStuds)
 end
 
 function AmbientLife.SpawnNPCs(parent, roads, originStuds)
-    if not roads then return end
+    if not roads then
+        return
+    end
     local ox, oy, oz = originStuds.x, originStuds.y, originStuds.z
     local npcCount = 0
 
     for _, road in ipairs(roads) do
-        if npcCount >= NPC_COUNT_PER_CHUNK then return end
-        if not road.hasSidewalk and road.sidewalk == "no" then continue end
-        if not road.points or #road.points < 2 then continue end
+        if npcCount >= NPC_COUNT_PER_CHUNK then
+            return
+        end
+        if not road.hasSidewalk and road.sidewalk == "no" then
+            continue
+        end
+        if not road.points or #road.points < 2 then
+            continue
+        end
 
         local halfWidth = (road.widthStuds or 10) * 0.5
 

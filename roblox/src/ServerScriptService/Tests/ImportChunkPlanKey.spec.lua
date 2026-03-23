@@ -74,7 +74,11 @@ return function()
 
     ImportService.ImportManifest(manifest, options)
     local secondEntry = ChunkLoader.GetChunkEntry("plan_chunk")
-    Assert.equal(secondEntry.planKey, firstEntry.planKey, "expected repeated import to preserve deterministic plan key")
+    Assert.equal(
+        secondEntry.planKey,
+        firstEntry.planKey,
+        "expected repeated import to preserve deterministic plan key"
+    )
 
     ChunkLoader.Clear()
     local worldRoot = game:GetService("Workspace"):FindFirstChild("GeneratedWorld_PlanKey")

@@ -40,6 +40,13 @@ impl Default for StyleMapper {
                 color: "#0064c8".to_string(),
             },
         );
+        terrain.insert(
+            "swimming_pool".to_string(),
+            StyleEntry {
+                material: "Water".to_string(),
+                color: "#3aa7d8".to_string(),
+            },
+        );
 
         let mut roads = HashMap::new();
         roads.insert(
@@ -84,6 +91,209 @@ impl Default for StyleMapper {
             StyleEntry {
                 material: "Concrete".to_string(),
                 color: "#ccaa88".to_string(),
+            },
+        );
+        buildings.insert(
+            "house".to_string(),
+            StyleEntry {
+                material: "WoodPlanks".to_string(),
+                color: "#c29a73".to_string(),
+            },
+        );
+        buildings.insert(
+            "detached".to_string(),
+            StyleEntry {
+                material: "WoodPlanks".to_string(),
+                color: "#c29a73".to_string(),
+            },
+        );
+        buildings.insert(
+            "apartments".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#c8a188".to_string(),
+            },
+        );
+        buildings.insert(
+            "terrace".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#b0674f".to_string(),
+            },
+        );
+        buildings.insert(
+            "dormitory".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#b57f64".to_string(),
+            },
+        );
+        buildings.insert(
+            "commercial".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#c9c4bc".to_string(),
+            },
+        );
+        buildings.insert(
+            "retail".to_string(),
+            StyleEntry {
+                material: "SmoothPlastic".to_string(),
+                color: "#d8d2c8".to_string(),
+            },
+        );
+        buildings.insert(
+            "restaurant".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#c58a68".to_string(),
+            },
+        );
+        buildings.insert(
+            "office".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#c6c1b8".to_string(),
+            },
+        );
+        buildings.insert(
+            "bank".to_string(),
+            StyleEntry {
+                material: "Marble".to_string(),
+                color: "#ddd8d0".to_string(),
+            },
+        );
+        buildings.insert(
+            "hotel".to_string(),
+            StyleEntry {
+                material: "Marble".to_string(),
+                color: "#d7cfbf".to_string(),
+            },
+        );
+        buildings.insert(
+            "supermarket".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#c7c0b7".to_string(),
+            },
+        );
+        buildings.insert(
+            "hospital".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#d9dedf".to_string(),
+            },
+        );
+        buildings.insert(
+            "school".to_string(),
+            StyleEntry {
+                material: "Brick".to_string(),
+                color: "#b67d63".to_string(),
+            },
+        );
+        buildings.insert(
+            "university".to_string(),
+            StyleEntry {
+                material: "Limestone".to_string(),
+                color: "#ddd3c0".to_string(),
+            },
+        );
+        buildings.insert(
+            "civic".to_string(),
+            StyleEntry {
+                material: "Limestone".to_string(),
+                color: "#d7d0c4".to_string(),
+            },
+        );
+        buildings.insert(
+            "government".to_string(),
+            StyleEntry {
+                material: "Limestone".to_string(),
+                color: "#d8d1c4".to_string(),
+            },
+        );
+        buildings.insert(
+            "courthouse".to_string(),
+            StyleEntry {
+                material: "Marble".to_string(),
+                color: "#e0d9d0".to_string(),
+            },
+        );
+        buildings.insert(
+            "warehouse".to_string(),
+            StyleEntry {
+                material: "Metal".to_string(),
+                color: "#90969a".to_string(),
+            },
+        );
+        buildings.insert(
+            "factory".to_string(),
+            StyleEntry {
+                material: "Metal".to_string(),
+                color: "#858b8f".to_string(),
+            },
+        );
+        buildings.insert(
+            "parking".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#bdb8b0".to_string(),
+            },
+        );
+        buildings.insert(
+            "garage".to_string(),
+            StyleEntry {
+                material: "Metal".to_string(),
+                color: "#8e8b84".to_string(),
+            },
+        );
+        buildings.insert(
+            "shed".to_string(),
+            StyleEntry {
+                material: "WoodPlanks".to_string(),
+                color: "#9c7956".to_string(),
+            },
+        );
+        buildings.insert(
+            "religious".to_string(),
+            StyleEntry {
+                material: "Limestone".to_string(),
+                color: "#d8cfbf".to_string(),
+            },
+        );
+        buildings.insert(
+            "church".to_string(),
+            StyleEntry {
+                material: "Cobblestone".to_string(),
+                color: "#9c9387".to_string(),
+            },
+        );
+        buildings.insert(
+            "cathedral".to_string(),
+            StyleEntry {
+                material: "Cobblestone".to_string(),
+                color: "#999087".to_string(),
+            },
+        );
+        buildings.insert(
+            "mosque".to_string(),
+            StyleEntry {
+                material: "Marble".to_string(),
+                color: "#ddd6cb".to_string(),
+            },
+        );
+        buildings.insert(
+            "temple".to_string(),
+            StyleEntry {
+                material: "Sandstone".to_string(),
+                color: "#d2ba8d".to_string(),
+            },
+        );
+        buildings.insert(
+            "building".to_string(),
+            StyleEntry {
+                material: "Concrete".to_string(),
+                color: "#bdb8b0".to_string(),
             },
         );
 
@@ -136,7 +346,7 @@ impl StyleMapper {
     fn get_entry<'a>(map: &'a HashMap<String, StyleEntry>, key: &str) -> &'a StyleEntry {
         map.get(key)
             .or_else(|| map.get("default"))
-            .unwrap_or_else(|| &map.values().next().expect("empty style map"))
+            .unwrap_or_else(|| map.values().next().expect("empty style map"))
     }
 
     pub fn get_terrain_material(&self, tag: &str) -> String {

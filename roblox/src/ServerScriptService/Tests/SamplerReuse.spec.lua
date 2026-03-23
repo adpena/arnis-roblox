@@ -15,12 +15,12 @@ return function()
 
     local ok, err = pcall(function()
         local manifest = {
-            schemaVersion = "0.2.0",
+            schemaVersion = "0.4.0",
             meta = {
                 worldName = "SamplerReuse",
                 generator = "test",
                 source = "unit",
-                metersPerStud = 1.0,
+                metersPerStud = 0.3,
                 chunkSizeStuds = 256,
                 totalFeatures = 1,
             },
@@ -40,7 +40,12 @@ return function()
                     buildings = {
                         {
                             id = "b1",
-                            footprint = { { x = 0, z = 0 }, { x = 16, z = 0 }, { x = 16, z = 16 }, { x = 0, z = 16 } },
+                            footprint = {
+                                { x = 0, z = 0 },
+                                { x = 16, z = 0 },
+                                { x = 16, z = 16 },
+                                { x = 0, z = 16 },
+                            },
                             baseY = 0,
                             height = 12,
                             roof = "flat",
@@ -48,7 +53,12 @@ return function()
                         },
                         {
                             id = "b2",
-                            footprint = { { x = 24, z = 0 }, { x = 40, z = 0 }, { x = 40, z = 16 }, { x = 24, z = 16 } },
+                            footprint = {
+                                { x = 24, z = 0 },
+                                { x = 40, z = 0 },
+                                { x = 40, z = 16 },
+                                { x = 24, z = 16 },
+                            },
                             baseY = 0,
                             height = 12,
                             roof = "flat",
@@ -60,7 +70,12 @@ return function()
                             id = "w1",
                             kind = "pond",
                             material = "Water",
-                            footprint = { { x = 0, z = 24 }, { x = 16, z = 24 }, { x = 16, z = 40 }, { x = 0, z = 40 } },
+                            footprint = {
+                                { x = 0, z = 24 },
+                                { x = 16, z = 24 },
+                                { x = 16, z = 40 },
+                                { x = 0, z = 40 },
+                            },
                             holes = {},
                         },
                         {
@@ -88,7 +103,11 @@ return function()
         directParent.Name = "DirectWaterSamplerReuse"
         directParent.Parent = Workspace
         WaterBuilder.BuildAll(directParent, chunk.water, chunk.originStuds, chunk)
-        Assert.equal(samplerCalls, 1, "expected direct WaterBuilder.BuildAll to reuse one sampler for the layer")
+        Assert.equal(
+            samplerCalls,
+            1,
+            "expected direct WaterBuilder.BuildAll to reuse one sampler for the layer"
+        )
         directParent:Destroy()
 
         ImportService.ImportManifest(manifest, {
@@ -105,8 +124,8 @@ return function()
 
         Assert.equal(
             samplerCalls,
-            3,
-            "expected one sampler for direct water build and one per imported buildings/water layer"
+            1,
+            "expected direct and imported water builds for the same chunk to reuse the same rendered-surface sampler"
         )
 
         local worldRoot = Workspace:FindFirstChild("GeneratedWorld_SamplerReuse")

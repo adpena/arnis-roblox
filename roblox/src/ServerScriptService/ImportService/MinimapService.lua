@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local AssetService = game:GetService("AssetService")
+local EditableImageCompat = require(script.Parent.EditableImageCompat)
 
 local MinimapService = {}
 
@@ -14,11 +15,11 @@ local MAP_FULLSCREEN_SIZE = 600 -- pixel size on screen (fullscreen mode)
 local MAP_RADIUS = 400 -- world studs visible in minimap radius (small)
 local MAP_RADIUS_FULL = 1600 -- world studs visible (fullscreen)
 local UPDATE_INTERVAL = 0.2 -- seconds between minimap updates
-local BORDER_WIDTH = 2  -- tighter border for more map area
+local BORDER_WIDTH = 2 -- tighter border for more map area
 local isFullscreen = false
 
 -- Colors (RGBA bytes)
-local COLORS = {
+local COLORS = table.freeze({
     background = { 30, 35, 45, 255 }, -- dark blue-grey
     road = { 255, 255, 255, 255 }, -- white roads (Google Maps style)
     road_minor = { 220, 220, 220, 255 }, -- lighter for minor roads
@@ -30,7 +31,7 @@ local COLORS = {
     player = { 65, 130, 240, 255 }, -- bright blue dot
     player_dir = { 65, 130, 240, 200 }, -- direction indicator
     border = { 50, 55, 65, 255 }, -- border color
-}
+})
 
 -- State
 local chunks = {} -- stored chunk data for rendering
@@ -164,7 +165,13 @@ local function renderMap(camX, camZ, camYaw)
                 end
                 local px1, py1 = worldToPixel(minX, minZ, camX, camZ, camYaw)
                 local px2, py2 = worldToPixel(maxX, maxZ, camX, camZ, camYaw)
-                drawRect(math.min(px1, px2), math.min(py1, py2), math.max(px1, px2), math.max(py1, py2), color)
+                drawRect(
+                    math.min(px1, px2),
+                    math.min(py1, py2),
+                    math.max(px1, px2),
+                    math.max(py1, py2),
+                    color
+                )
             end
         end
 
@@ -181,14 +188,23 @@ local function renderMap(camX, camZ, camYaw)
                 end
                 local px1, py1 = worldToPixel(minX, minZ, camX, camZ, camYaw)
                 local px2, py2 = worldToPixel(maxX, maxZ, camX, camZ, camYaw)
-                drawRect(math.min(px1, px2), math.min(py1, py2), math.max(px1, px2), math.max(py1, py2), COLORS.water)
+                drawRect(
+                    math.min(px1, px2),
+                    math.min(py1, py2),
+                    math.max(px1, px2),
+                    math.max(py1, py2),
+                    COLORS.water
+                )
             elseif water.points then
                 for i = 1, #water.points - 1 do
                     local p1 = water.points[i]
                     local p2 = water.points[i + 1]
                     local px1, py1 = worldToPixel(p1.x + ox, p1.z + oz, camX, camZ, camYaw)
                     local px2, py2 = worldToPixel(p2.x + ox, p2.z + oz, camX, camZ, camYaw)
-                    local widthPx = math.max(2, math.floor((water.widthStuds or 8) * MAP_SIZE / (activeRadius * 2)))
+                    local widthPx = math.max(
+                        2,
+                        math.floor((water.widthStuds or 8) * MAP_SIZE / (activeRadius * 2))
+                    )
                     drawLine(px1, py1, px2, py2, COLORS.water, widthPx)
                 end
             end
@@ -220,11 +236,15 @@ local function renderMap(camX, camZ, camYaw)
         -- Render roads (on top of everything else)
         for _, road in ipairs(chunk.roads or {}) do
             local color = COLORS.road
-            local majorKinds = { primary = true, secondary = true, tertiary = true, trunk = true, motorway = true }
+            local majorKinds =
+                { primary = true, secondary = true, tertiary = true, trunk = true, motorway = true }
             if not majorKinds[road.kind] then
                 color = COLORS.road_minor
             end
-            local widthPx = math.max(1, math.floor((road.widthStuds or 10) * MAP_SIZE / (activeRadius * 2) * 0.5))
+            local widthPx = math.max(
+                1,
+                math.floor((road.widthStuds or 10) * MAP_SIZE / (activeRadius * 2) * 0.5)
+            )
             widthPx = math.min(widthPx, 4) -- cap line thickness
 
             for i = 1, #road.points - 1 do
@@ -318,7 +338,7 @@ function MinimapService.CreateGui(player)
     label.TextSize = 11
     label.Font = Enum.Font.GothamBold
     label.Parent = frame
-    mapLabel = label  -- store for compass heading updates
+    mapLabel = label -- store for compass heading updates
 
     screenGui.Parent = player.PlayerGui
 
@@ -407,7 +427,12 @@ function MinimapService.Start()
         renderMap(camPos.X, camPos.Z, camYaw)
 
         -- Write to EditableImage
-        editableImage:WritePixels(Vector2.zero, Vector2.new(MAP_SIZE, MAP_SIZE), pixelBuffer)
+        EditableImageCompat.WritePixels(
+            editableImage,
+            Vector2.zero,
+            Vector2.new(MAP_SIZE, MAP_SIZE),
+            pixelBuffer
+        )
 
         -- Update compass heading on label (when not fullscreen)
         if not isFullscreen and mapLabel then

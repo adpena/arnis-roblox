@@ -21,6 +21,17 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install repo audit tools
+        run: bash scripts/install_repo_audit_tools.sh
+
+      - name: Export local audit tools to PATH
+        run: echo "${{ github.workspace }}/.tools/bin" >> "$GITHUB_PATH"
+
       - name: Run scaffold checks
         run: python scripts/run_all_checks.py
 
@@ -36,16 +47,16 @@ jobs:
           toolchain: stable
 
       - name: Run Rust tests
-        run: cargo test --manifest-path rust/Cargo.toml --all-features
+        run: cargo test --locked --manifest-path rust/Cargo.toml --all-features
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 
       - name: Run Rust lints
-        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Build documentation
-        run: cargo doc --manifest-path rust/Cargo.toml --no-deps --all-features
+        run: cargo doc --locked --manifest-path rust/Cargo.toml --no-deps --all-features
 
       - name: Upload documentation
         uses: actions/upload-artifact@v4
@@ -59,6 +70,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
       - name: Install selene
         run: |
           curl -L https://github.com/Kampfkarren/selene/releases/latest/download/selene-linux-x86_64.tar.gz | tar xz
@@ -66,7 +82,7 @@ jobs:
           sudo mv selene /usr/local/bin/
 
       - name: Run selene lint
-        run: selene roblox/src
+        run: selene --config roblox/selene.toml roblox/src
 
   build-sample:
     name: Build Sample Manifest
@@ -80,7 +96,21 @@ jobs:
           toolchain: stable
 
       - name: Build sample manifest
-        run: cargo run --manifest-path rust/Cargo.toml -p arbx_cli -- sample --grid 2,2 --out /tmp/sample-manifest.json
+        run: cargo run --locked --manifest-path rust/Cargo.toml -p arbx_cli -- sample --grid 2,2 --out /tmp/sample-manifest.json
 
       - name: Validate sample manifest
-        run: cargo run --manifest-path rust/Cargo.toml -p arbx_cli -- validate /tmp/sample-manifest.json
+        run: cargo run --locked --manifest-path rust/Cargo.toml -p arbx_cli -- validate /tmp/sample-manifest.json
+
+  fuzz-config:
+    name: Fuzz Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate fuzz configuration
+        run: python scripts/run_rust_fuzz.py --check-config

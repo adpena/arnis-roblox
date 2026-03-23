@@ -1,6 +1,9 @@
+--!optimize 2
+--!native
+
 local AustinSpawn = {}
 
-local ROAD_PRIORITY = {
+local ROAD_PRIORITY = table.freeze({
     footway = 10,
     pedestrian = 12,
     path = 14,
@@ -16,22 +19,22 @@ local ROAD_PRIORITY = {
     motorway_link = 220,
     motorway = 260,
     track = 280,
-}
+})
 
 local function getRoadPriority(kind)
     return ROAD_PRIORITY[kind] or 65
 end
 
-local EXCLUDED_SPAWN_KINDS = {
+local EXCLUDED_SPAWN_KINDS = table.freeze({
     motorway = true,
     motorway_link = true,
     trunk = true,
-}
+})
 
-local AUSTIN_CANONICAL_WORLD_NAMES = {
+local AUSTIN_CANONICAL_WORLD_NAMES = table.freeze({
     ExportedWorld = true,
     AustinPreviewDowntown = true,
-}
+})
 
 local AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS = -192
 local anchorCache = setmetatable({}, { __mode = "k" })
@@ -107,7 +110,8 @@ local function materializeChunksForSelection(manifest, loadRadius, loadCenter)
     end
 
     if type(manifest.LoadChunksWithinRadius) == "function" then
-        local focusCenter = loadCenter or AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
+        local focusCenter = loadCenter
+            or AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
         local ok, chunksOrErr = pcall(function()
             return manifest:LoadChunksWithinRadius(focusCenter, loadRadius)
         end)
@@ -243,7 +247,8 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
         end
     end
 
-    local spawnPoint = applyAustinCanonicalAnchorOverride(manifest, bestPoint or heuristicFocusPoint)
+    local spawnPoint =
+        applyAustinCanonicalAnchorOverride(manifest, bestPoint or heuristicFocusPoint)
     local anchor = {
         heuristicFocusPoint = heuristicFocusPoint,
         focusPoint = spawnPoint,

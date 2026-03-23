@@ -4,14 +4,14 @@ local TerrainBuilder = require(script.Parent.Builders.TerrainBuilder)
 local LanduseBuilder = require(script.Parent.Builders.LanduseBuilder)
 local RoadChunkPlan = require(script.Parent.RoadChunkPlan)
 
-local planCache = {}
+local planCache = setmetatable({}, { __mode = "k" })
 local cacheStats = {
     hits = 0,
     misses = 0,
     clears = 0,
 }
 
-local FOLDER_BY_LAYER = {
+local FOLDER_BY_LAYER = table.freeze({
     terrain = "Terrain",
     roads = "Roads",
     rails = "Rails",
@@ -20,7 +20,7 @@ local FOLDER_BY_LAYER = {
     props = "Props",
     landuse = "Landuse",
     barriers = "Barriers",
-}
+})
 
 local function stablePairsKeys(map)
     local keys = {}
@@ -99,7 +99,13 @@ function ImportPlanCache.GetOrCreatePlan(chunk, options)
         "selective=" .. tostring(selectiveLayers),
     }, "|")
 
-    local cached = planCache[key]
+    local chunkCache = planCache[chunk]
+    if not chunkCache then
+        chunkCache = {}
+        planCache[chunk] = chunkCache
+    end
+
+    local cached = chunkCache[key]
     if cached then
         cacheStats.hits += 1
         return cached
@@ -125,7 +131,7 @@ function ImportPlanCache.GetOrCreatePlan(chunk, options)
     addFolderSpec("water", true)
     addFolderSpec("props", true)
     addFolderSpec("landuse", true)
-    addFolderSpec("barriers", true)
+    addFolderSpec("barriers", chunk.barriers and #chunk.barriers > 0)
 
     local actions = {}
 
@@ -145,7 +151,7 @@ function ImportPlanCache.GetOrCreatePlan(chunk, options)
             pushAction("roadImprint")
         end
     end
-    if shouldImportLayer(layers, "barriers") then
+    if shouldImportLayer(layers, "barriers") and chunk.barriers and #chunk.barriers > 0 then
         pushAction("barriers")
     end
     if shouldImportLayer(layers, "buildings") and config.BuildingMode ~= "none" then
@@ -168,11 +174,18 @@ function ImportPlanCache.GetOrCreatePlan(chunk, options)
         prepared.terrain = TerrainBuilder.PrepareChunk(chunk)
     end
     if actionSet.roads or actionSet.roadImprint then
-        prepared.roads = RoadChunkPlan.build(chunk.roads or {}, chunk.originStuds or { x = 0, y = 0, z = 0 }, chunk)
+        prepared.roads = RoadChunkPlan.build(
+            chunk.roads or {},
+            chunk.originStuds or { x = 0, y = 0, z = 0 },
+            chunk
+        )
     end
     if actionSet.landuse then
-        prepared.landuse =
-            LanduseBuilder.PlanAll(chunk.landuse or {}, chunk.originStuds or { x = 0, y = 0, z = 0 }, chunk)
+        prepared.landuse = LanduseBuilder.PlanAll(
+            chunk.landuse or {},
+            chunk.originStuds or { x = 0, y = 0, z = 0 },
+            chunk
+        )
     end
 
     cached = freezePlan({
@@ -184,13 +197,15 @@ function ImportPlanCache.GetOrCreatePlan(chunk, options)
         actionSet = actionSet,
         prepared = prepared,
     })
-    planCache[key] = cached
+    chunkCache[key] = cached
     return cached
 end
 
 function ImportPlanCache.Clear()
     cacheStats.clears += 1
-    table.clear(planCache)
+    for chunk in pairs(planCache) do
+        planCache[chunk] = nil
+    end
 end
 
 function ImportPlanCache.GetStats()
@@ -200,8 +215,10 @@ function ImportPlanCache.GetStats()
         clears = cacheStats.clears,
         size = 0,
     }
-    for _ in pairs(planCache) do
-        stats.size += 1
+    for _, chunkCache in pairs(planCache) do
+        for _ in pairs(chunkCache) do
+            stats.size += 1
+        end
     end
     return stats
 end

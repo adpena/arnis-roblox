@@ -9,7 +9,58 @@ local INDEX_BUILD_YIELD_INTERVAL = 1024
 
 local roadIndexCache = setmetatable({}, { __mode = "k" })
 
-local function distancePointToSegmentSq(px, pz, ax, az, bx, bz)
+type RoadPoint = {
+    x: number,
+    y: number?,
+    z: number,
+}
+
+type RoadDescriptor = {
+    id: string?,
+    kind: string?,
+    widthStuds: number?,
+    lanes: number?,
+    hasSidewalk: boolean?,
+    points: { RoadPoint }?,
+}
+
+type OriginStuds = {
+    x: number,
+    y: number?,
+    z: number,
+}
+
+type Segment = {
+    road: RoadDescriptor,
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    dirX: number,
+    dirZ: number,
+    width: number,
+    clearance: number,
+    clearanceSq: number,
+}
+
+type RoadIndex = {
+    originX: number,
+    originZ: number,
+    cellSize: number,
+    buckets: { [number]: { [number]: { Segment } } },
+    segments: { Segment },
+}
+
+local function distancePointToSegmentSq(
+    px: number,
+    pz: number,
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number
+)
     local dx = bx - ax
     local dz = bz - az
     local lenSq = dx * dx + dz * dz
@@ -29,11 +80,14 @@ local function distancePointToSegmentSq(px, pz, ax, az, bx, bz)
     return ddx * ddx + ddz * ddz, t, projX, projZ
 end
 
-local function getCellCoord(value, cellSize)
+local function getCellCoord(value: number, cellSize: number): number
     return math.floor(value / cellSize)
 end
 
-local function getOrCreateRoadIndex(roads, originStuds)
+local function getOrCreateRoadIndex(
+    roads: { RoadDescriptor }?,
+    originStuds: OriginStuds
+): RoadIndex?
     if not roads or #roads == 0 then
         return nil
     end
@@ -43,7 +97,8 @@ local function getOrCreateRoadIndex(roads, originStuds)
         return cached
     end
 
-    local index = {
+    local originY = originStuds.y or 0
+    local index: RoadIndex = {
         originX = originStuds.x,
         originZ = originStuds.z,
         cellSize = ROAD_INDEX_CELL_SIZE,
@@ -71,13 +126,13 @@ local function getOrCreateRoadIndex(roads, originStuds)
 
             if lenSq > 1e-6 then
                 local length = math.sqrt(lenSq)
-                local segment = {
+                local segment: Segment = {
                     road = road,
                     ax = ax,
-                    ay = p1.y + originStuds.y,
+                    ay = (p1.y or 0) + originY,
                     az = az,
                     bx = bx,
-                    by = p2.y + originStuds.y,
+                    by = (p2.y or 0) + originY,
                     bz = bz,
                     dirX = dx / length,
                     dirZ = dz / length,
@@ -127,7 +182,7 @@ local function getOrCreateRoadIndex(roads, originStuds)
     return index
 end
 
-local function getCandidateSegments(index, worldX, worldZ)
+local function getCandidateSegments(index: RoadIndex?, worldX: number, worldZ: number): { Segment }?
     if not index then
         return nil
     end
@@ -140,7 +195,13 @@ local function getCandidateSegments(index, worldX, worldZ)
     return row[getCellCoord(worldZ, index.cellSize)]
 end
 
-local function buildQueryResult(segment, distanceSq, t, projX, projZ)
+local function buildQueryResult(
+    segment: Segment,
+    distanceSq: number,
+    t: number,
+    projX: number,
+    projZ: number
+)
     return {
         road = segment.road,
         distance = math.sqrt(distanceSq),
@@ -153,7 +214,12 @@ local function buildQueryResult(segment, distanceSq, t, projX, projZ)
     }
 end
 
-local function scanSegments(segments, worldX, worldZ, onlyWithinClearance)
+local function scanSegments(
+    segments: { Segment }?,
+    worldX: number,
+    worldZ: number,
+    onlyWithinClearance: boolean
+)
     if not segments or #segments == 0 then
         return nil
     end
@@ -187,7 +253,12 @@ local function scanSegments(segments, worldX, worldZ, onlyWithinClearance)
     return buildQueryResult(bestSegment, bestDistanceSq, bestT, bestProjX, bestProjZ)
 end
 
-function SpatialQuery.findNearestRoadSegment(roads, originStuds, worldX, worldZ)
+function SpatialQuery.findNearestRoadSegment(
+    roads: { RoadDescriptor }?,
+    originStuds: OriginStuds,
+    worldX: number,
+    worldZ: number
+)
     local index = getOrCreateRoadIndex(roads, originStuds)
     if not index then
         return nil
@@ -201,11 +272,11 @@ function SpatialQuery.findNearestRoadSegment(roads, originStuds, worldX, worldZ)
     return scanSegments(index.segments, worldX, worldZ, false)
 end
 
-function SpatialQuery.GetRoadIndex(roads, originStuds)
+function SpatialQuery.GetRoadIndex(roads: { RoadDescriptor }?, originStuds: OriginStuds)
     return getOrCreateRoadIndex(roads, originStuds)
 end
 
-function SpatialQuery.isPointNearRoadIndex(index, worldX, worldZ)
+function SpatialQuery.isPointNearRoadIndex(index: RoadIndex?, worldX: number, worldZ: number)
     if not index then
         return false, nil
     end
@@ -218,8 +289,17 @@ function SpatialQuery.isPointNearRoadIndex(index, worldX, worldZ)
     return true, best
 end
 
-function SpatialQuery.isPointNearAnyRoad(roads, originStuds, worldX, worldZ)
-    return SpatialQuery.isPointNearRoadIndex(getOrCreateRoadIndex(roads, originStuds), worldX, worldZ)
+function SpatialQuery.isPointNearAnyRoad(
+    roads: { RoadDescriptor }?,
+    originStuds: OriginStuds,
+    worldX: number,
+    worldZ: number
+)
+    return SpatialQuery.isPointNearRoadIndex(
+        getOrCreateRoadIndex(roads, originStuds),
+        worldX,
+        worldZ
+    )
 end
 
 return SpatialQuery

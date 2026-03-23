@@ -8,6 +8,8 @@ set -euo pipefail
 #
 # Usage (from repo root):
 #   bash scripts/export_austin_to_lua.sh
+#   bash scripts/export_austin_to_lua.sh --yolo
+#   bash scripts/export_austin_to_lua.sh --profile high --satellite
 #
 # Outputs:
 #   rust/data/austin_overpass.json
@@ -22,7 +24,6 @@ RUST_DIR="$ROOT_DIR/rust"
 DATA_DIR="$RUST_DIR/data"
 OUT_DIR="$RUST_DIR/out"
 SAMPLE_DATA_DIR="$ROOT_DIR/roblox/src/ServerStorage/SampleData"
-PREVIEW_JSON="$ROOT_DIR/specs/generated/austin-preview-downtown.json"
 PREVIEW_DIR="$ROOT_DIR/roblox/src/ServerScriptService/StudioPreview"
 
 mkdir -p "$DATA_DIR" "$OUT_DIR" "$SAMPLE_DATA_DIR" "$PREVIEW_DIR"
@@ -31,7 +32,7 @@ echo "=== Fetching Overture building footprints ==="
 python3 "$ROOT_DIR/scripts/fetch_overture_buildings.py" || echo "Warning: Overture fetch failed, continuing with OSM only"
 
 echo "[export_austin_to_lua] Fetching OSM + exporting manifest..."
-bash "$ROOT_DIR/scripts/export_austin_from_osm.sh"
+bash "$ROOT_DIR/scripts/export_austin_from_osm.sh" "$@"
 
 echo "[export_austin_to_lua] Converting JSON manifest to sharded Lua modules..."
 python3 "$ROOT_DIR/scripts/json_manifest_to_sharded_lua.py" \
@@ -41,16 +42,10 @@ python3 "$ROOT_DIR/scripts/json_manifest_to_sharded_lua.py" \
   --shard-folder "AustinManifestChunks" \
   --chunks-per-shard 1
 
-if [[ -f "$PREVIEW_JSON" ]]; then
-  echo "[export_austin_to_lua] Converting preview subset to sharded Lua modules..."
-  python3 "$ROOT_DIR/scripts/json_manifest_to_sharded_lua.py" \
-    --json "$PREVIEW_JSON" \
-    --output-dir "$PREVIEW_DIR" \
-    --index-name "AustinPreviewManifestIndex" \
-    --shard-folder "AustinPreviewManifestChunks" \
-    --chunks-per-shard 1
-else
-  echo "[export_austin_to_lua] Preview JSON not found at $PREVIEW_JSON; skipping preview shard generation"
-fi
+echo "[export_austin_to_lua] Refreshing Studio preview from current Austin sample-data shards..."
+python3 "$ROOT_DIR/scripts/refresh_preview_from_sample_data.py"
+
+echo "[export_austin_to_lua] Verifying generated Austin sample-data + preview assets..."
+python3 "$ROOT_DIR/scripts/verify_generated_austin_assets.py"
 
 echo "[export_austin_to_lua] Done. Sharded manifests written to $SAMPLE_DATA_DIR and $PREVIEW_DIR"

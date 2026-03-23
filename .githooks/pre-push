@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+cd "$ROOT_DIR"
+
+echo "[pre-push] running scaffold check"
+"$PYTHON_BIN" scripts/check_scaffold.py
+
+echo "[pre-push] running script unit tests"
+"$PYTHON_BIN" -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+echo "[pre-push] running repo audit"
+"$PYTHON_BIN" scripts/repo_audit.py --strict

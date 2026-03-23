@@ -7,12 +7,12 @@ return function()
 
     -- 1. Setup a test manifest with one chunk
     local testManifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "LODTest",
             generator = "test",
             source = "test",
-            metersPerStud = 1,
+            metersPerStud = 0.3,
             chunkSizeStuds = 100,
             bbox = { minLat = 0, minLon = 0, maxLat = 1, maxLon = 1 },
             totalFeatures = 1,
@@ -46,7 +46,12 @@ return function()
                         rooms = {
                             {
                                 id = "room_1",
-                                footprint = { { x = 10, z = 10 }, { x = 20, z = 10 }, { x = 20, z = 20 } },
+                                name = "Room 1",
+                                footprint = {
+                                    { x = 10, z = 10 },
+                                    { x = 20, z = 10 },
+                                    { x = 20, z = 20 },
+                                },
                                 floorY = 0,
                                 height = 0.2,
                             },
@@ -56,13 +61,15 @@ return function()
                 water = {
                     {
                         id = "pond",
-                        kind = "water",
+                        kind = "lake",
+                        material = "Water",
                         footprint = {
                             { x = 60, z = 10 },
                             { x = 90, z = 10 },
                             { x = 90, z = 40 },
                             { x = 60, z = 40 },
                         },
+                        holes = {},
                     },
                 },
                 props = {
@@ -191,7 +198,11 @@ return function()
         true,
         "expected interior visible near focal point"
     )
-    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), true, "expected props visible at High LOD")
+    Assert.equal(
+        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
+        true,
+        "expected props visible at High LOD"
+    )
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         true,
@@ -200,7 +211,11 @@ return function()
 
     -- 4. Low LOD: Focal point at 750,0,750 (outside 500, inside 1000)
     StreamingService.Update(Vector3.new(750, 0, 750))
-    Assert.equal(getBuildingsCount() > 0, true, "expected building shells to stay resident at Low LOD")
+    Assert.equal(
+        getBuildingsCount() > 0,
+        true,
+        "expected building shells to stay resident at Low LOD"
+    )
     Assert.equal(getRoadsCount() > 0, true, "expected roads to persist at Low LOD")
     Assert.equal(
         getPrimaryLodGroup("detail"):GetAttribute("ArnisLodVisible"),
@@ -212,7 +227,11 @@ return function()
         false,
         "expected interior hidden at Low LOD"
     )
-    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), false, "expected props hidden at Low LOD")
+    Assert.equal(
+        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
+        false,
+        "expected props hidden at Low LOD"
+    )
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         false,
@@ -233,7 +252,11 @@ return function()
         true,
         "expected interior to restore at High LOD"
     )
-    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), true, "expected props to restore at High LOD")
+    Assert.equal(
+        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
+        true,
+        "expected props to restore at High LOD"
+    )
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         true,
@@ -278,7 +301,11 @@ return function()
     Assert.equal(loadCalls, 1, "expected no reload while chunk stays at same LOD")
     StreamingService.Update(Vector3.new(2000, 0, 2000))
     StreamingService.Update(Vector3.new(0, 0, 0))
-    Assert.equal(loadCalls, 1, "expected lazy source to reuse cached chunk after unload and re-entry")
+    Assert.equal(
+        loadCalls,
+        1,
+        "expected lazy source to reuse cached chunk after unload and re-entry"
+    )
 
     StreamingService.Stop()
     worldRoot = Workspace:FindFirstChild("LODTestWorld")
@@ -312,13 +339,25 @@ return function()
         StreamingService.Update(Vector3.new(620, 0, 50))
         StreamingService.Update(Vector3.new(540, 0, 50))
         StreamingService.Update(Vector3.new(620, 0, 50))
-        Assert.equal(importCalls, 2, "expected high/low jitter near boundary to avoid reimport churn")
+        Assert.equal(
+            importCalls,
+            1,
+            "expected high/low jitter near boundary to avoid reimport churn"
+        )
 
         StreamingService.Update(Vector3.new(700, 0, 50))
-        Assert.equal(importCalls, 1, "expected hysteresis-driven downgrade to stay rebuild-free for buildings")
+        Assert.equal(
+            importCalls,
+            1,
+            "expected hysteresis-driven downgrade to stay rebuild-free for buildings"
+        )
 
         StreamingService.Update(Vector3.new(1070, 0, 50))
-        Assert.equal(#ChunkLoader.ListLoadedChunks(), 1, "expected low-LOD chunk to stay resident near stream radius")
+        Assert.equal(
+            #ChunkLoader.ListLoadedChunks(),
+            1,
+            "expected low-LOD chunk to stay resident near stream radius"
+        )
         StreamingService.Update(Vector3.new(980, 0, 50))
         Assert.equal(importCalls, 1, "expected stream-radius jitter to avoid reimport churn")
         Assert.equal(

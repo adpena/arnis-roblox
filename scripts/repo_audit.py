@@ -18,6 +18,9 @@ DEFAULT_WARN_LIMIT_BYTES = 50 * 1024 * 1024
 DEFAULT_HARD_LIMIT_BYTES = 100 * 1024 * 1024
 REQUIRED_IGNORE_RULES = [
     "rust/out/",
+    "rust/fuzz/artifacts/",
+    "rust/fuzz/corpus/",
+    "rust/fuzz/coverage/",
     "roblox/out/",
     "out/",
     "tmp/",

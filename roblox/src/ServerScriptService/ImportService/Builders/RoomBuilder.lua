@@ -275,7 +275,8 @@ local function buildRoomSurface(
     local surfaceIndex = 0
     local roomWidth = maxX - minX
     local roomDepth = maxZ - minZ
-    local stripSize = math.max(ROOM_MIN_STRIP_DEPTH, math.min(ROOM_STRIP_SIZE, roomWidth, roomDepth))
+    local stripSize =
+        math.max(ROOM_MIN_STRIP_DEPTH, math.min(ROOM_STRIP_SIZE, roomWidth, roomDepth))
 
     local rectMinX, rectMinZ, rectMaxX, rectMaxZ = getRectExtents(worldPoly)
     if rectMinX then
@@ -344,12 +345,27 @@ local function makeSurfaceBatchKey(centerY, thickness, material, color, canColli
         string.format("%.3f", centerY),
         string.format("%.3f", thickness),
         material.Name,
-        string.format("%d,%d,%d", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255)),
+        string.format(
+            "%d,%d,%d",
+            math.floor(color.R * 255),
+            math.floor(color.G * 255),
+            math.floor(color.B * 255)
+        ),
         canCollide and "1" or "0",
     }, "|")
 end
 
-local function addSurfaceBatch(batches, parent, partLabel, geometry, centerY, thickness, material, color, canCollide)
+local function addSurfaceBatch(
+    batches,
+    parent,
+    partLabel,
+    geometry,
+    centerY,
+    thickness,
+    material,
+    color,
+    canCollide
+)
     local key = makeSurfaceBatchKey(centerY, thickness, material, color, canCollide)
     local batch = batches[key]
     if not batch then
@@ -388,7 +404,10 @@ local function buildMergedSurfaceBatch(batch)
         maxZ = math.max(maxZ, geometry.maxZ)
         stripSize = math.min(
             stripSize,
-            math.max(ROOM_MIN_STRIP_DEPTH, math.min(geometry.maxX - geometry.minX, geometry.maxZ - geometry.minZ))
+            math.max(
+                ROOM_MIN_STRIP_DEPTH,
+                math.min(geometry.maxX - geometry.minX, geometry.maxZ - geometry.minZ)
+            )
         )
 
         if geometry.rectMinX then
@@ -491,7 +510,8 @@ local function buildMergedSurfaceBatch(batch)
                 and math.abs(segment.centerX - expectedCenterX) <= 1e-6
             then
                 local combinedWidth = active.width + segment.width
-                active.centerX = (active.centerX * active.width + segment.centerX * segment.width) / combinedWidth
+                active.centerX = (active.centerX * active.width + segment.centerX * segment.width)
+                    / combinedWidth
                 active.width += segment.width
             else
                 flushActive()
@@ -614,8 +634,11 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         aboveDoor.Color = DEFAULT_WALL_COLOR
         aboveDoor.Anchored = true
         aboveDoor.CanCollide = true
-        aboveDoor.CFrame = CFrame.new(midX, slabTop + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) * 0.5, midZ)
-            * CFrame.Angles(0, angle, 0)
+        aboveDoor.CFrame = CFrame.new(
+            midX,
+            slabTop + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) * 0.5,
+            midZ
+        ) * CFrame.Angles(0, angle, 0)
         aboveDoor.Parent = parent
 
         if leftLen > MIN_EDGE then
@@ -657,7 +680,8 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             belowWin.Color = DEFAULT_WALL_COLOR
             belowWin.Anchored = true
             belowWin.CanCollide = true
-            belowWin.CFrame = CFrame.new(midX, slabTop + WINDOW_SILL_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+            belowWin.CFrame = CFrame.new(midX, slabTop + WINDOW_SILL_HEIGHT * 0.5, midZ)
+                * CFrame.Angles(0, angle, 0)
             belowWin.Parent = parent
         end
 
@@ -670,7 +694,8 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
             aboveWin.Color = DEFAULT_WALL_COLOR
             aboveWin.Anchored = true
             aboveWin.CanCollide = true
-            aboveWin.CFrame = CFrame.new(midX, lintelY + aboveHeight * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+            aboveWin.CFrame = CFrame.new(midX, lintelY + aboveHeight * 0.5, midZ)
+                * CFrame.Angles(0, angle, 0)
             aboveWin.Parent = parent
         end
 
@@ -682,7 +707,8 @@ local function buildPartitionWall(parent, partition, originStuds, buildingBaseY,
         windowPane.Transparency = 0.4
         windowPane.Anchored = true
         windowPane.CanCollide = false
-        windowPane.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ) * CFrame.Angles(0, angle, 0)
+        windowPane.CFrame = CFrame.new(midX, sillY + WINDOW_HEIGHT * 0.5, midZ)
+            * CFrame.Angles(0, angle, 0)
         windowPane:SetAttribute("BaseTransparency", 0.4)
         windowPane.Parent = parent
 
@@ -762,7 +788,8 @@ function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
         local rooms = building.rooms
         if rooms and #rooms > 0 then
             local buildingName = building.id or "Building"
-            local buildingModel = builtModelsById[buildingName] or parent:FindFirstChild(buildingName)
+            local buildingModel = builtModelsById[buildingName]
+                or parent:FindFirstChild(buildingName)
             if buildingModel and buildingModel:IsA("Model") then
                 local buildingBaseY = resolveBuildingBaseY(buildingModel)
                 local buildingHeight = resolveBuildingShellHeight(buildingModel, building)
@@ -798,13 +825,29 @@ function RoomBuilder.BuildAll(parent, buildings, originStuds, builtModelsById)
                 for _, edgeId in ipairs(partitionKeys) do
                     local partition = partitionEdges[edgeId]
                     if partition.sharedCount > 1 and not exteriorEdges[edgeId] then
-                        buildPartitionWall(partitionsFolder, partition, originStuds, buildingBaseY, floorHeight)
+                        buildPartitionWall(
+                            partitionsFolder,
+                            partition,
+                            originStuds,
+                            buildingBaseY,
+                            floorHeight
+                        )
                     end
                 end
 
                 for _, roomPlan in ipairs(roomPlans) do
-                    addPlannedSurfaceBatch(floorBatches, floorsFolder, roomPlan.geometry, roomPlan.floor)
-                    addPlannedSurfaceBatch(ceilingBatches, ceilingsFolder, roomPlan.geometry, roomPlan.ceiling)
+                    addPlannedSurfaceBatch(
+                        floorBatches,
+                        floorsFolder,
+                        roomPlan.geometry,
+                        roomPlan.floor
+                    )
+                    addPlannedSurfaceBatch(
+                        ceilingBatches,
+                        ceilingsFolder,
+                        roomPlan.geometry,
+                        roomPlan.ceiling
+                    )
                 end
 
                 emitSortedBatches(floorBatches)

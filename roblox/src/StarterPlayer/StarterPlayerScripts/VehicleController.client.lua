@@ -47,13 +47,13 @@ local JETPACK_TAG = "JetpackPart"
 local PARACHUTE_TAG = "ParachutePart"
 
 -- Car physics
-local CAR_MAX_SPEED = 160            -- studs/s (~48m/s, feels FAST)
-local CAR_TORQUE = 1200              -- strong acceleration, feel the g-force
-local CAR_STEER_ANGLE = 40           -- degrees — sharp turns possible
-local CAR_STEER_SPEED = 5            -- responsive steering
-local SUSPENSION_REST_LENGTH = 1.8   -- slightly softer, more body roll
-local SUSPENSION_STIFFNESS = 600     -- softer springs = more body roll in turns
-local SUSPENSION_DAMPING = 45        -- less damping = bouncier, more alive
+local CAR_MAX_SPEED = 160 -- studs/s (~48m/s, feels FAST)
+local CAR_TORQUE = 1200 -- strong acceleration, feel the g-force
+local CAR_STEER_ANGLE = 40 -- degrees — sharp turns possible
+local CAR_STEER_SPEED = 5 -- responsive steering
+local SUSPENSION_REST_LENGTH = 1.8 -- slightly softer, more body roll
+local SUSPENSION_STIFFNESS = 600 -- softer springs = more body roll in turns
+local SUSPENSION_DAMPING = 45 -- less damping = bouncier, more alive
 local DRIFT_GRIP_REDUCTION = 0.4
 local ENGINE_IDLE_VIBRATION = 0.03
 
@@ -61,35 +61,31 @@ local ENGINE_IDLE_VIBRATION = 0.03
 local JETPACK_MAX_THRUST = 6000
 local JETPACK_RAMP_TIME = 0.3
 local JETPACK_DAMPING = 0.92
-local JETPACK_HOVER_FORCE_Y = 196.2 * 3  -- counteract gravity for ~3 mass
-local JETPACK_FUEL_MAX = 60          -- seconds (enough to reach top of tallest skyscrapers)
-local JETPACK_FUEL_RECHARGE_RATE = 0.5  -- per second on ground
+local JETPACK_FUEL_MAX = 60 -- seconds (enough to reach top of tallest skyscrapers)
+local JETPACK_FUEL_RECHARGE_RATE = 0.5 -- per second on ground
 
 -- Parachute physics
-local CHUTE_GLIDE_RATIO = 3.0       -- 3 forward : 1 down
+local CHUTE_GLIDE_RATIO = 3.0 -- 3 forward : 1 down
 local CHUTE_DESCENT_RATE = -12
-local CHUTE_FORWARD_SPEED = 36
+local CHUTE_FORWARD_SPEED = math.abs(CHUTE_DESCENT_RATE) * CHUTE_GLIDE_RATIO
 local CHUTE_TURN_RATE = 2.5
 local CHUTE_FLARE_LIFT = 8
-local CHUTE_STALL_THRESHOLD = -0.7  -- normalized back input
+local CHUTE_STALL_THRESHOLD = -0.7 -- normalized back input
 local CHUTE_STALL_DESCENT = -40
 local CHUTE_WIND_STRENGTH = 3
 
 -- Camera
 local CAR_CAM_OFFSET = Vector3.new(0, 8, 22)
-local CAR_CAM_LERP = 0.08
 local CAR_CAM_TILT_FACTOR = 0.04
 local CAR_FOV_MIN = 70
-local CAR_FOV_MAX = 105              -- dramatic speed distortion at top speed
-local CAR_FOV_SPEED_RANGE = 130      -- ramp to max over full speed range
+local CAR_FOV_MAX = 105 -- dramatic speed distortion at top speed
+local CAR_FOV_SPEED_RANGE = 130 -- ramp to max over full speed range
 
 local JETPACK_CAM_OFFSET = Vector3.new(0, 4, 16)
-local JETPACK_CAM_LERP = 0.06
 local JETPACK_CAM_SHAKE_INTENSITY = 0.15
 
 local CHUTE_CAM_OFFSET = Vector3.new(0, 10, 24)
-local CHUTE_CAM_LERP = 0.05
-local CHUTE_FOV = 90              -- wide panoramic view of the city
+local CHUTE_FOV = 90 -- wide panoramic view of the city
 
 local DEFAULT_FOV = 70
 
@@ -128,13 +124,13 @@ local HUD_ACCENT_COLOR = Color3.fromRGB(80, 180, 255)
 --------------------------------------------------------------------------------
 -- State
 --------------------------------------------------------------------------------
-local mode = "none"  -- "none" | "car" | "jetpack" | "parachute"
+local mode = "none" -- "none" | "car" | "jetpack" | "parachute"
 
 -- Car state
 local carModel = nil
 local carBody = nil
 local carSeat = nil
-local carWheels = {}        -- { part, motor, spring, steerHinge (front only) }
+local carWheels = {} -- { part, motor, spring, steerHinge (front only) }
 local carBrakeLights = {}
 local carExhaustEmitter = nil
 local carEngineSound = nil
@@ -145,26 +141,22 @@ local carSteerAngle = 0
 local carPrevSpeed = 0
 local carIsBraking = false
 local prevBraking = false
-local prevTurnState = 0  -- -1 left, 0 none, 1 right
+local prevTurnState = 0 -- -1 left, 0 none, 1 right
 local carGyro = nil
 
 -- Jetpack state
 local jetpackForce = nil
-local jetpackParts = {}
-local jetpackNozzles = {}
 local jetpackEmitters = {}
 local jetpackLights = {}
-local jetpackTrails = {}
 local jetpackThrustSound = nil
 local jetpackWindSound = nil
 local jetpackFuel = JETPACK_FUEL_MAX
-local jetpackThrustLevel = 0  -- 0..1 ramp
+local jetpackThrustLevel = 0 -- 0..1 ramp
 local jetpackActive = false
 
 -- Parachute state
 local chuteActive = false
 local chuteCanopy = nil
-local chuteLines = {}
 local chuteForce = nil
 local chuteLift = nil
 local chuteGyro = nil
@@ -193,6 +185,9 @@ local cinematicAngle = 0
 
 -- Transition state
 local transitionLock = false
+
+-- Shared per-frame cached input
+local frameGamepad = nil
 
 --------------------------------------------------------------------------------
 -- Utility
@@ -252,17 +247,19 @@ end
 
 local function disableDOF()
     local dof = Lighting:FindFirstChildOfClass("DepthOfFieldEffect")
-    if dof then dof.Enabled = false end
+    if dof then
+        dof.Enabled = false
+    end
 end
 
 -- Sound assets from Roblox library
-local SOUND_ENGINE_LOOP     = "rbxassetid://9112854440"
-local SOUND_TIRE_SCREECH    = "rbxassetid://9114368685"
-local SOUND_HORN            = "rbxassetid://9113651830"
-local SOUND_JET_THRUST      = "rbxassetid://9112798601"
-local SOUND_WIND_RUSH       = "rbxassetid://9113543029"
-local SOUND_CHUTE_DEPLOY    = "rbxassetid://9113636898"
-local SOUND_CHUTE_FLUTTER   = "rbxassetid://9113543029"
+local SOUND_ENGINE_LOOP = "rbxassetid://9112854440"
+local SOUND_TIRE_SCREECH = "rbxassetid://9114368685"
+local SOUND_HORN = "rbxassetid://9113651830"
+local SOUND_JET_THRUST = "rbxassetid://9112798601"
+local SOUND_WIND_RUSH = "rbxassetid://9113543029"
+local SOUND_CHUTE_DEPLOY = "rbxassetid://9113636898"
+local SOUND_CHUTE_FLUTTER = "rbxassetid://9113543029"
 
 local function makeSound(parent, name, looped, volume, soundId)
     local s = Instance.new("Sound")
@@ -290,10 +287,11 @@ end
 
 local function isOnGround()
     local hum = getHumanoid()
-    if not hum then return false end
+    if not hum then
+        return false
+    end
     local state = hum:GetState()
-    return state == Enum.HumanoidStateType.Running
-        or state == Enum.HumanoidStateType.Landed
+    return state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.Landed
 end
 
 -- Returns a table with gamepad axis/trigger values, or nil if no gamepad.
@@ -302,7 +300,9 @@ local function readGamepad()
     local ok, state = pcall(function()
         return UserInputService:GetGamepadState(Enum.UserInputType.Gamepad1)
     end)
-    if not ok or not state then return nil end
+    if not ok or not state then
+        return nil
+    end
 
     local result = { thumbstickX = 0, thumbstickY = 0, rightTrigger = 0, leftTrigger = 0 }
     for _, input in ipairs(state) do
@@ -462,7 +462,9 @@ local function updateHUDValues(dt)
     end
 
     local hrp = getHRP()
-    if not hrp then return end
+    if not hrp then
+        return
+    end
 
     -- Speed (car)
     if mode == "car" and carBody then
@@ -639,7 +641,7 @@ local function createCarBody(spawnCF)
     seat.CanCollide = false
     seat.Massless = true
     seat.MaxSpeed = CAR_MAX_SPEED
-    seat.Torque = 0  -- we drive motors manually
+    seat.Torque = 0 -- we drive motors manually
     seat.TurnSpeed = 0
     seat.Parent = model
     tagPart(seat, CAR_TAG)
@@ -805,8 +807,10 @@ local function createWheelWithSuspension(model, chassis, spawnCF, offset, isFron
     wheel.Anchored = false
     wheel.CustomPhysicalProperties = PhysicalProperties.new(
         isFront and 1.5 or (1.5 * (1 - DRIFT_GRIP_REDUCTION * 0.3)),
-        isFront and 1.0 or 0.4,   -- rear wheels: MUCH less friction — tail kicks out in turns
-        0.15, 1, 1
+        isFront and 1.0 or 0.4, -- rear wheels: MUCH less friction — tail kicks out in turns
+        0.15,
+        1,
+        1
     )
     wheel.Parent = model
     tagPart(wheel, CAR_TAG)
@@ -898,9 +902,6 @@ local function createWheelWithSuspension(model, chassis, spawnCF, offset, isFron
         steerHinge.LowerAngle = -CAR_STEER_ANGLE
         steerHinge.UpperAngle = CAR_STEER_ANGLE
         steerHinge.Parent = chassis
-    else
-        -- Rear wheels: weld axle to chassis with spring only (no steering)
-        -- The prismatic + spring handles vertical motion
     end
 
     return {
@@ -915,7 +916,9 @@ end
 
 local function spawnCar()
     local hrp = getHRP()
-    if not hrp then return end
+    if not hrp then
+        return
+    end
 
     local spawnPos = hrp.Position + hrp.CFrame.LookVector * 14
     local spawnCF = CFrame.new(spawnPos)
@@ -992,7 +995,9 @@ end
 
 local function enterCar(seat)
     local hum = getHumanoid()
-    if not hum or not seat then return end
+    if not hum or not seat then
+        return
+    end
 
     -- Fix #13: let the engine handle seat entry — no CFrame tween
     seat:Sit(hum)
@@ -1015,11 +1020,11 @@ local function exitCar()
     end
     mode = "none"
     customCamActive = false
-    camCurrentPos = nil  -- fix #11: reset here, not in render loop
+    camCurrentPos = nil -- fix #11: reset here, not in render loop
     prevBraking = false
     prevTurnState = 0
     camera.CameraType = Enum.CameraType.Custom
-    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
+    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
     setHUDMode("none")
 end
 
@@ -1027,14 +1032,15 @@ end
 -- CAR UPDATE (per-frame)
 --------------------------------------------------------------------------------
 local function updateCar(dt)
-    if mode ~= "car" or not carBody or not carSeat then return end
+    if mode ~= "car" or not carBody or not carSeat then
+        return
+    end
 
-    local throttle = carSeat.ThrottleFloat  -- -1 to 1 from VehicleSeat
-    local steer = carSeat.SteerFloat        -- -1 to 1
+    local throttle = carSeat.ThrottleFloat -- -1 to 1 from VehicleSeat
+    local steer = carSeat.SteerFloat -- -1 to 1
 
     local velocity = carBody.AssemblyLinearVelocity
     local speed = velocity.Magnitude
-    local forwardSpeed = carBody.CFrame.LookVector:Dot(velocity)
 
     -- Steering
     local targetSteer = steer * CAR_STEER_ANGLE
@@ -1050,7 +1056,7 @@ local function updateCar(dt)
         if handbrake and not w.isFront then
             -- Lock rear wheels for drift
             w.motor.AngularVelocity = 0
-            w.motor.MotorMaxTorque = CAR_TORQUE * 5  -- strong lock
+            w.motor.MotorMaxTorque = CAR_TORQUE * 5 -- strong lock
         else
             w.motor.AngularVelocity = motorSpeed
             w.motor.MotorMaxTorque = CAR_TORQUE
@@ -1116,13 +1122,15 @@ local function updateCar(dt)
 
     -- Anti-flip gyro: keep upright
     if carGyro then
-        carGyro.CFrame = CFrame.new(carBody.Position) * CFrame.Angles(0, select(2, carBody.CFrame:ToEulerAnglesYXZ()), 0)
+        carGyro.CFrame = CFrame.new(carBody.Position)
+            * CFrame.Angles(0, select(2, carBody.CFrame:ToEulerAnglesYXZ()), 0)
     end
 
     -- Engine idle vibration
     if carIdleVibration then
         local vibAmt = ENGINE_IDLE_VIBRATION * (1 + speed * 0.005)
-        carIdleVibration.Position = carBody.Position + Vector3.new(0, math.sin(tick() * 30) * vibAmt, 0)
+        carIdleVibration.Position = carBody.Position
+            + Vector3.new(0, math.sin(tick() * 30) * vibAmt, 0)
     end
 
     -- G-force camera shake: measure velocity delta since last frame
@@ -1136,7 +1144,7 @@ local function updateCar(dt)
     if customCamActive then
         local carCF = carBody.CFrame
         local targetPos = (carCF * CFrame.new(
-            -steer * 2,  -- slight offset into turn
+            -steer * 2, -- slight offset into turn
             CAR_CAM_OFFSET.Y,
             CAR_CAM_OFFSET.Z
         )).Position
@@ -1153,12 +1161,13 @@ local function updateCar(dt)
 
         -- G-force shake offset (noise-based, barely perceptible)
         local t = tick()
-        local shakeX = (math.noise(t * 10,      0) * 2 - 1) * accelShake
+        local shakeX = (math.noise(t * 10, 0) * 2 - 1) * accelShake
         local shakeY = (math.noise(t * 10 + 100, 0) * 2 - 1) * accelShake
         local shakeOffset = Vector3.new(shakeX, shakeY, 0)
 
         camera.CameraType = Enum.CameraType.Scriptable
-        camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget) * CFrame.Angles(0, 0, tiltAngle)
+        camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget)
+            * CFrame.Angles(0, 0, tiltAngle)
 
         -- Speed-based FOV (fix #7: dt-scaled lerp)
         local fovTarget = CAR_FOV_MIN + (speed / CAR_FOV_SPEED_RANGE) * (CAR_FOV_MAX - CAR_FOV_MIN)
@@ -1173,7 +1182,9 @@ end
 local function deployJetpack()
     local hrp = getHRP()
     local char = getCharacter()
-    if not hrp or not char then return end
+    if not hrp or not char then
+        return
+    end
 
     jetpackActive = true
     jetpackThrustLevel = 0
@@ -1194,7 +1205,6 @@ local function deployJetpack()
     packWeld.Part0 = hrp
     packWeld.Part1 = pack
     packWeld.Parent = hrp
-    table.insert(jetpackParts, pack)
 
     -- Nozzles
     for _, offset in ipairs({ Vector3.new(-0.8, -1.5, 0.3), Vector3.new(0.8, -1.5, 0.3) }) do
@@ -1214,7 +1224,6 @@ local function deployJetpack()
         nw.Part0 = pack
         nw.Part1 = nozzle
         nw.Parent = pack
-        table.insert(jetpackNozzles, nozzle)
 
         -- Flame particles per nozzle
         local attach = Instance.new("Attachment")
@@ -1231,10 +1240,10 @@ local function deployJetpack()
             NumberSequenceKeypoint.new(1, 0),
         })
         emitter.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 180, 255)),    -- blue core
-            ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 200, 60)),   -- orange mantle
-            ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 100, 20)),   -- deep orange
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 40, 20)),       -- dark smoke tip
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 180, 255)), -- blue core
+            ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 200, 60)), -- orange mantle
+            ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 100, 20)), -- deep orange
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 40, 20)), -- dark smoke tip
         })
         emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
@@ -1301,9 +1310,6 @@ local function deployJetpack()
     trail.LightEmission = 0.5
     trail.FaceCamera = true
     trail.Parent = hrp
-    table.insert(jetpackTrails, trail)
-    table.insert(jetpackTrails, trailA0)
-    table.insert(jetpackTrails, trailA1)
 
     -- Physics force
     jetpackForce = Instance.new("BodyForce")
@@ -1331,7 +1337,9 @@ local function deployJetpack()
 end
 
 local function cleanupJetpack()
-    if not jetpackActive then return end
+    if not jetpackActive then
+        return
+    end
     jetpackActive = false
 
     -- Shutdown sound
@@ -1346,11 +1354,8 @@ local function cleanupJetpack()
     cleanupByTag(JETPACK_TAG)
 
     jetpackForce = nil
-    jetpackParts = {}
-    jetpackNozzles = {}
     jetpackEmitters = {}
     jetpackLights = {}
-    jetpackTrails = {}
     jetpackThrustSound = nil
     jetpackWindSound = nil
     jetpackThrustLevel = 0
@@ -1358,9 +1363,9 @@ local function cleanupJetpack()
     if mode == "jetpack" then
         mode = "none"
         customCamActive = false
-        camCurrentPos = nil  -- fix #11: reset here, not in render loop
+        camCurrentPos = nil -- fix #11: reset here, not in render loop
         camera.CameraType = Enum.CameraType.Custom
-        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
+        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
         setHUDMode("none")
     end
 end
@@ -1369,10 +1374,14 @@ end
 -- JETPACK UPDATE (per-frame)
 --------------------------------------------------------------------------------
 local function updateJetpack(dt)
-    if not jetpackActive or not jetpackForce then return end
+    if not jetpackActive or not jetpackForce then
+        return
+    end
 
     local hrp = getHRP()
-    if not hrp then return end
+    if not hrp then
+        return
+    end
 
     -- Fuel
     jetpackFuel = jetpackFuel - dt
@@ -1411,13 +1420,17 @@ local function updateJetpack(dt)
     -- Gamepad thumbstick (additive to keyboard) — fix #10: use cached frameGamepad
     local gp = frameGamepad
     if gp then
-        local stickMag = math.sqrt(gp.thumbstickX^2 + gp.thumbstickY^2)
+        local stickMag = math.sqrt(gp.thumbstickX ^ 2 + gp.thumbstickY ^ 2)
         if stickMag > 0.1 then
-            local flatLook  = Vector3.new(look.X,  0, look.Z)
+            local flatLook = Vector3.new(look.X, 0, look.Z)
             local flatRight = Vector3.new(right.X, 0, right.Z)
             -- Normalize only if non-zero to avoid NaN
-            if flatLook.Magnitude  > 0.001 then flatLook  = flatLook.Unit  end
-            if flatRight.Magnitude > 0.001 then flatRight = flatRight.Unit end
+            if flatLook.Magnitude > 0.001 then
+                flatLook = flatLook.Unit
+            end
+            if flatRight.Magnitude > 0.001 then
+                flatRight = flatRight.Unit
+            end
             thrustDir = thrustDir + flatLook * gp.thumbstickY + flatRight * gp.thumbstickX
             isThrusting = true
         end
@@ -1470,14 +1483,15 @@ local function updateJetpack(dt)
         horizontalForce = thrustDir.Unit * JETPACK_MAX_THRUST * jetpackThrustLevel
     end
 
-    local verticalForce = Vector3.new(0, verticalThrust * JETPACK_MAX_THRUST * jetpackThrustLevel, 0)
+    local verticalForce =
+        Vector3.new(0, verticalThrust * JETPACK_MAX_THRUST * jetpackThrustLevel, 0)
 
     -- Hover when idle (counteract gravity + small oscillation)
     local hoverForce = Vector3.new(0, 0, 0)
     if not isThrusting then
         hoverForce = gravityCompensation + Vector3.new(0, math.sin(tick() * 3) * 40, 0)
     else
-        hoverForce = gravityCompensation * 0.95  -- partial gravity compensation when thrusting
+        hoverForce = gravityCompensation * 0.95 -- partial gravity compensation when thrusting
     end
 
     -- Air resistance / damping at high speed
@@ -1519,11 +1533,7 @@ local function updateJetpack(dt)
 
     -- Camera
     if customCamActive then
-        local targetPos = (hrp.CFrame * CFrame.new(
-            0,
-            JETPACK_CAM_OFFSET.Y,
-            JETPACK_CAM_OFFSET.Z
-        )).Position
+        local targetPos = (hrp.CFrame * CFrame.new(0, JETPACK_CAM_OFFSET.Y, JETPACK_CAM_OFFSET.Z)).Position
 
         if camCurrentPos then
             camCurrentPos = lerpVector3(camCurrentPos, targetPos, math.min(1, CAM_LERP_RATE * dt))
@@ -1536,11 +1546,8 @@ local function updateJetpack(dt)
         if jetpackThrustLevel > 0.7 then
             local shakeAmt = (jetpackThrustLevel - 0.7) / 0.3 * JETPACK_CAM_SHAKE_INTENSITY
             local t = tick()
-            shake = Vector3.new(
-                math.noise(t * 12, 0) * shakeAmt,
-                math.noise(t * 12, 100) * shakeAmt,
-                0
-            )
+            shake =
+                Vector3.new(math.noise(t * 12, 0) * shakeAmt, math.noise(t * 12, 100) * shakeAmt, 0)
         end
 
         camera.CameraType = Enum.CameraType.Scriptable
@@ -1555,11 +1562,15 @@ end
 --------------------------------------------------------------------------------
 -- PARACHUTE CONSTRUCTION
 --------------------------------------------------------------------------------
+local retractParachute
+
 local function deployParachute()
     local hrp = getHRP()
     local hum = getHumanoid()
     local char = getCharacter()
-    if not hrp or not hum or not char then return end
+    if not hrp or not hum or not char then
+        return
+    end
 
     -- Only deploy when falling fast enough
     if hrp.AssemblyLinearVelocity.Y > -5 then
@@ -1594,10 +1605,10 @@ local function deployParachute()
     -- Rectangular canopy from multiple panels
     local canopyRoot = Instance.new("Part")
     canopyRoot.Name = "CanopyRoot"
-    canopyRoot.Size = Vector3.new(2, 2, 2)  -- some volume for physics presence
+    canopyRoot.Size = Vector3.new(2, 2, 2) -- some volume for physics presence
     canopyRoot.Transparency = 1
     canopyRoot.CanCollide = false
-    canopyRoot.Massless = false              -- real mass enables pendulum swing
+    canopyRoot.Massless = false -- real mass enables pendulum swing
     canopyRoot.CustomPhysicalProperties = PhysicalProperties.new(0.05, 0, 0, 0, 0)
     canopyRoot.Anchored = false
     canopyRoot.CFrame = hrp.CFrame * CFrame.new(0, 18, 0)
@@ -1611,7 +1622,7 @@ local function deployParachute()
     tagPart(rootAttachHRP, PARACHUTE_TAG)
 
     local rootAttachCanopy = Instance.new("Attachment")
-    rootAttachCanopy.Position = Vector3.new(0, -8, 0)  -- bottom of the "rope"
+    rootAttachCanopy.Position = Vector3.new(0, -8, 0) -- bottom of the "rope"
     rootAttachCanopy.Parent = canopyRoot
     tagPart(rootAttachCanopy, PARACHUTE_TAG)
 
@@ -1620,8 +1631,8 @@ local function deployParachute()
     mainSocket.Attachment0 = rootAttachHRP
     mainSocket.Attachment1 = rootAttachCanopy
     mainSocket.LimitsEnabled = true
-    mainSocket.UpperAngle = 25          -- max pendulum swing angle (degrees)
-    mainSocket.Restitution = 0          -- no bounce
+    mainSocket.UpperAngle = 25 -- max pendulum swing angle (degrees)
+    mainSocket.Restitution = 0 -- no bounce
     mainSocket.Visible = false
     mainSocket.Parent = canopyRoot
     tagPart(mainSocket, PARACHUTE_TAG)
@@ -1638,7 +1649,6 @@ local function deployParachute()
     -- Canopy panels (rectangular, alternating orange and white)
     local panelCount = 7
     local panelWidth = 3.5
-    local totalWidth = panelWidth * panelCount
     local panelHeight = 0.4
     local panelDepth = 8
 
@@ -1650,9 +1660,9 @@ local function deployParachute()
 
         -- White canopy with red center panel
         if i == math.ceil(panelCount / 2) then
-            panel.Color = Color3.fromRGB(200, 30, 30)  -- red center panel
+            panel.Color = Color3.fromRGB(200, 30, 30) -- red center panel
         else
-            panel.Color = Color3.fromRGB(245, 245, 245)  -- clean white
+            panel.Color = Color3.fromRGB(245, 245, 245) -- clean white
         end
 
         local xOff = (i - (panelCount + 1) / 2) * panelWidth
@@ -1676,8 +1686,9 @@ local function deployParachute()
 
             local lineAttachBot = Instance.new("Attachment")
             lineAttachBot.Position = Vector3.new(
-                (xOff + lineXOff) * 0.15,  -- converge toward center at player
-                2, 0
+                (xOff + lineXOff) * 0.15, -- converge toward center at player
+                2,
+                0
             )
             lineAttachBot.Parent = hrp
             tagPart(lineAttachBot, PARACHUTE_TAG)
@@ -1690,7 +1701,6 @@ local function deployParachute()
             beam.Color = ColorSequence.new(Color3.fromRGB(180, 180, 180))
             beam.FaceCamera = true
             beam.Parent = canopyRoot
-            table.insert(chuteLines, beam)
         end
     end
 
@@ -1730,8 +1740,10 @@ local function deployParachute()
 
     -- Auto-retract on landing
     chuteLandedConn = hum.StateChanged:Connect(function(_, newState)
-        if newState == Enum.HumanoidStateType.Landed
-            or newState == Enum.HumanoidStateType.Running then
+        if
+            newState == Enum.HumanoidStateType.Landed
+            or newState == Enum.HumanoidStateType.Running
+        then
             retractParachute()
         end
     end)
@@ -1743,8 +1755,10 @@ local function deployParachute()
     setHUDMode("parachute")
 end
 
-local function retractParachute()
-    if not chuteActive then return end
+retractParachute = function()
+    if not chuteActive then
+        return
+    end
     chuteActive = false
 
     if chuteLandedConn then
@@ -1753,9 +1767,15 @@ local function retractParachute()
     end
 
     -- Fix #5: destroy physics forces IMMEDIATELY (no lingering drag/lift)
-    if chuteForce then chuteForce:Destroy() end
-    if chuteLift then chuteLift:Destroy() end
-    if chuteGyro then chuteGyro:Destroy() end
+    if chuteForce then
+        chuteForce:Destroy()
+    end
+    if chuteLift then
+        chuteLift:Destroy()
+    end
+    if chuteGyro then
+        chuteGyro:Destroy()
+    end
     chuteForce = nil
     chuteLift = nil
     chuteGyro = nil
@@ -1773,7 +1793,6 @@ local function retractParachute()
     end)
 
     chuteCanopy = nil
-    chuteLines = {}
     chuteWindSound = nil
     chuteFlutterSound = nil
 
@@ -1781,9 +1800,9 @@ local function retractParachute()
         disableDOF()
         mode = "none"
         customCamActive = false
-        camCurrentPos = nil  -- fix #11: reset here, not in render loop
+        camCurrentPos = nil -- fix #11: reset here, not in render loop
         camera.CameraType = Enum.CameraType.Custom
-        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
+        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
         setHUDMode("none")
     end
 end
@@ -1792,10 +1811,14 @@ end
 -- PARACHUTE UPDATE (per-frame)
 --------------------------------------------------------------------------------
 local function updateParachute(dt)
-    if not chuteActive or not chuteForce or not chuteLift then return end
+    if not chuteActive or not chuteForce or not chuteLift then
+        return
+    end
 
     local hrp = getHRP()
-    if not hrp then return end
+    if not hrp then
+        return
+    end
 
     local vel = hrp.AssemblyLinearVelocity
     local mass = hrp.AssemblyMass
@@ -1839,7 +1862,7 @@ local function updateParachute(dt)
             chuteStallTimer = 0
         end
     else
-        chuteStallTimer = chuteStallTimer + dt * flareInput  -- accumulate flare time
+        chuteStallTimer = chuteStallTimer + dt * flareInput -- accumulate flare time
     end
 
     -- Calculate forces
@@ -1875,7 +1898,7 @@ local function updateParachute(dt)
         local bankAngle = steerInput * math.rad(15)
         chuteGyro.CFrame = CFrame.new(hrp.Position)
             * CFrame.Angles(0, chuteHeading, bankAngle)
-            * CFrame.Angles(math.rad(-10 - flareInput * 15), 0, 0)  -- slight forward lean, more on flare
+            * CFrame.Angles(math.rad(-10 - flareInput * 15), 0, 0) -- slight forward lean, more on flare
     end
 
     -- Pendulum swing: apply a small lateral impulse opposite to turn direction
@@ -1886,8 +1909,7 @@ local function updateParachute(dt)
             local rightVec = CFrame.Angles(0, chuteHeading, 0).RightVector
             local swingForce = rightVec * steerInput * -60 * dt
             -- Apply as a small velocity nudge (mass is 0.05 kg)
-            chuteCanopy.AssemblyLinearVelocity =
-                chuteCanopy.AssemblyLinearVelocity + swingForce
+            chuteCanopy.AssemblyLinearVelocity = chuteCanopy.AssemblyLinearVelocity + swingForce
         end
     end
 
@@ -1904,7 +1926,8 @@ local function updateParachute(dt)
 
     -- Camera: wide FOV, above and behind, looking down slightly
     if customCamActive then
-        local behindOffset = -headingDir * CHUTE_CAM_OFFSET.Z + Vector3.new(0, CHUTE_CAM_OFFSET.Y, 0)
+        local behindOffset = -headingDir * CHUTE_CAM_OFFSET.Z
+            + Vector3.new(0, CHUTE_CAM_OFFSET.Y, 0)
         local targetPos = hrp.Position + behindOffset
 
         if camCurrentPos then
@@ -1924,7 +1947,9 @@ end
 --------------------------------------------------------------------------------
 -- Fix #3: all transitions use task.delay instead of task.wait (no yielding in render thread)
 local function transitionToJetpack()
-    if transitionLock then return end
+    if transitionLock then
+        return
+    end
     transitionLock = true
 
     local hrp = getHRP()
@@ -1957,7 +1982,9 @@ local function transitionToJetpack()
 end
 
 local function transitionToParachute()
-    if transitionLock then return end
+    if transitionLock then
+        return
+    end
     transitionLock = true
 
     -- If jetpack active, swap seamlessly
@@ -1985,7 +2012,9 @@ local function transitionToParachute()
 end
 
 local function transitionToCar()
-    if transitionLock then return end
+    if transitionLock then
+        return
+    end
     transitionLock = true
 
     local function doCarEntry()
@@ -2030,6 +2059,30 @@ local function transitionToCar()
     doCarEntry()
 end
 
+local function toggleCarMode()
+    if mode == "car" then
+        exitCar()
+    else
+        task.spawn(transitionToCar)
+    end
+end
+
+local function toggleJetpackMode()
+    if mode == "jetpack" then
+        cleanupJetpack()
+    else
+        task.spawn(transitionToJetpack)
+    end
+end
+
+local function toggleParachuteMode()
+    if mode == "parachute" then
+        retractParachute()
+    else
+        task.spawn(transitionToParachute)
+    end
+end
+
 --------------------------------------------------------------------------------
 -- CLEANUP ON DEATH / RESPAWN
 --------------------------------------------------------------------------------
@@ -2050,7 +2103,7 @@ local function fullCleanup()
     disableDOF()
 
     camera.CameraType = Enum.CameraType.Custom
-    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween, not hard-set
+    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
 
     setHUDMode("none")
 end
@@ -2082,41 +2135,28 @@ end)
 -- INPUT
 --------------------------------------------------------------------------------
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
+    if gameProcessed then
+        return
+    end
     local character = getCharacter()
-    if not character then return end
+    if not character then
+        return
+    end
 
     local keyCode = input.KeyCode
 
-    if keyCode == Enum.KeyCode.V then
-        if mode == "car" then
-            exitCar()
-        else
-            task.spawn(transitionToCar)
-        end
-
-    elseif keyCode == Enum.KeyCode.J then
-        if mode == "jetpack" then
-            cleanupJetpack()
-        else
-            task.spawn(transitionToJetpack)
-        end
-
-    elseif keyCode == Enum.KeyCode.P then
-        if mode == "parachute" then
-            retractParachute()
-        else
-            task.spawn(transitionToParachute)
-        end
-
+    if keyCode == Enum.KeyCode.V or keyCode == Enum.KeyCode.ButtonY then
+        toggleCarMode()
+    elseif keyCode == Enum.KeyCode.J or keyCode == Enum.KeyCode.ButtonX then
+        toggleJetpackMode()
+    elseif keyCode == Enum.KeyCode.P or (keyCode == Enum.KeyCode.ButtonA and mode ~= "car") then
+        toggleParachuteMode()
     elseif keyCode == Enum.KeyCode.E and mode == "car" then
         exitCar()
-
     elseif keyCode == Enum.KeyCode.H and mode == "car" then
         if carHornSound and not carHornSound.IsPlaying then
             carHornSound:Play()
         end
-
     elseif keyCode == Enum.KeyCode.C then
         cinematicMode = not cinematicMode
         if cinematicMode then
@@ -2125,40 +2165,18 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             controlHintTimer = HUD_FADE_DELAY
             if not controlHintsVisible then
                 controlHintsVisible = true
-                tweenProperty(controlHints, { TextTransparency = 0, BackgroundTransparency = 0.4 }, 0.3)
+                tweenProperty(
+                    controlHints,
+                    { TextTransparency = 0, BackgroundTransparency = 0.4 },
+                    0.3
+                )
             end
         else
             disableDOF()
             camera.CameraType = Enum.CameraType.Custom
-            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4: tween
+            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween
             setHUDMode(mode)
         end
-
-    -- Gamepad button bindings
-    elseif keyCode == Enum.KeyCode.ButtonY then
-        -- ButtonY mirrors V key: toggle car
-        if mode == "car" then
-            exitCar()
-        else
-            task.spawn(transitionToCar)
-        end
-
-    elseif keyCode == Enum.KeyCode.ButtonX then
-        -- ButtonX mirrors J key: toggle jetpack
-        if mode == "jetpack" then
-            cleanupJetpack()
-        else
-            task.spawn(transitionToJetpack)
-        end
-
-    elseif keyCode == Enum.KeyCode.ButtonA and mode ~= "car" then
-        -- ButtonA mirrors P key: toggle parachute (not while driving)
-        if mode == "parachute" then
-            retractParachute()
-        else
-            task.spawn(transitionToParachute)
-        end
-
     elseif keyCode == Enum.KeyCode.ButtonB then
         -- ButtonB exits the current active mode
         if mode == "car" then
@@ -2174,16 +2192,17 @@ end)
 --------------------------------------------------------------------------------
 -- MAIN RENDER LOOP
 --------------------------------------------------------------------------------
--- Fix #10: single gamepad read per frame, stored for reuse
-local frameGamepad = nil
-
 RunService.RenderStepped:Connect(function(dt)
     -- Fix #12: resolve character references once at top of render loop
     local char = getCharacter()
-    if not char then return end
+    if not char then
+        return
+    end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hrp then return end
+    if not hrp then
+        return
+    end
 
     -- Fix #10: read gamepad once per frame
     frameGamepad = readGamepad()
@@ -2206,9 +2225,9 @@ RunService.RenderStepped:Connect(function(dt)
         if hum and not hum.Sit then
             mode = "none"
             customCamActive = false
-            camCurrentPos = nil  -- fix #11
+            camCurrentPos = nil -- fix #11
             camera.CameraType = Enum.CameraType.Custom
-            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)  -- fix #4
+            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4
             setHUDMode("none")
         end
     end
@@ -2230,11 +2249,12 @@ RunService.RenderStepped:Connect(function(dt)
         local radius = 150
         local height = 80
         local target = hrp.Position
-        local camPos = target + Vector3.new(
-            math.cos(cinematicAngle) * radius,
-            height,
-            math.sin(cinematicAngle) * radius
-        )
+        local camPos = target
+            + Vector3.new(
+                math.cos(cinematicAngle) * radius,
+                height,
+                math.sin(cinematicAngle) * radius
+            )
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.lookAt(camPos, target)
         camera.FieldOfView = lerp(camera.FieldOfView, 60, math.min(1, 4 * dt))

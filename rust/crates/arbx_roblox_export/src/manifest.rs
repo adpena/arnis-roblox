@@ -2,6 +2,8 @@ use std::fmt::Write as _;
 
 use arbx_geo::{BoundingBox, ChunkId, Footprint, Vec3};
 
+use crate::subplans::ChunkRef;
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Color {
     pub r: u8,
@@ -41,6 +43,7 @@ pub struct TerrainGrid {
 pub struct RoadSegment {
     pub id: String,
     pub kind: String,
+    pub subkind: Option<String>,
     pub material: String,
     pub color: Option<Color>,
     pub lanes: Option<u32>,
@@ -72,6 +75,7 @@ pub struct RailSegment {
 pub struct BuildingShell {
     pub id: String,
     pub footprint: Vec<GroundPoint>,
+    pub holes: Vec<Vec<GroundPoint>>,
     pub indices: Option<Vec<usize>>,
     pub material: String,
     pub wall_color: Option<Color>,
@@ -180,6 +184,7 @@ pub struct ChunkManifest {
     pub schema_version: String,
     pub meta: ManifestMeta,
     pub chunks: Vec<Chunk>,
+    pub chunk_refs: Vec<ChunkRef>,
 }
 
 impl ChunkManifest {
@@ -207,6 +212,18 @@ impl ChunkManifest {
         for (i, chunk) in self.chunks.iter().enumerate() {
             chunk.write_json(out, indent + 4);
             if i + 1 != self.chunks.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        write_indent(out, indent + 2);
+        out.push_str("],\n");
+
+        write_key(out, indent + 2, "chunkRefs");
+        out.push_str("[\n");
+        for (i, chunk_ref) in self.chunk_refs.iter().enumerate() {
+            chunk_ref.write_json(out, indent + 4);
+            if i + 1 != self.chunk_refs.len() {
                 out.push(',');
             }
             out.push('\n');
@@ -262,6 +279,100 @@ impl ChunkManifest {
         }
         write_indent(out, indent + 2);
         out.push_str("]\n");
+
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl ChunkRef {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+
+        write_key(out, indent + 2, "id");
+        write_string(out, &self.id);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "originStuds");
+        write_vec3(out, self.origin_studs, indent + 2);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "featureCount");
+        write!(out, "{}", self.feature_count).unwrap();
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "streamingCost");
+        write_number(out, self.streaming_cost);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "partitionVersion");
+        write_string(out, &self.partition_version);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "subplans");
+        write_array(out, indent + 2, &self.subplans, |item, out, indent| {
+            item.write_json(out, indent)
+        });
+
+        out.push('\n');
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl crate::subplans::ChunkSubplan {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+
+        write_key(out, indent + 2, "id");
+        write_string(out, &self.id);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "layer");
+        write_string(out, &self.layer);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "featureCount");
+        write!(out, "{}", self.feature_count).unwrap();
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "streamingCost");
+        write_number(out, self.streaming_cost);
+
+        if let Some(bounds) = &self.bounds {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "bounds");
+            bounds.write_json(out, indent + 2);
+        }
+
+        out.push('\n');
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+impl crate::subplans::SubplanBounds {
+    fn write_json(&self, out: &mut String, indent: usize) {
+        write_indent(out, indent);
+        out.push_str("{\n");
+
+        write_key(out, indent + 2, "minX");
+        write_number(out, self.min_x);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "minY");
+        write_number(out, self.min_y);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "maxX");
+        write_number(out, self.max_x);
+        out.push_str(",\n");
+
+        write_key(out, indent + 2, "maxY");
+        write_number(out, self.max_y);
+        out.push('\n');
 
         write_indent(out, indent);
         out.push('}');
@@ -410,6 +521,11 @@ impl RoadSegment {
         write_key(out, indent + 2, "kind");
         write_string(out, &self.kind);
         out.push_str(",\n");
+        if let Some(ref s) = self.subkind {
+            write_key(out, indent + 2, "subkind");
+            write_string(out, s);
+            out.push_str(",\n");
+        }
         write_key(out, indent + 2, "material");
         write_string(out, &self.material);
         if let Some(color) = self.color {
@@ -553,6 +669,13 @@ impl BuildingShell {
         out.push_str(",\n");
         write_key(out, indent + 2, "footprint");
         write_ground_points(out, &self.footprint, indent + 2);
+        if !self.holes.is_empty() {
+            out.push_str(",\n");
+            write_key(out, indent + 2, "holes");
+            write_array(out, indent + 2, &self.holes, |hole, out, indent| {
+                write_ground_points(out, hole, indent);
+            });
+        }
         if let Some(idx) = &self.indices {
             out.push_str(",\n");
             write_key(out, indent + 2, "indices");

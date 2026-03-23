@@ -1,16 +1,17 @@
 return function()
     local Workspace = game:GetService("Workspace")
     local ImportService = require(script.Parent.Parent.ImportService)
+    local GroundSampler = require(script.Parent.Parent.ImportService.GroundSampler)
     local Assert = require(script.Parent.Assert)
 
     local terrainHeights = table.create(16 * 16, 20)
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "WaterAlignment",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 2,
         },
@@ -31,7 +32,8 @@ return function()
                 water = {
                     {
                         id = "lake_1",
-                        kind = "water",
+                        kind = "lake",
+                        material = "Water",
                         footprint = {
                             { x = 64, z = 64 },
                             { x = 128, z = 64 },
@@ -56,7 +58,12 @@ return function()
 
     local ray = Workspace:Raycast(Vector3.new(96, 100, 96), Vector3.new(0, -200, 0))
     Assert.truthy(ray, "expected raycast hit over lake")
-    Assert.near(ray.Position.Y, 20, 1.5, "expected water surface near terrain height instead of chunk origin")
+    Assert.near(
+        ray.Position.Y,
+        GroundSampler.sampleRenderedSurfaceHeight(manifest.chunks[1], 96, 96),
+        1.5,
+        "expected water surface near rendered terrain height instead of chunk origin"
+    )
 
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     if worldRoot then

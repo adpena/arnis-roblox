@@ -24,7 +24,7 @@ local function getTimePhase(hour)
     elseif hour >= 7.5 and hour < 17 then
         return "day"
     elseif hour >= 17 and hour < 18.5 then
-        return "golden"    -- compressed for snappier demo pacing
+        return "golden" -- compressed for snappier demo pacing
     elseif hour >= 18.5 and hour < 20 then
         return "dusk"
     else
@@ -33,7 +33,7 @@ local function getTimePhase(hour)
 end
 
 -- Per-phase atmospheric targets.
-local PHASE_SETTINGS = {
+local PHASE_SETTINGS = table.freeze({
     dawn = {
         density = 0.5,
         haze = 2,
@@ -94,7 +94,7 @@ local PHASE_SETTINGS = {
         outdoorAmbient = Color3.fromRGB(25, 28, 40),
         lightsOn = true,
     },
-}
+})
 
 -- ---------------------------------------------------------------------------
 -- Reactive object helpers (street lights, night windows)
@@ -120,7 +120,7 @@ end
 local function isWindowLit(part)
     local pos = part.Position
     local hash = math.floor(math.abs(pos.X * 7 + pos.Z * 13)) % 100
-    return hash < 75  -- 75% lit for vibrant night city feel
+    return hash < 75 -- 75% lit for vibrant night city feel
 end
 
 local function updateReactiveVisibility(reactiveKind, lightsOn)
@@ -184,12 +184,12 @@ end
 
 local LERP_SPEED = 0.12 -- fraction per update interval; feels smooth, not jarring
 
-local function updateLighting(hour)
+local function updateLighting(hour, forceReactiveRefresh)
     local phase = getTimePhase(hour)
     local settings = PHASE_SETTINGS[phase]
 
     -- Drive reactive objects only when the phase boundary is crossed.
-    if phase ~= currentPhase then
+    if forceReactiveRefresh or phase ~= currentPhase then
         updateReactiveVisibility("streetLights", settings.lightsOn)
         updateReactiveVisibility("nightWindows", settings.lightsOn)
         currentPhase = phase
@@ -198,7 +198,8 @@ local function updateLighting(hour)
     -- Atmosphere
     local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
     if atmosphere then
-        atmosphere.Density = atmosphere.Density + (settings.density - atmosphere.Density) * LERP_SPEED
+        atmosphere.Density = atmosphere.Density
+            + (settings.density - atmosphere.Density) * LERP_SPEED
         atmosphere.Haze = atmosphere.Haze + (settings.haze - atmosphere.Haze) * LERP_SPEED
         atmosphere.Color = lerpColor(atmosphere.Color, settings.atmosphereColor, LERP_SPEED)
         atmosphere.Decay = lerpColor(atmosphere.Decay, settings.decayColor, LERP_SPEED)
@@ -214,12 +215,14 @@ local function updateLighting(hour)
     -- Sun rays
     local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
     if sunRays then
-        sunRays.Intensity = sunRays.Intensity + (settings.sunRaysIntensity - sunRays.Intensity) * LERP_SPEED
+        sunRays.Intensity = sunRays.Intensity
+            + (settings.sunRaysIntensity - sunRays.Intensity) * LERP_SPEED
         sunRays.Spread = sunRays.Spread + (settings.sunRaysSpread - sunRays.Spread) * LERP_SPEED
     end
 
     -- Outdoor ambient
-    Lighting.OutdoorAmbient = lerpColor(Lighting.OutdoorAmbient, settings.outdoorAmbient, LERP_SPEED)
+    Lighting.OutdoorAmbient =
+        lerpColor(Lighting.OutdoorAmbient, settings.outdoorAmbient, LERP_SPEED)
 end
 
 function DayNightCycle.Start(speed)
@@ -258,7 +261,7 @@ end
 
 function DayNightCycle.SetTime(hour)
     Lighting.ClockTime = hour
-    updateLighting(hour)
+    updateLighting(hour, true)
 end
 
 --- Configure sun position from geographic coordinates and datetime.
@@ -297,7 +300,7 @@ function DayNightCycle.Configure(latitude, longitude, datetime)
     Lighting.Ambient = Color3.fromRGB(40, 40, 40) -- neutral fill; phase system owns OutdoorAmbient
 
     -- Update the lighting state immediately
-    updateLighting(hour)
+    updateLighting(hour, true)
 end
 
 return DayNightCycle

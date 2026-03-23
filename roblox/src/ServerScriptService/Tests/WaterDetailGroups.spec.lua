@@ -6,12 +6,12 @@ return function()
     local Assert = require(script.Parent.Assert)
 
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "WaterDetailGroups",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 2,
         },
@@ -32,6 +32,8 @@ return function()
                 water = {
                     {
                         id = "river_1",
+                        kind = "river",
+                        material = "Water",
                         points = {
                             { x = 0, y = 4, z = 32 },
                             { x = 32, y = 4, z = 32 },
@@ -41,11 +43,21 @@ return function()
                     },
                     {
                         id = "lake_1",
+                        kind = "lake",
+                        material = "Water",
                         footprint = {
                             { x = 96, z = 32 },
                             { x = 128, z = 32 },
                             { x = 128, z = 64 },
                             { x = 96, z = 64 },
+                        },
+                        holes = {
+                            {
+                                { x = 108, z = 44 },
+                                { x = 116, z = 44 },
+                                { x = 116, z = 52 },
+                                { x = 108, z = 52 },
+                            },
                         },
                     },
                 },
@@ -75,14 +87,24 @@ return function()
     Assert.truthy(waterFolder, "expected water folder")
     local detailFolder = waterFolder:FindFirstChild("Detail")
     Assert.truthy(detailFolder, "expected water detail folder")
-    Assert.truthy(CollectionService:HasTag(detailFolder, "LOD_DetailGroup"), "expected water detail group tag")
-    Assert.equal(detailFolder:GetAttribute("ArnisLodGroupKind"), "detail", "expected water detail lod group kind")
+    Assert.truthy(
+        CollectionService:HasTag(detailFolder, "LOD_DetailGroup"),
+        "expected water detail group tag"
+    )
+    Assert.equal(
+        detailFolder:GetAttribute("ArnisLodGroupKind"),
+        "detail",
+        "expected water detail lod group kind"
+    )
 
     local surfaceCount = 0
     for _, child in ipairs(detailFolder:GetChildren()) do
         if child:IsA("Part") and string.find(child.Name, "WaterSurface", 1, true) then
             surfaceCount += 1
-            Assert.truthy(CollectionService:HasTag(child, "LOD_Detail"), "expected grouped water detail tag")
+            Assert.truthy(
+                CollectionService:HasTag(child, "LOD_Detail"),
+                "expected grouped water detail tag"
+            )
             Assert.near(
                 child:GetAttribute("ArnisBaseTransparency"),
                 0.4,
@@ -99,9 +121,31 @@ return function()
     end
     Assert.truthy(surfaceCount >= 2, "expected grouped ribbon and polygon water surfaces")
 
+    local holeCenter = Vector3.new(112, 0, 48)
+    local holeCoveredByWaterSurface = false
+    for _, child in ipairs(detailFolder:GetChildren()) do
+        if child:IsA("Part") and string.find(child.Name, "PolygonWaterSurface", 1, true) then
+            local localPoint = child.CFrame:PointToObjectSpace(holeCenter)
+            if
+                math.abs(localPoint.X) <= child.Size.X * 0.5
+                and math.abs(localPoint.Z) <= child.Size.Z * 0.5
+            then
+                holeCoveredByWaterSurface = true
+                break
+            end
+        end
+    end
+    Assert.falsy(
+        holeCoveredByWaterSurface,
+        "expected polygon water detail surfaces to respect water holes"
+    )
+
     local chunkEntry = ChunkLoader.GetChunkEntry("0_0")
     Assert.truthy(chunkEntry, "expected water detail chunk entry")
-    Assert.truthy(chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1, "expected registered water detail group")
+    Assert.truthy(
+        chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1,
+        "expected registered water detail group"
+    )
 
     worldRoot:Destroy()
 end

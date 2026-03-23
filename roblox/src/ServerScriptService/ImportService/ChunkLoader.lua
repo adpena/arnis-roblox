@@ -28,7 +28,9 @@ local function collectLodGroups(folder)
             local kind = descendant:GetAttribute("ArnisLodGroupKind")
             if kind == "detail" and CollectionService:HasTag(descendant, "LOD_DetailGroup") then
                 groups.detail[#groups.detail + 1] = descendant
-            elseif kind == "interior" and CollectionService:HasTag(descendant, "LOD_InteriorGroup") then
+            elseif
+                kind == "interior" and CollectionService:HasTag(descendant, "LOD_InteriorGroup")
+            then
                 groups.interior[#groups.interior + 1] = descendant
             end
         end

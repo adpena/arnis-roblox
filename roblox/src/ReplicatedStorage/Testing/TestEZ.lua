@@ -79,12 +79,24 @@ function TestEnv:expect(actual)
         to = {
             equal = function(expected)
                 if actual ~= expected then
-                    error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                    error(
+                        ("Expected %s but got %s"):format(
+                            formatValue(expected),
+                            formatValue(actual)
+                        ),
+                        2
+                    )
                 end
             end,
             toBe = function(expected)
                 if actual ~= expected then
-                    error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                    error(
+                        ("Expected %s but got %s"):format(
+                            formatValue(expected),
+                            formatValue(actual)
+                        ),
+                        2
+                    )
                 end
             end,
             toBeTrue = function()
@@ -117,7 +129,10 @@ function TestEnv:expect(actual)
         },
         toEqual = function(expected)
             if not deepEqual(actual, expected) then
-                error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                error(
+                    ("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)),
+                    2
+                )
             end
         end,
     }
@@ -179,12 +194,24 @@ function TestBlock:expect(actual)
         to = {
             equal = function(expected)
                 if actual ~= expected then
-                    error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                    error(
+                        ("Expected %s but got %s"):format(
+                            formatValue(expected),
+                            formatValue(actual)
+                        ),
+                        2
+                    )
                 end
             end,
             toBe = function(expected)
                 if actual ~= expected then
-                    error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                    error(
+                        ("Expected %s but got %s"):format(
+                            formatValue(expected),
+                            formatValue(actual)
+                        ),
+                        2
+                    )
                 end
             end,
             toBeTrue = function()
@@ -217,7 +244,10 @@ function TestBlock:expect(actual)
         },
         toEqual = function(expected)
             if not deepEqual(actual, expected) then
-                error(("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)), 2)
+                error(
+                    ("Expected %s but got %s"):format(formatValue(expected), formatValue(actual)),
+                    2
+                )
             end
         end,
     }

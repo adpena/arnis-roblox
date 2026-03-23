@@ -35,7 +35,8 @@ For quick end-to-end tests with real OSM data, you can use the helper scripts un
     - `rust/out/austin-manifest.json` – ready to validate with `ChunkSchema` and import into Roblox.
 - `scripts/export_austin_to_lua.sh`:
   - Converts `rust/out/austin-manifest.json` into sharded Roblox fixture modules.
-  - If `specs/generated/austin-preview-downtown.json` exists, it also regenerates the Studio preview shards.
+  - It also refreshes the Studio preview shards from the current exported JSON manifest so edit-mode preview matches the latest runtime data contract without inheriting runtime shard sizing/layout directly.
+  - The script now fails if generated runtime sample-data or preview shards drift back into stale fields, missing preview refs, or oversize VertigoSync shard modules.
   - Usage (from repo root):
     - `bash scripts/export_austin_to_lua.sh`
   - Output:

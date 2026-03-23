@@ -3,6 +3,7 @@ pub mod satellite;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::ops::Sub;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -35,8 +36,12 @@ impl Vec2 {
     pub fn dot(self, other: Self) -> f64 {
         self.x * other.x + self.y * other.y
     }
+}
 
-    pub fn sub(self, other: Self) -> Self {
+impl Sub for Vec2 {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
         Self::new(self.x - other.x, self.y - other.y)
     }
 }
@@ -118,6 +123,15 @@ impl Mercator {
         (x, y)
     }
 
+    pub fn meters_to_latlon(x_meters: f64, y_meters: f64) -> LatLon {
+        let lon = (x_meters / Self::EARTH_RADIUS_METERS).to_degrees();
+        let lat = (y_meters / Self::EARTH_RADIUS_METERS)
+            .sinh()
+            .atan()
+            .to_degrees();
+        LatLon::new(lat, lon)
+    }
+
     /// Projects a LatLon to local studs relative to a center point.
     /// X+ = East, Z+ = South (matches Roblox/Minecraft convention).
     pub fn project(latlon: LatLon, center: LatLon, meters_per_stud: f64) -> Vec3 {
@@ -129,6 +143,14 @@ impl Mercator {
         let dz = (cy - py) / meters_per_stud;
 
         Vec3::new(dx, 0.0, dz)
+    }
+
+    /// Inverse of `project`, recovering a LatLon from local stud-space XZ.
+    pub fn unproject(position: Vec3, center: LatLon, meters_per_stud: f64) -> LatLon {
+        let (cx, cy) = Self::latlon_to_meters(center);
+        let px = cx + (position.x * meters_per_stud);
+        let py = cy - (position.z * meters_per_stud);
+        Self::meters_to_latlon(px, py)
     }
 }
 
@@ -337,7 +359,7 @@ fn lat_lon_to_pixel(lat: f64, lon: f64, zoom: u32) -> (u32, u32, f64, f64) {
     (tx, ty, px, py)
 }
 
-fn fill_gaps(grid: &mut Vec<Vec<f32>>) {
+fn fill_gaps(grid: &mut [Vec<f32>]) {
     let w = grid.len();
     let h = if w > 0 { grid[0].len() } else { 0 };
     if w == 0 || h == 0 {
@@ -351,7 +373,7 @@ fn fill_gaps(grid: &mut Vec<Vec<f32>>) {
             for y in 0..h {
                 if grid[x][y] == 0.0 || grid[x][y] < -1000.0 {
                     let mut neighbors: Vec<f32> = Vec::new();
-                    
+
                     if x > 0 && grid[x - 1][y] != 0.0 && grid[x - 1][y] > -1000.0 {
                         neighbors.push(grid[x - 1][y]);
                     }
@@ -364,7 +386,7 @@ fn fill_gaps(grid: &mut Vec<Vec<f32>>) {
                     if y + 1 < h && grid[x][y + 1] != 0.0 && grid[x][y + 1] > -1000.0 {
                         neighbors.push(grid[x][y + 1]);
                     }
-                    
+
                     if !neighbors.is_empty() {
                         grid[x][y] = neighbors.iter().sum::<f32>() / neighbors.len() as f32;
                         changed = true;
@@ -375,21 +397,17 @@ fn fill_gaps(grid: &mut Vec<Vec<f32>>) {
     }
 }
 
-fn gaussian_blur(grid: &Vec<Vec<f32>>) -> Vec<Vec<f32>> {
-    let kernel = [
-        [1.0f32, 2.0, 1.0],
-        [2.0, 4.0, 2.0],
-        [1.0, 2.0, 1.0],
-    ];
+fn gaussian_blur(grid: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    let kernel = [[1.0f32, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]];
     let weight_sum = 16.0f32;
     let w = grid.len();
     let h = if w > 0 { grid[0].len() } else { 0 };
-    let mut out = grid.clone();
-    
+    let mut out = grid.to_owned();
+
     if w < 3 || h < 3 {
         return out;
     }
-    
+
     for x in 1..w - 1 {
         for y in 1..h - 1 {
             let mut sum = 0.0f32;
@@ -421,11 +439,17 @@ fn download_terrarium_tile(
         std::thread::sleep(std::time::Duration::from_millis(150));
         let output = std::process::Command::new("curl")
             .args([
-                "-sL", "--fail",
-                "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
-                "--retry", "3",
-                "--retry-delay", "2",
-                "-o", &path, &url,
+                "-sL",
+                "--fail",
+                "--user-agent",
+                "arnis-roblox/1.0 (open-source educational project)",
+                "--retry",
+                "3",
+                "--retry-delay",
+                "2",
+                "-o",
+                &path,
+                &url,
             ])
             .output()?;
         if !output.status.success() {
@@ -448,10 +472,10 @@ fn download_terrarium_tile(
             grid[px as usize][py as usize] = elev;
         }
     }
-    
+
     fill_gaps(&mut grid);
     let grid = gaussian_blur(&grid);
-    
+
     Ok(grid)
 }
 
@@ -486,39 +510,38 @@ impl TerrariumElevationProvider {
     }
 }
 
-fn bilinear(grid: &Vec<Vec<f32>>, px: f64, py: f64) -> f32 {
+fn bilinear(grid: &[Vec<f32>], px: f64, py: f64) -> f32 {
     let w = grid.len();
     let h = if w > 0 { grid[0].len() } else { 0 };
-    
+
     if w == 0 || h == 0 {
         return 0.0;
     }
-    
+
     let px = px.max(0.0).min((w - 1) as f64);
     let py = py.max(0.0).min((h - 1) as f64);
-    
+
     let x0 = px.floor() as usize;
     let y0 = py.floor() as usize;
     let x1 = (x0 + 1).min(w - 1);
     let y1 = (y0 + 1).min(h - 1);
-    
+
     let fx = (px - px.floor()) as f32;
     let fy = (py - py.floor()) as f32;
-    
+
     let v00 = grid[x0][y0];
     let v10 = grid[x1][y0];
     let v01 = grid[x0][y1];
     let v11 = grid[x1][y1];
-    
-    v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy)
-        + v01 * (1.0 - fx) * fy + v11 * fx * fy
+
+    v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy) + v01 * (1.0 - fx) * fy + v11 * fx * fy
 }
 
 impl ElevationProvider for TerrariumElevationProvider {
     fn sample_height_at(&self, latlon: LatLon) -> f32 {
         let (tx, ty, px, py) = lat_lon_to_pixel(latlon.lat, latlon.lon, self.zoom);
         if let Some(grid) = self.tiles.get(&(tx, ty)) {
-            bilinear(&grid, px as f64, py as f64)
+            bilinear(grid, px, py)
         } else {
             0.0
         }
@@ -592,7 +615,7 @@ impl Footprint {
                 let b = self.points[indices[i]];
                 let c = self.points[indices[next]];
 
-                if self.is_ear(a, b, c, &indices, i, prev, next) {
+                if self.is_ear(a, b, c, &indices, [i, prev, next]) {
                     result.push(indices[prev]);
                     result.push(indices[i]);
                     result.push(indices[next]);
@@ -622,13 +645,11 @@ impl Footprint {
         b: Vec2,
         c: Vec2,
         indices: &[usize],
-        i: usize,
-        prev: usize,
-        next: usize,
+        skip_positions: [usize; 3],
     ) -> bool {
         // Must be convex
-        let v1 = b.sub(a);
-        let v2 = c.sub(b);
+        let v1 = b - a;
+        let v2 = c - b;
         let cross = v1.cross(v2);
 
         // Simple version: assume CCW for positive cross
@@ -638,7 +659,7 @@ impl Footprint {
 
         // No other points inside triangle
         for (idx, &p_idx) in indices.iter().enumerate() {
-            if idx == i || idx == prev || idx == next {
+            if skip_positions.contains(&idx) {
                 continue;
             }
             let p = self.points[p_idx];
@@ -651,9 +672,9 @@ impl Footprint {
     }
 
     fn point_in_triangle(&self, p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
-        let v0 = c.sub(a);
-        let v1 = b.sub(a);
-        let v2 = p.sub(a);
+        let v0 = c - a;
+        let v1 = b - a;
+        let v2 = p - a;
 
         let dot00 = v0.dot(v0);
         let dot01 = v0.dot(v1);
@@ -697,5 +718,37 @@ mod tests {
         // 30.2 -> N30 (floor(30.2)=30). -97.7 -> W098 (floor(-97.7)=-98, abs=98).
         // SRTM tile N30W098.hgt covers 30-31N and 97-98W.
         assert!(path.to_str().unwrap().contains("N30W098.hgt"));
+    }
+
+    #[test]
+    fn mercator_project_roundtrip_preserves_austin_bbox_edges() {
+        let center = LatLon::new(30.275, -97.74);
+        let meters_per_stud = 0.3;
+        let test_points = [
+            LatLon::new(30.245, -97.765),
+            LatLon::new(30.245, -97.715),
+            LatLon::new(30.305, -97.765),
+            LatLon::new(30.305, -97.715),
+        ];
+
+        for point in test_points {
+            let projected = Mercator::project(point, center, meters_per_stud);
+            let roundtrip = Mercator::unproject(projected, center, meters_per_stud);
+            let lat_error_m = (roundtrip.lat - point.lat).abs() * 111_111.0;
+            let lon_error_m =
+                (roundtrip.lon - point.lon).abs() * 111_111.0 * center.lat.to_radians().cos();
+            assert!(
+                lat_error_m < 0.01,
+                "expected Mercator roundtrip lat error < 1cm, got {:.6}m for {:?}",
+                lat_error_m,
+                point
+            );
+            assert!(
+                lon_error_m < 0.01,
+                "expected Mercator roundtrip lon error < 1cm, got {:.6}m for {:?}",
+                lon_error_m,
+                point
+            );
+        }
     }
 }

@@ -1,2 +1,2 @@
-std = "roblox"
+std = "roblox+arnis_roblox"
 exclude = ["Packages/**"]

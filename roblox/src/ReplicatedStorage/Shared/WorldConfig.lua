@@ -19,18 +19,18 @@ local WorldConfig = {
     -- ═══════════════════════════════════════════════════════════════
     -- RENDER MODES
     -- ═══════════════════════════════════════════════════════════════
-    TerrainMode = "voxel",       -- "none" | "debugParts" | "voxel"
-    RoadMode = "mesh",           -- "none" | "parts" | "mesh" | "hybrid"
-    BuildingMode = "shellMesh",  -- "none" | "shellParts" | "shellMesh" | "prefab"
-    WaterMode = "mesh",          -- "none" | "mesh"
-    LanduseMode = "fill",        -- "none" | "fill"
+    TerrainMode = "voxel", -- "none" | "debugParts" | "voxel"
+    RoadMode = "mesh", -- "none" | "parts" | "mesh" | "hybrid"
+    BuildingMode = "shellMesh", -- "none" | "shellParts" | "shellMesh" | "prefab"
+    WaterMode = "mesh", -- "none" | "mesh"
+    LanduseMode = "fill", -- "none" | "fill"
 
     -- ═══════════════════════════════════════════════════════════════
     -- TERRAIN FIDELITY
     -- ═══════════════════════════════════════════════════════════════
-    VoxelSize = 1,               -- studs; 1 = maximum smoothness (4 = fast, 2 = balanced)
-    TerrainThickness = 8,        -- studs below surface to fill with solid terrain
-    SlopeRockThreshold = 1.0,    -- rise/run ratio above which terrain becomes Rock (≈45°)
+    VoxelSize = 1, -- studs; 1 = maximum smoothness (4 = fast, 2 = balanced)
+    TerrainThickness = 8, -- studs below surface to fill with solid terrain
+    SlopeRockThreshold = 1.0, -- rise/run ratio above which terrain becomes Rock (≈45°)
     SlopeGroundThreshold = 0.47, -- rise/run ratio above which terrain becomes Ground (≈25°)
 
     -- ═══════════════════════════════════════════════════════════════
@@ -38,7 +38,7 @@ local WorldConfig = {
     -- ═══════════════════════════════════════════════════════════════
     EnableWindowRendering = true,
     EnableRoomInteriors = true,
-    WindowSpacing = {            -- studs between windows by building usage
+    WindowSpacing = { -- studs between windows by building usage
         office = 4,
         residential = 6,
         apartments = 6,
@@ -51,15 +51,16 @@ local WorldConfig = {
     -- ═══════════════════════════════════════════════════════════════
     -- ROAD FIDELITY
     -- ═══════════════════════════════════════════════════════════════
-    LaneWidth = 12,              -- studs per lane (~3.6m at 0.3 m/stud)
+    LaneWidth = 12, -- studs per lane (~3.6m at 0.3 m/stud)
+    GroundRoadClearance = 0.75, -- studs above sampled terrain for roads/pathways to avoid burial/z-fighting
     EnableStreetLighting = true,
-    StreetLightInterval = 50,    -- studs between street lights
-    StreetLightRange = 40,       -- PointLight range in studs
+    StreetLightInterval = 50, -- studs between street lights
+    StreetLightRange = 40, -- PointLight range in studs
 
     -- ═══════════════════════════════════════════════════════════════
     -- WATER FIDELITY
     -- ═══════════════════════════════════════════════════════════════
-    WaterCarveDepth = 4,         -- studs to carve below water surface
+    WaterCarveDepth = 4, -- studs to carve below water surface
 
     -- ═══════════════════════════════════════════════════════════════
     -- PROP FIDELITY
@@ -73,21 +74,29 @@ local WorldConfig = {
     StreamingEnabled = false,
     StreamingTargetRadius = 4096,
     HighDetailRadius = 2048,
+    StreamingUpdateIntervalSeconds = 0.25,
+    StreamingMaxWorkItemsPerUpdate = 4,
+    StreamingImportFrameBudgetSeconds = 1 / 240,
+    SubplanRollout = {
+        Enabled = true,
+        AllowedLayers = {},
+        AllowedChunkIds = {},
+    },
 
     -- ═══════════════════════════════════════════════════════════════
     -- ATMOSPHERE & LIGHTING
     -- ═══════════════════════════════════════════════════════════════
-    EnableAtmosphere = true,     -- set false to skip cinematic lighting setup
+    EnableAtmosphere = true, -- set false to skip cinematic lighting setup
     EnableDayNightCycle = true,
-    DayNightSpeed = 60,          -- 60 = 1 game-day per 24 minutes, 0 = frozen
-    DateTime = "auto",           -- "auto" = system time at location, or "2024-06-15T14:00" for specific time
+    DayNightSpeed = 60, -- 60 = 1 game-day per 24 minutes, 0 = frozen
+    DateTime = "auto", -- "auto" = system time at location, or "2024-06-15T14:00" for specific time
 
     -- ═══════════════════════════════════════════════════════════════
     -- MINIMAP
     -- ═══════════════════════════════════════════════════════════════
     EnableMinimap = true,
-    MinimapRadius = 400,         -- world studs visible in minimap
-    MinimapSize = 200,           -- pixel resolution
+    MinimapRadius = 400, -- world studs visible in minimap
+    MinimapSize = 200, -- pixel resolution
 
     -- ═══════════════════════════════════════════════════════════════
     -- AMBIENT CITY LIFE
@@ -102,7 +111,7 @@ local WorldConfig = {
     InstanceBudget = {
         MaxPerChunk = 8000,
         MaxPropsPerChunk = 2000,
-        MaxWindowsPerChunk = 10000,  -- effectively unlimited on M5 Max
+        MaxWindowsPerChunk = 10000, -- effectively unlimited on M5 Max
     },
 }
 

@@ -1,10 +1,13 @@
+--!optimize 2
+--!native
+
 local GroundSampler = require(script.Parent.GroundSampler)
 local RoadProfile = require(script.Parent.RoadProfile)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 local RoadChunkPlan = {}
 
-local LANE_WIDTH = WorldConfig.LaneWidth or 12
+local GROUND_ROAD_CLEARANCE = WorldConfig.GroundRoadClearance or 0.75
 
 local function offsetPoint(point, origin)
     return Vector3.new(point.x + origin.x, point.y + origin.y, point.z + origin.z)
@@ -27,18 +30,29 @@ local function getSidewalkMode(road)
     return road.hasSidewalk and "both" or "no"
 end
 
-local function getEffectiveWidth(road, profileWidth)
-    if road.lanes and road.lanes > 0 then
-        return road.lanes * LANE_WIDTH
-    end
+local function getEffectiveWidth(_road, profileWidth)
     return profileWidth
+end
+
+local function alignGroundPoint(point, sampleGroundY)
+    if not sampleGroundY then
+        return point
+    end
+
+    local groundY = sampleGroundY(point.X, point.Z)
+    local targetY = if type(groundY) == "number" then groundY + GROUND_ROAD_CLEARANCE else nil
+    if type(targetY) ~= "number" or targetY <= point.Y then
+        return point
+    end
+
+    return Vector3.new(point.X, targetY, point.Z)
 end
 
 function RoadChunkPlan.build(roads, originStuds, chunk, options)
     local classifySegment = (options and options.classifySegment) or defaultClassifySegment
     local getMaterial = options and options.getMaterial
     local getRoadColor = options and options.getRoadColor
-    local sampleGroundY = if chunk then GroundSampler.createSampler(chunk) else nil
+    local sampleGroundY = if chunk then GroundSampler.createRenderedSurfaceSampler(chunk) else nil
     local plannedRoads = {}
 
     for _, road in ipairs(roads or {}) do
@@ -70,6 +84,10 @@ function RoadChunkPlan.build(roads, originStuds, chunk, options)
             end
 
             local mode, resolvedP1, resolvedP2 = classifySegment(road, p1, p2, chunk)
+            if mode == "ground" then
+                resolvedP1 = alignGroundPoint(resolvedP1, sampleGroundY)
+                resolvedP2 = alignGroundPoint(resolvedP2, sampleGroundY)
+            end
             local direction = resolvedP2 - resolvedP1
             if direction.Magnitude > 0.01 then
                 local unitDirection = direction.Unit

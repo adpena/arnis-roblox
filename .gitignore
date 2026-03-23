@@ -1,7 +1,6 @@
 # Rust
 /target
 **/target
-Cargo.lock
 
 # Python
 __pycache__/
@@ -29,11 +28,16 @@ Thumbs.db
 .vscode/
 .idea/
 analysis/
+.worktrees/
+worktrees/
 
 # Generated outputs / temp
 out/
 tmp/
 rust/out/
+rust/fuzz/artifacts/
+rust/fuzz/corpus/
+rust/fuzz/coverage/
 *.log
 
 # Local secrets / env

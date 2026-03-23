@@ -12,11 +12,27 @@
         "src/ReplicatedStorage/Shared",
         "src/ServerStorage"
       ]
+    },
+    "editPreview": {
+      "enabled": true,
+      "builderModulePath": "ServerScriptService.StudioPreview.AustinPreviewBuilder",
+      "builderMethod": "Build",
+      "watchRoots": [
+        "ServerScriptService.StudioPreview",
+        "ServerScriptService.ImportService",
+        "ReplicatedStorage.Shared",
+        "ServerStorage"
+      ],
+      "debounceSeconds": 0.25,
+      "rootRefreshSeconds": 1.0,
+      "mode": "edit_only"
     }
   },
   "globIgnorePaths": [
     "**/*.md",
-    "**/.DS_Store"
+    "**/.DS_Store",
+    "src/ServerStorage/SampleData/AustinHDManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinHDManifestChunks/**"
   ],
   "tree": {
     "$className": "DataModel",
@@ -29,6 +45,18 @@
     "ServerStorage": {
       "$path": "src/ServerStorage"
     },
+    "Lighting": {
+      "$className": "Lighting",
+      "$path": "src/Lighting",
+      "$properties": {
+        "Technology": "Future",
+        "GlobalShadows": true,
+        "Brightness": 2,
+        "EnvironmentDiffuseScale": 1,
+        "EnvironmentSpecularScale": 1,
+        "ShadowSoftness": 0.2
+      }
+    },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
@@ -39,6 +67,9 @@
       "$className": "Workspace",
       "$properties": {
         "StreamingEnabled": false
+      },
+      "$attributes": {
+        "VertigoSyncServerUrl": "http://127.0.0.1:34872"
       },
       "$path": "src/Workspace"
     }

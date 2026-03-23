@@ -6,7 +6,6 @@ local LoadingScreen = {}
 local screenGui = nil
 local progressBar = nil
 local statusLabel = nil
-local cityLabel = nil
 
 function LoadingScreen.Show(worldName)
     -- Create for all players
@@ -42,8 +41,6 @@ function LoadingScreen.Show(worldName)
         title.TextSize = 42
         title.Font = Enum.Font.GothamBold
         title.Parent = bg
-        cityLabel = title
-
         -- Subtitle
         local subtitle = Instance.new("TextLabel")
         subtitle.Name = "Subtitle"
@@ -116,7 +113,7 @@ end
 function LoadingScreen.UpdateProgress(fraction, statusText)
     if progressBar then
         TweenService:Create(progressBar, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
-            Size = UDim2.new(math.clamp(fraction, 0, 1), 0, 1, 0)
+            Size = UDim2.new(math.clamp(fraction, 0, 1), 0, 1, 0),
         }):Play()
     end
     if statusLabel and statusText then
@@ -125,28 +122,33 @@ function LoadingScreen.UpdateProgress(fraction, statusText)
 end
 
 function LoadingScreen.Hide()
-    if not screenGui then return end
+    if not screenGui then
+        return
+    end
     -- Fade out
     local bg = screenGui:FindFirstChild("Background")
     if bg then
         TweenService:Create(bg, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
-            BackgroundTransparency = 1
+            BackgroundTransparency = 1,
         }):Play()
         -- Fade all children
         for _, child in ipairs(bg:GetDescendants()) do
             if child:IsA("TextLabel") then
                 TweenService:Create(child, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
-                    TextTransparency = 1
+                    TextTransparency = 1,
                 }):Play()
             elseif child:IsA("Frame") then
                 TweenService:Create(child, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
-                    BackgroundTransparency = 1
+                    BackgroundTransparency = 1,
                 }):Play()
             end
         end
     end
     task.delay(2, function()
-        if screenGui then screenGui:Destroy(); screenGui = nil end
+        if screenGui then
+            screenGui:Destroy()
+            screenGui = nil
+        end
     end)
 end
 

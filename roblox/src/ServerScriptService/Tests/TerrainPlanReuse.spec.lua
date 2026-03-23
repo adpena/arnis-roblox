@@ -35,10 +35,24 @@ return function()
     local secondPlan = TerrainBuilder.PrepareChunk(chunk)
 
     Assert.truthy(firstPlan, "expected terrain build plan to be created")
-    Assert.equal(firstPlan, secondPlan, "expected terrain build plan to be reused for the same chunk table")
+    Assert.equal(
+        firstPlan,
+        secondPlan,
+        "expected terrain build plan to be reused for the same chunk table"
+    )
     Assert.equal(
         TerrainBuilder.GetPreparedChunkPlan(chunk),
         firstPlan,
         "expected prepared terrain build plan to stay attached to the chunk"
+    )
+    Assert.equal(
+        firstPlan.writeResolution,
+        4,
+        "expected terrain plans to use Roblox's required 4-stud write resolution"
+    )
+    Assert.equal(
+        firstPlan.requestedSampleResolution,
+        1,
+        "expected terrain plans to preserve the configured sampling intent"
     )
 end

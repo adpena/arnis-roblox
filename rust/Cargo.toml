@@ -5,6 +5,7 @@ members = [
     "crates/arbx_roblox_export",
     "crates/arbx_cli",
 ]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]

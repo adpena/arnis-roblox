@@ -4,7 +4,8 @@ return function()
 
     local primaryWithSidewalk = {
         kind = "primary",
-        widthStuds = 12,
+        widthStuds = 20,
+        lanes = 2,
         hasSidewalk = true,
     }
     local residentialNoSidewalk = {
@@ -13,15 +14,19 @@ return function()
         hasSidewalk = false,
     }
 
-    Assert.equal(RoadProfile.getRoadWidth(primaryWithSidewalk), 12, "expected explicit road width")
+    Assert.equal(
+        RoadProfile.getRoadWidth(primaryWithSidewalk),
+        20,
+        "expected explicit manifest width to stay authoritative even when lanes metadata exists"
+    )
     Assert.near(
-        RoadProfile.getSidewalkWidth(primaryWithSidewalk, 12),
-        3,
+        RoadProfile.getSidewalkWidth(primaryWithSidewalk, 20),
+        4,
         0.001,
-        "expected sidewalk width from road profile"
+        "expected sidewalk width to be derived from the canonical road width"
     )
     Assert.truthy(
-        RoadProfile.getRoadClearance(primaryWithSidewalk, 12) > 9,
+        RoadProfile.getRoadClearance(primaryWithSidewalk, 20) > 12,
         "expected wider road clearance when sidewalks exist"
     )
 

@@ -28,7 +28,7 @@ The Arnis Roblox pipeline takes a bounding box (latitude/longitude) and produces
 ### Prerequisites
 
 - Rust toolchain (for the CLI pipeline)
-- Rojo (for syncing to Roblox Studio)
+- `vertigo-sync` (Rojo-compatible Studio sync and build tooling)
 
 ### 1. Export a city
 
@@ -45,16 +45,38 @@ cargo run --bin arbx_cli -- compile --live --bbox 35.68,139.75,35.69,139.76 --pr
 cargo run --bin arbx_cli -- compile --live --bbox 51.50,-0.13,51.51,-0.12 --satellite --out ../out/london.json
 ```
 
-### 2. Import into Roblox Studio
+### 2. Bootstrap a clean Arnis Studio place
+
+```bash
+python3 scripts/bootstrap_arnis_studio.py --open --serve
+```
+
+This builds the supported clean place from [`roblox/default.project.json`](/Users/adpena/Projects/arnis-roblox/roblox/default.project.json) into `roblox/out/arnis-test-clean.rbxlx`, starts the local `vsync serve --project default.project.json` process, and opens it in Studio when available. `scripts/bootstrap_vsync_place.py` remains as a compatibility shim for the older command name.
+
+For a stable Austin export outside `roblox/out`, use:
+
+```bash
+bash scripts/build_austin_max_fidelity_place.sh
+```
+
+That runs the Austin export with `--yolo` (`terrain_cell_size=1`, satellite on), then builds a clean `.rbxlx` into [`exports/`](/Users/adpena/Projects/arnis-roblox/exports).
+
+For an end-to-end Studio validation pass against that exported place, use:
+
+```bash
+bash scripts/test_austin_max_fidelity_e2e.sh
+```
+
+### 3. Enable live sync when you want iteration
 
 ```bash
 cd roblox
-rojo serve
+vsync serve --project default.project.json
 ```
 
-Connect Rojo in Studio, press Play. The world loads with a loading screen, atmospheric effects, and full gameplay.
+Install the generic `VertigoSyncPlugin`, let it connect to the local `vsync` server, then press Play. The world loads with a loading screen, atmospheric effects, and full gameplay.
 
-### 3. Play
+### 4. Play
 
 | Key | Action |
 |-----|--------|
@@ -110,6 +132,14 @@ OSM/Overpass Data + Mapbox DEM + ESRI Satellite
 │ + AmbientSoundscape + VehicleController          │
 └──────────────────────────────────────────────────┘
 ```
+
+## VertigoSync Boundary
+
+VertigoSync is an optional Studio-sync integration, not part of the core importer contract. This repo owns manifest correctness, importer/runtime behavior, and edit/play verification; VertigoSync should live in an adjacent repo and integrate through a thin compatibility layer only.
+
+That does not make it disposable. It is still a key local-development tool for this project, and bugs in sync transport or plugin packaging should be fixed in `vertigo-sync` rather than hidden inside importer/runtime code.
+
+See [docs/vertigo-sync-boundary.md](/Users/adpena/Projects/arnis-roblox/docs/vertigo-sync-boundary.md).
 
 ## Data Sources
 
@@ -211,7 +241,7 @@ arbx_cli config          # emit default WorldConfig JSON
 │       ├── arbx_geo/              # Elevation, satellite, projection
 │       ├── arbx_pipeline/         # Feature extraction, Overpass, stages
 │       └── arbx_roblox_export/    # Chunker, manifest, materials
-├── roblox/                        # Roblox project (Rojo)
+├── roblox/                        # Roblox project (Vertigo Sync / Rojo-style project file)
 │   └── src/
 │       ├── ReplicatedStorage/     # WorldConfig, Schema, Migrations
 │       ├── ServerScriptService/   # ImportService + all builders

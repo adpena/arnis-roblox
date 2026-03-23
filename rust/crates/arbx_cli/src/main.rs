@@ -1,11 +1,23 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use arbx_geo::{BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevationProvider, OffsetElevationProvider, TerrariumElevationProvider};
-use arbx_pipeline::{run_pipeline, ElevationEnrichmentStage, NormalizeStage, TriangulateStage, ValidateStage};
-use arbx_roblox_export::{build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider};
+use arbx_geo::{
+    BoundingBox, ElevationProvider, FlatElevationProvider, HgtElevationProvider,
+    OffsetElevationProvider, TerrariumElevationProvider,
+};
+use arbx_pipeline::{
+    run_pipeline, ElevationEnrichmentStage, NormalizeStage, TriangulateStage, ValidateStage,
+};
+use arbx_roblox_export::{
+    build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider,
+};
+use rayon::prelude::*;
+use serde_json::{json, Value};
+
+const SCENE_INDEX_VERSION: u64 = 2;
 
 fn srtm_tile_name(lat: f64, lon: f64) -> String {
     let lat_i = lat.floor() as i32;
@@ -30,6 +42,8 @@ fn print_help() {
     println!("  stats      Print statistics for a manifest file");
     println!("  validate   Validate a manifest against the schema");
     println!("  diff       Compare two manifest files");
+    println!("  scene-index Build a compact per-chunk scene-audit summary");
+    println!("  scene-audit Compare Studio scene markers against manifest truth");
     println!("  config     Emit a default world configuration JSON");
     println!("  explain    Print the full pipeline architecture for agents");
     println!();
@@ -48,7 +62,9 @@ fn print_help() {
     println!("  --cache-dir PATH       Overpass API response cache (default: out/overpass)");
     println!();
     println!("QUALITY PROFILES:");
-    println!("  --profile insane       cell=1 sat=on  (256x256 grid, ~2GB RAM, M5 Max / workstation)");
+    println!(
+        "  --profile insane       cell=1 sat=on  (256x256 grid, ~2GB RAM, M5 Max / workstation)"
+    );
     println!("  --profile high         cell=2 sat=on  (128x128 grid, ~512MB RAM) [default]");
     println!("  --profile balanced     cell=4 sat=off (64x64 grid, ~128MB RAM, 8GB machines)");
     println!("  --profile fast         cell=8 sat=off (32x32 grid, ~32MB RAM, CI/testing)");
@@ -77,6 +93,14 @@ fn print_help() {
     println!();
     println!("  # Compare two exports");
     println!("  arbx_cli diff out/v1.json out/v2.json");
+    println!();
+    println!("  # Build a compact chunk summary for fast scene audits");
+    println!(
+        "  arbx_cli scene-index --manifest out/austin.json --json-out out/austin.scene-index.json"
+    );
+    println!();
+    println!("  # Compare Studio scene markers against manifest truth");
+    println!("  arbx_cli scene-audit --manifest-summary out/austin.scene-index.json --log studio.log --marker ARNIS_SCENE_EDIT");
     println!();
     println!("  # Get pipeline info (for AI agents)");
     println!("  arbx_cli explain");
@@ -191,11 +215,16 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 i += 2;
             }
             "--world-name" => {
-                world_name = args.get(i + 1).ok_or("--world-name requires a name")?.clone();
+                world_name = args
+                    .get(i + 1)
+                    .ok_or("--world-name requires a name")?
+                    .clone();
                 i += 2;
             }
             "--meters-per-stud" => {
-                let value = args.get(i + 1).ok_or("--meters-per-stud requires a number")?;
+                let value = args
+                    .get(i + 1)
+                    .ok_or("--meters-per-stud requires a number")?;
                 meters_per_stud = value
                     .parse::<f64>()
                     .map_err(|_| format!("invalid --meters-per-stud value: {value}"))?;
@@ -214,10 +243,13 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 i += 2;
             }
             "--terrain-cell-size" => {
-                let value = args.get(i + 1).ok_or("--terrain-cell-size requires a number")?;
-                terrain_cell_size = value.parse::<i32>()
+                let value = args
+                    .get(i + 1)
+                    .ok_or("--terrain-cell-size requires a number")?;
+                terrain_cell_size = value
+                    .parse::<i32>()
                     .map_err(|_| format!("invalid --terrain-cell-size: {value}"))?;
-                if terrain_cell_size < 1 || terrain_cell_size > 32 {
+                if !(1..=32).contains(&terrain_cell_size) {
                     return Err("--terrain-cell-size must be 1-32".to_string());
                 }
                 i += 2;
@@ -248,18 +280,22 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                         eprintln!("Profile: fast — cell=8 (4GB+ RAM)");
                     }
                     other => {
-                        return Err(format!("unknown profile: {other} (valid: insane, high, balanced, fast)"));
+                        return Err(format!(
+                            "unknown profile: {other} (valid: insane, high, balanced, fast)"
+                        ));
                     }
                 }
                 i += 2;
             }
             "--yolo" => {
-                terrain_cell_size = 1;  // 256×256 grid = 65,536 cells per chunk
-                // satellite enabled automatically
+                terrain_cell_size = 1; // 256×256 grid = 65,536 cells per chunk
+                                       // satellite enabled automatically
                 if satellite_dir.is_none() {
                     satellite_dir = Some("out/tiles/satellite".to_string());
                 }
-                eprintln!("YOLO MODE (--profile insane): terrain cell=1, satellite=on, maximum fidelity");
+                eprintln!(
+                    "YOLO MODE (--profile insane): terrain cell=1, satellite=on, maximum fidelity"
+                );
                 i += 1;
             }
             "--satellite" => {
@@ -309,7 +345,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         Box::new(arbx_pipeline::SyntheticAustinAdapter { meters_per_stud })
     };
 
-    println!("Compiling from {}... (meters_per_stud={meters_per_stud})", adapter.name());
+    println!(
+        "Compiling from {}... (meters_per_stud={meters_per_stud})",
+        adapter.name()
+    );
 
     let config = ExportConfig {
         meters_per_stud,
@@ -334,11 +373,18 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         );
         let status = std::process::Command::new("curl")
             .args([
-                "-L", "-o", gz_path.to_str().unwrap(), url.as_str(),
-                "--silent", "--fail",
-                "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
-                "--retry", "3",
-                "--retry-delay", "5",
+                "-L",
+                "-o",
+                gz_path.to_str().unwrap(),
+                url.as_str(),
+                "--silent",
+                "--fail",
+                "--user-agent",
+                "arnis-roblox/1.0 (open-source educational project)",
+                "--retry",
+                "3",
+                "--retry-delay",
+                "5",
             ])
             .status();
         if status.map(|s| s.success()).unwrap_or(false) {
@@ -359,7 +405,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             Ok(terrarium) => {
                 let center = bbox.center();
                 let base = terrarium.sample_height_at(center);
-                eprintln!("Using Terrarium elevation, base offset = {:.1}m at bbox center", base);
+                eprintln!(
+                    "Using Terrarium elevation, base offset = {:.1}m at bbox center",
+                    base
+                );
                 Box::new(OffsetElevationProvider::new(Box::new(terrarium), base))
             }
             Err(e) => {
@@ -367,7 +416,10 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 if hgt_path.exists() {
                     let hgt = HgtElevationProvider::new(PathBuf::from("data"));
                     let base = hgt.sample_height_at(bbox.center());
-                    eprintln!("Using SRTM elevation, base offset = {:.1}m at bbox center", base);
+                    eprintln!(
+                        "Using SRTM elevation, base offset = {:.1}m at bbox center",
+                        base
+                    );
                     Box::new(OffsetElevationProvider::new(Box::new(hgt), base))
                 } else {
                     eprintln!("No SRTM tile found, using flat elevation.");
@@ -401,8 +453,9 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         &config,
         elevation.as_ref(),
         sat_provider.as_mut(),
-    )
-    .to_json_pretty();
+    );
+    // Rust export remains the single authoritative partition function for additive chunkRefs metadata.
+    let manifest = manifest.to_json_pretty();
     let duration = start.elapsed();
 
     if let Some(path) = out_path {
@@ -703,6 +756,708 @@ fn cmd_diff(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn safe_f64(value: Option<&Value>) -> f64 {
+    value.and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+fn parse_latest_marker_from_str(log_content: &str, marker: &str) -> Result<Value, String> {
+    let prefix = format!("{marker} ");
+    let mut latest_payload: Option<Value> = None;
+    let mut latest_error: Option<String> = None;
+    for line in log_content.lines() {
+        let Some(marker_index) = line.find(&prefix) else {
+            continue;
+        };
+        let payload = &line[marker_index + prefix.len()..];
+        match serde_json::from_str::<Value>(payload.trim()) {
+            Ok(value) if value.is_object() => {
+                latest_payload = Some(value);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                latest_error = Some(format!("invalid {marker} payload: {err}"));
+            }
+        }
+    }
+    if let Some(payload) = latest_payload {
+        Ok(payload)
+    } else if let Some(error) = latest_error {
+        Err(error)
+    } else {
+        Err(format!("no {marker} marker found in log"))
+    }
+}
+
+fn chunk_center(chunk: &Value, chunk_size: f64) -> (f64, f64) {
+    let origin = chunk.get("originStuds").and_then(Value::as_object);
+    let origin_x = origin
+        .and_then(|value| value.get("x"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let origin_z = origin
+        .and_then(|value| value.get("z"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    (origin_x + chunk_size * 0.5, origin_z + chunk_size * 0.5)
+}
+
+fn ratio(actual: f64, expected: f64) -> f64 {
+    if expected <= 0.0 {
+        if actual <= 0.0 {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        actual / expected
+    }
+}
+
+fn build_manifest_zone_summary(manifest: &Value, payload: &Value) -> Result<Value, String> {
+    let meta = manifest
+        .get("meta")
+        .and_then(Value::as_object)
+        .ok_or("manifest missing meta")?;
+    let chunk_size = safe_f64(meta.get("chunkSizeStuds"));
+    let focus = payload.get("focus").and_then(Value::as_object);
+    let scene = payload.get("scene").and_then(Value::as_object);
+    let focus_x = focus
+        .and_then(|value| value.get("x"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let focus_z = focus
+        .and_then(|value| value.get("z"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let radius = payload.get("radius").and_then(Value::as_f64).unwrap_or(0.0);
+    let radius_sq = radius * radius;
+    let requested_chunk_ids: HashSet<String> = scene
+        .and_then(|value| value.get("chunkIds"))
+        .and_then(Value::as_array)
+        .map(|chunk_ids| {
+            chunk_ids
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let chunks = manifest
+        .get("chunks")
+        .and_then(Value::as_array)
+        .ok_or("manifest missing chunks")?;
+
+    #[derive(Default, Clone)]
+    struct ChunkCounts {
+        chunk_count: usize,
+        road_count: usize,
+        roads_with_sidewalks: usize,
+        roads_with_crossings: usize,
+        building_count: usize,
+        chunks_with_roads: usize,
+        chunks_with_sidewalk_roads: usize,
+        chunks_with_crossing_roads: usize,
+        chunks_with_buildings: usize,
+    }
+
+    let candidate_chunks: Vec<&Value> = if requested_chunk_ids.is_empty() {
+        chunks
+            .iter()
+            .filter(|chunk| {
+                let (center_x, center_z) = chunk_center(chunk, chunk_size.max(256.0));
+                let dx = center_x - focus_x;
+                let dz = center_z - focus_z;
+                radius <= 0.0 || dx * dx + dz * dz <= radius_sq
+            })
+            .collect()
+    } else {
+        chunks
+            .iter()
+            .filter(|chunk| {
+                chunk
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| requested_chunk_ids.contains(id))
+                    .unwrap_or(false)
+            })
+            .collect()
+    };
+
+    let chunk_ids: Vec<String> = candidate_chunks
+        .iter()
+        .filter_map(|chunk| {
+            chunk
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect();
+
+    let counts = candidate_chunks
+        .par_iter()
+        .map(|chunk| {
+            let roads = chunk.get("roads").and_then(Value::as_array);
+            let buildings = chunk.get("buildings").and_then(Value::as_array);
+            let road_count = chunk
+                .get("roadCount")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or_else(|| roads.map_or(0, Vec::len));
+            let roads_with_sidewalks = chunk
+                .get("roadsWithSidewalks")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or_else(|| {
+                    roads.map_or(0, |values| {
+                        values
+                            .iter()
+                            .filter(|road| {
+                                road.get("hasSidewalk")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false)
+                                    || road
+                                        .get("subkind")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|value| value == "sidewalk")
+                                    || road
+                                        .get("sidewalk")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|value| value != "no")
+                            })
+                            .count()
+                    })
+                });
+            let roads_with_crossings = chunk
+                .get("roadsWithCrossings")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or_else(|| {
+                    roads.map_or(0, |values| {
+                        values
+                            .iter()
+                            .filter(|road| {
+                                road.get("subkind")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|value| value == "crossing")
+                            })
+                            .count()
+                    })
+                });
+            let building_count = chunk
+                .get("buildingCount")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or_else(|| buildings.map_or(0, Vec::len));
+            let chunks_with_roads = chunk
+                .get("chunksWithRoads")
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| roads.is_some_and(|value| !value.is_empty()));
+            let chunks_with_sidewalk_roads = chunk
+                .get("chunksWithSidewalkRoads")
+                .and_then(Value::as_bool)
+                .unwrap_or(roads_with_sidewalks > 0);
+            let chunks_with_crossing_roads = chunk
+                .get("chunksWithCrossingRoads")
+                .and_then(Value::as_bool)
+                .unwrap_or(roads_with_crossings > 0);
+            let chunks_with_buildings = chunk
+                .get("chunksWithBuildings")
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| buildings.is_some_and(|value| !value.is_empty()));
+            ChunkCounts {
+                chunk_count: 1,
+                road_count,
+                roads_with_sidewalks,
+                roads_with_crossings,
+                building_count,
+                chunks_with_roads: usize::from(chunks_with_roads),
+                chunks_with_sidewalk_roads: usize::from(chunks_with_sidewalk_roads),
+                chunks_with_crossing_roads: usize::from(chunks_with_crossing_roads),
+                chunks_with_buildings: usize::from(chunks_with_buildings),
+            }
+        })
+        .reduce(ChunkCounts::default, |mut left, right| {
+            left.chunk_count += right.chunk_count;
+            left.road_count += right.road_count;
+            left.roads_with_sidewalks += right.roads_with_sidewalks;
+            left.roads_with_crossings += right.roads_with_crossings;
+            left.building_count += right.building_count;
+            left.chunks_with_roads += right.chunks_with_roads;
+            left.chunks_with_sidewalk_roads += right.chunks_with_sidewalk_roads;
+            left.chunks_with_crossing_roads += right.chunks_with_crossing_roads;
+            left.chunks_with_buildings += right.chunks_with_buildings;
+            left
+        });
+
+    Ok(json!({
+        "chunkCount": counts.chunk_count,
+        "chunkIds": chunk_ids,
+        "roadCount": counts.road_count,
+        "roadsWithSidewalks": counts.roads_with_sidewalks,
+        "roadsWithCrossings": counts.roads_with_crossings,
+        "buildingCount": counts.building_count,
+        "chunksWithRoads": counts.chunks_with_roads,
+        "chunksWithSidewalkRoads": counts.chunks_with_sidewalk_roads,
+        "chunksWithCrossingRoads": counts.chunks_with_crossing_roads,
+        "chunksWithBuildings": counts.chunks_with_buildings,
+    }))
+}
+
+fn build_scene_manifest_index_from_str(manifest_content: &str) -> Result<Value, String> {
+    let manifest: Value = serde_json::from_str(manifest_content)
+        .map_err(|err| format!("invalid manifest JSON: {err}"))?;
+    let meta = manifest
+        .get("meta")
+        .and_then(Value::as_object)
+        .ok_or("manifest missing meta")?;
+    let chunks = manifest
+        .get("chunks")
+        .and_then(Value::as_array)
+        .ok_or("manifest missing chunks")?;
+
+    let summarized_chunks: Vec<Value> = chunks
+        .par_iter()
+        .map(|chunk| {
+            let roads = chunk.get("roads").and_then(Value::as_array);
+            let buildings = chunk.get("buildings").and_then(Value::as_array);
+            let roads_with_sidewalks = roads.map_or(0, |values| {
+                values
+                    .iter()
+                    .filter(|road| {
+                        road.get("hasSidewalk").and_then(Value::as_bool).unwrap_or(false)
+                            || road
+                                .get("subkind")
+                                .and_then(Value::as_str)
+                                .is_some_and(|value| value == "sidewalk")
+                            || road
+                                .get("sidewalk")
+                                .and_then(Value::as_str)
+                                .is_some_and(|value| value != "no")
+                    })
+                    .count()
+            });
+            let roads_with_crossings = roads.map_or(0, |values| {
+                values
+                    .iter()
+                    .filter(|road| {
+                        road
+                            .get("subkind")
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| value == "crossing")
+                    })
+                    .count()
+            });
+            json!({
+                "id": chunk.get("id").cloned().unwrap_or(Value::Null),
+                "originStuds": chunk.get("originStuds").cloned().unwrap_or_else(|| json!({"x": 0.0, "y": 0.0, "z": 0.0})),
+                "roadCount": roads.map_or(0, Vec::len),
+                "roadsWithSidewalks": roads_with_sidewalks,
+                "roadsWithCrossings": roads_with_crossings,
+                "buildingCount": buildings.map_or(0, Vec::len),
+                "chunksWithRoads": roads.is_some_and(|value| !value.is_empty()),
+                "chunksWithSidewalkRoads": roads_with_sidewalks > 0,
+                "chunksWithCrossingRoads": roads_with_crossings > 0,
+                "chunksWithBuildings": buildings.is_some_and(|value| !value.is_empty()),
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "meta": {
+            "worldName": meta.get("worldName").cloned().unwrap_or(Value::Null),
+            "chunkSizeStuds": meta.get("chunkSizeStuds").cloned().unwrap_or(json!(256)),
+            "schemaVersion": manifest.get("schemaVersion").cloned().unwrap_or(Value::Null),
+            "sceneIndexVersion": SCENE_INDEX_VERSION,
+        },
+        "chunks": summarized_chunks,
+    }))
+}
+
+fn build_scene_audit_report_from_str(
+    manifest_content: &str,
+    log_content: &str,
+    marker: &str,
+) -> Result<Value, String> {
+    let manifest: Value = serde_json::from_str(manifest_content)
+        .map_err(|err| format!("invalid manifest JSON: {err}"))?;
+    let mut payload = parse_latest_marker_from_str(log_content, marker)?;
+    let mut scene = payload
+        .get("scene")
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    let chunk_marker = format!("{marker}_CHUNKS");
+    if let Ok(chunk_payload) = parse_latest_marker_from_str(log_content, &chunk_marker) {
+        if let Some(chunk_ids) = chunk_payload.get("chunkIds").cloned() {
+            if let Some(scene_object) = scene.as_object_mut() {
+                scene_object.insert("chunkIds".to_string(), chunk_ids);
+            }
+        }
+    }
+    if let Some(payload_object) = payload.as_object_mut() {
+        payload_object.insert("scene".to_string(), scene.clone());
+    }
+    let manifest_summary = build_manifest_zone_summary(&manifest, &payload)?;
+
+    let scene_chunk_count = scene.get("chunkCount").and_then(Value::as_u64).unwrap_or(0);
+    let scene_building_models = scene
+        .get("buildingModelCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_buildings_with_direct_shell = scene
+        .get("buildingModelsWithDirectShell")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_buildings_missing_direct_shell = scene
+        .get("buildingModelsMissingDirectShell")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_merged_building_mesh_parts = scene
+        .get("mergedBuildingMeshPartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_building_shell_parts = scene
+        .get("buildingShellPartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_road_chunks = scene
+        .get("chunksWithRoadGeometry")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_road_mesh_parts = scene
+        .get("roadMeshPartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_sidewalk_surface_parts = scene
+        .get("sidewalkSurfacePartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_crossing_surface_parts = scene
+        .get("crossingSurfacePartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_curb_surface_parts = scene
+        .get("curbSurfacePartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_chunks_with_sidewalk_surfaces = scene
+        .get("chunksWithSidewalkSurfaces")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_chunks_with_crossing_surfaces = scene
+        .get("chunksWithCrossingSurfaces")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_chunks_with_curb_surfaces = scene
+        .get("chunksWithCurbSurfaces")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scene_road_detail_parts = scene
+        .get("roadDetailPartCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_chunk_count = manifest_summary
+        .get("chunkCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_building_count = manifest_summary
+        .get("buildingCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_road_chunk_count = manifest_summary
+        .get("chunksWithRoads")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_sidewalk_road_count = manifest_summary
+        .get("roadsWithSidewalks")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_crossing_road_count = manifest_summary
+        .get("roadsWithCrossings")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_sidewalk_road_chunks = manifest_summary
+        .get("chunksWithSidewalkRoads")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let manifest_crossing_road_chunks = manifest_summary
+        .get("chunksWithCrossingRoads")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    let mut findings = Vec::new();
+    if scene_chunk_count < manifest_chunk_count {
+        findings.push(json!({
+            "severity": "high",
+            "code": "scene_chunk_gap",
+            "message": format!(
+                "scene built {} chunks but manifest expected {}",
+                scene_chunk_count, manifest_chunk_count
+            )
+        }));
+    }
+    if scene_building_models < manifest_building_count {
+        findings.push(json!({
+            "severity": "high",
+            "code": "missing_building_models",
+            "message": format!(
+                "scene built {} building models but manifest expected {}",
+                scene_building_models, manifest_building_count
+            )
+        }));
+    }
+    if manifest_road_chunk_count > 0 && scene_road_chunks < manifest_road_chunk_count {
+        findings.push(json!({
+            "severity": "high",
+            "code": "missing_road_geometry",
+            "message": format!(
+                "scene has road geometry in {} chunks but manifest expected {}",
+                scene_road_chunks, manifest_road_chunk_count
+            )
+        }));
+    }
+    if manifest_sidewalk_road_chunks > 0
+        && scene_chunks_with_sidewalk_surfaces < manifest_sidewalk_road_chunks
+    {
+        findings.push(json!({
+            "severity": "high",
+            "code": "missing_sidewalk_surfaces",
+            "message": format!(
+                "scene has sidewalk surfaces in {} chunks but manifest expected {} chunks with sidewalk roads",
+                scene_chunks_with_sidewalk_surfaces, manifest_sidewalk_road_chunks
+            )
+        }));
+    }
+    if manifest_sidewalk_road_chunks > 0
+        && scene_chunks_with_curb_surfaces < manifest_sidewalk_road_chunks
+    {
+        findings.push(json!({
+            "severity": "medium",
+            "code": "missing_curb_surfaces",
+            "message": format!(
+                "scene has curb surfaces in {} chunks but manifest expected {} chunks with sidewalk roads",
+                scene_chunks_with_curb_surfaces, manifest_sidewalk_road_chunks
+            )
+        }));
+    }
+    if manifest_crossing_road_chunks > 0
+        && scene_chunks_with_crossing_surfaces < manifest_crossing_road_chunks
+    {
+        findings.push(json!({
+            "severity": if scene_chunks_with_crossing_surfaces == 0 { "high" } else { "medium" },
+            "code": "missing_crossing_surfaces",
+            "message": format!(
+                "scene has crossing surfaces in {} chunks but manifest expected {} chunks with crossing ways",
+                scene_chunks_with_crossing_surfaces, manifest_crossing_road_chunks
+            )
+        }));
+    }
+
+    let missing_direct_shell_ratio = ratio(
+        scene_buildings_missing_direct_shell as f64,
+        scene_building_models as f64,
+    );
+    let merged_building_mesh_ratio = ratio(
+        scene_merged_building_mesh_parts as f64,
+        scene_building_models as f64,
+    );
+    let road_detail_to_mesh_ratio = if scene_road_mesh_parts == 0 {
+        if scene_road_detail_parts == 0 {
+            1.0
+        } else {
+            f64::INFINITY
+        }
+    } else {
+        scene_road_detail_parts as f64 / scene_road_mesh_parts as f64
+    };
+
+    if scene_buildings_missing_direct_shell > 0 {
+        findings.push(json!({
+            "severity": if missing_direct_shell_ratio >= 0.2 { "high" } else { "medium" },
+            "code": "missing_direct_building_shells",
+            "message": format!(
+                "{} of {} building models are missing direct shell geometry",
+                scene_buildings_missing_direct_shell, scene_building_models
+            )
+        }));
+    }
+
+    if scene_merged_building_mesh_parts > scene_building_shell_parts && scene_building_models > 0 {
+        findings.push(json!({
+            "severity": "medium",
+            "code": "merged_building_geometry_dominates",
+            "message": format!(
+                "merged building mesh parts ({}) exceed direct shell parts ({}) in the audited scene",
+                scene_merged_building_mesh_parts, scene_building_shell_parts
+            )
+        }));
+    }
+
+    if scene_road_detail_parts > 0 && road_detail_to_mesh_ratio > 8.0 {
+        findings.push(json!({
+            "severity": "medium",
+            "code": "road_detail_overwhelms_mesh",
+            "message": format!(
+                "road detail parts ({}) outweigh road mesh parts ({}) by {:.2}x",
+                scene_road_detail_parts, scene_road_mesh_parts, road_detail_to_mesh_ratio
+            )
+        }));
+    }
+
+    Ok(json!({
+        "generatedAt": format!("{:?}", std::time::SystemTime::now()),
+        "phase": payload.get("phase").cloned().unwrap_or(Value::Null),
+        "rootName": payload.get("rootName").cloned().unwrap_or(Value::Null),
+        "focus": payload.get("focus").cloned().unwrap_or(Value::Null),
+        "radius": payload.get("radius").cloned().unwrap_or(Value::Null),
+        "scene": scene,
+        "manifest": manifest_summary,
+        "summary": {
+            "marker": marker,
+            "chunk_ratio": ratio(scene_chunk_count as f64, manifest_chunk_count as f64),
+            "building_model_ratio": ratio(scene_building_models as f64, manifest_building_count as f64),
+            "road_geometry_ratio": ratio(scene_road_chunks as f64, manifest_road_chunk_count as f64),
+            "sidewalk_chunk_presence_ratio": ratio(scene_chunks_with_sidewalk_surfaces as f64, manifest_sidewalk_road_chunks as f64),
+            "crossing_chunk_presence_ratio": ratio(scene_chunks_with_crossing_surfaces as f64, manifest_crossing_road_chunks as f64),
+            "curb_chunk_presence_ratio": ratio(scene_chunks_with_curb_surfaces as f64, manifest_sidewalk_road_chunks as f64),
+            "sidewalk_surface_part_count": scene_sidewalk_surface_parts,
+            "crossing_surface_part_count": scene_crossing_surface_parts,
+            "curb_surface_part_count": scene_curb_surface_parts,
+            "manifest_roads_with_sidewalks": manifest_sidewalk_road_count,
+            "manifest_roads_with_crossings": manifest_crossing_road_count,
+            "missing_direct_shell_ratio": missing_direct_shell_ratio,
+            "direct_shell_coverage_ratio": ratio(scene_buildings_with_direct_shell as f64, scene_building_models as f64),
+            "merged_building_mesh_ratio": merged_building_mesh_ratio,
+            "road_detail_to_mesh_ratio": road_detail_to_mesh_ratio,
+        },
+        "findings": findings,
+    }))
+}
+
+fn cmd_scene_index(args: &[String]) -> Result<(), String> {
+    let mut manifest_path: Option<PathBuf> = None;
+    let mut json_out: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--manifest" => {
+                manifest_path = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--manifest requires a path")?,
+                ));
+                i += 2;
+            }
+            "--json-out" => {
+                json_out = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--json-out requires a path")?,
+                ));
+                i += 2;
+            }
+            other => return Err(format!("unknown argument to scene-index: {other}")),
+        }
+    }
+
+    let manifest_path = manifest_path.ok_or("--manifest is required")?;
+    let manifest_content = fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("failed to read manifest {}: {err}", manifest_path.display()))?;
+    let index = build_scene_manifest_index_from_str(&manifest_content)?;
+    let output = serde_json::to_string_pretty(&index)
+        .map_err(|err| format!("failed to encode scene index: {err}"))?;
+
+    if let Some(path) = json_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        fs::write(&path, output).map_err(|err| format!("write failed: {err}"))?;
+    } else {
+        println!("{output}");
+    }
+    Ok(())
+}
+
+fn cmd_scene_audit(args: &[String]) -> Result<(), String> {
+    let mut manifest_path: Option<PathBuf> = None;
+    let mut manifest_summary_path: Option<PathBuf> = None;
+    let mut log_path: Option<PathBuf> = None;
+    let mut marker = "ARNIS_SCENE_PLAY".to_string();
+    let mut json_out: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--manifest" => {
+                manifest_path = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--manifest requires a path")?,
+                ));
+                i += 2;
+            }
+            "--manifest-summary" => {
+                manifest_summary_path = Some(PathBuf::from(
+                    args.get(i + 1)
+                        .ok_or("--manifest-summary requires a path")?,
+                ));
+                i += 2;
+            }
+            "--log" => {
+                log_path = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--log requires a path")?,
+                ));
+                i += 2;
+            }
+            "--marker" => {
+                marker = args.get(i + 1).ok_or("--marker requires a value")?.clone();
+                i += 2;
+            }
+            "--json-out" => {
+                json_out = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--json-out requires a path")?,
+                ));
+                i += 2;
+            }
+            other => return Err(format!("unknown argument to scene-audit: {other}")),
+        }
+    }
+
+    let manifest_source_path = manifest_summary_path
+        .clone()
+        .or(manifest_path.clone())
+        .ok_or("--manifest or --manifest-summary is required")?;
+    let log_path = log_path.ok_or("--log is required")?;
+    let manifest_content = fs::read_to_string(&manifest_source_path).map_err(|err| {
+        format!(
+            "failed to read manifest source {}: {err}",
+            manifest_source_path.display()
+        )
+    })?;
+    let log_content = fs::read_to_string(&log_path)
+        .map_err(|err| format!("failed to read log {}: {err}", log_path.display()))?;
+    let mut report = build_scene_audit_report_from_str(&manifest_content, &log_content, &marker)?;
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "manifestPath".to_string(),
+            Value::String(manifest_source_path.display().to_string()),
+        );
+        object.insert(
+            "logPath".to_string(),
+            Value::String(log_path.display().to_string()),
+        );
+    }
+    let output = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("failed to encode report: {err}"))?;
+
+    if let Some(path) = json_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        fs::write(&path, output).map_err(|err| format!("write failed: {err}"))?;
+    } else {
+        println!("{output}");
+    }
+
+    Ok(())
+}
+
 fn cmd_explain() {
     println!("ARNIS HD PIPELINE — Architecture Overview");
     println!();
@@ -744,7 +1499,9 @@ fn cmd_explain() {
     println!("RUST CRATES:");
     println!("  arbx_geo             BoundingBox, elevation providers (Terrarium, SRTM, Flat)");
     println!("  arbx_pipeline        Feature extraction, pipeline stages (validate/normalize/triangulate/enrich)");
-    println!("  arbx_roblox_export   Chunker, builders, satellite tile provider, manifest serialisation");
+    println!(
+        "  arbx_roblox_export   Chunker, builders, satellite tile provider, manifest serialisation"
+    );
     println!("  arbx_cli             CLI entry point (this binary)");
     println!();
     println!("ROBLOX MODULES:");
@@ -763,8 +1520,12 @@ fn cmd_explain() {
     println!();
     println!("MANIFEST TOP-LEVEL STRUCTURE:");
     println!(r#"  {{ "schemaVersion": "0.4.0","#);
-    println!(r#"    "meta": {{ worldName, generator, source, metersPerStud, chunkSizeStuds, bbox, totalFeatures }},"#);
-    println!(r#"    "chunks": [ {{ id, originStuds, terrain, roads, rails, buildings, water, props, landuse, barriers }} ]"#);
+    println!(
+        r#"    "meta": {{ worldName, generator, source, metersPerStud, chunkSizeStuds, bbox, totalFeatures }},"#
+    );
+    println!(
+        r#"    "chunks": [ {{ id, originStuds, terrain, roads, rails, buildings, water, props, landuse, barriers }} ]"#
+    );
     println!(r#"  }}"#);
 }
 
@@ -783,6 +1544,8 @@ fn main() {
         "stats" => cmd_stats(&args[1..]),
         "validate" => cmd_validate(&args[1..]),
         "diff" => cmd_diff(&args[1..]),
+        "scene-index" => cmd_scene_index(&args[1..]),
+        "scene-audit" => cmd_scene_audit(&args[1..]),
         "explain" => {
             cmd_explain();
             Ok(())
@@ -873,5 +1636,406 @@ mod tests {
             f2.path().to_str().unwrap().to_string()
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn scene_audit_uses_latest_marker_and_exact_chunk_ids() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [{ "id": "road_1" }, { "id": "road_2" }],
+                    "buildings": [{ "id": "bldg_1" }, { "id": "bldg_2" }],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                },
+                {
+                    "id": "1_0",
+                    "originStuds": { "x": 256, "y": 0, "z": 0 },
+                    "roads": [{ "id": "road_3" }],
+                    "buildings": [{ "id": "bldg_3" }],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:01.000  ARNIS_SCENE_PLAY {"phase":"play","focus":{"x":64.0,"z":64.0},"radius":350.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":1,"buildingModelCount":1,"chunksWithBuildingModels":1,"roadTaggedPartCount":1,"chunksWithRoadGeometry":1}}
+2026-03-20 18:35:02.000  noise
+2026-03-20 18:35:03.000  ARNIS_SCENE_PLAY {"phase":"play","focus":{"x":128.0,"z":128.0},"radius":400.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":2,"chunkIds":["0_0","1_0"],"buildingModelCount":1,"buildingDetailPartCount":0,"chunksWithBuildingModels":1,"roadTaggedPartCount":0,"chunksWithRoadGeometry":0,"meshPartCount":0,"basePartCount":0}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_PLAY").unwrap();
+
+        assert_eq!(report["scene"]["chunkCount"], 2);
+        assert_eq!(report["manifest"]["chunkCount"], 2);
+        assert_eq!(report["manifest"]["buildingCount"], 3);
+        assert_eq!(report["manifest"]["roadCount"], 3);
+        assert_eq!(
+            report["summary"]["building_model_ratio"].as_f64().unwrap(),
+            1.0 / 3.0
+        );
+        assert_eq!(
+            report["summary"]["road_geometry_ratio"].as_f64().unwrap(),
+            0.0
+        );
+        assert_eq!(
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|finding| finding.get("code").and_then(|code| code.as_str()))
+                .collect::<Vec<_>>(),
+            vec!["missing_building_models", "missing_road_geometry"]
+        );
+    }
+
+    #[test]
+    fn scene_audit_ignores_truncated_later_marker_if_last_valid_marker_exists() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:03.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":400.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":1,"buildingModelCount":0,"chunksWithBuildingModels":0,"roadTaggedPartCount":0,"chunksWithRoadGeometry":0,"meshPartCount":0,"basePartCount":0}}
+2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":400.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":1,"buildingModelCount":0,"chunksWithBuildingModels":0"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_EDIT").unwrap();
+
+        assert_eq!(report["phase"], "edit");
+        assert_eq!(report["scene"]["chunkCount"], 1);
+    }
+
+    #[test]
+    fn scene_audit_merges_chunk_marker_into_scene_payload() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [{ "id": "road_1" }, { "id": "road_2" }],
+                    "buildings": [{ "id": "bldg_1" }, { "id": "bldg_2" }],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                },
+                {
+                    "id": "1_0",
+                    "originStuds": { "x": 256, "y": 0, "z": 0 },
+                    "roads": [{ "id": "road_3" }],
+                    "buildings": [{ "id": "bldg_3" }],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:03.000  ARNIS_SCENE_PLAY_CHUNKS {"phase":"play","chunkIds":["0_0","1_0"]}
+2026-03-20 18:35:04.000  ARNIS_SCENE_PLAY {"phase":"play","focus":{"x":64.0,"z":64.0},"radius":50.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":2,"buildingModelCount":1,"chunksWithBuildingModels":1,"roadTaggedPartCount":0,"chunksWithRoadGeometry":0,"meshPartCount":0,"basePartCount":0}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_PLAY").unwrap();
+
+        assert_eq!(report["manifest"]["chunkCount"], 2);
+        assert_eq!(report["manifest"]["buildingCount"], 3);
+    }
+
+    #[test]
+    fn scene_audit_flags_chunk_gap_without_chunk_ids() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                },
+                {
+                    "id": "1_0",
+                    "originStuds": { "x": 256, "y": 0, "z": 0 },
+                    "roads": [],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:03.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":400.0,"rootName":"GeneratedWorld_Austin","scene":{"chunkCount":1,"buildingModelCount":0,"chunksWithBuildingModels":0,"roadTaggedPartCount":0,"chunksWithRoadGeometry":0,"meshPartCount":0,"basePartCount":0}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_EDIT").unwrap();
+        let codes = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding.get("code").and_then(|code| code.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(report["manifest"]["chunkCount"], 2);
+        assert!(codes.contains(&"scene_chunk_gap"));
+    }
+
+    #[test]
+    fn scene_audit_flags_shell_loss_and_road_detail_skew() {
+        let manifest = r#"{
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roadCount": 1,
+                    "buildingCount": 3,
+                    "chunksWithRoads": true,
+                    "chunksWithBuildings": true
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":200.0,"rootName":"GeneratedWorld_AustinPreview","scene":{"chunkCount":1,"buildingModelCount":3,"chunksWithBuildingModels":1,"roadTaggedPartCount":4,"chunksWithRoadGeometry":1,"meshPartCount":1,"basePartCount":40,"buildingModelsWithDirectShell":1,"buildingModelsMissingDirectShell":2,"mergedBuildingMeshPartCount":7,"buildingShellPartCount":3,"roadMeshPartCount":1,"roadDetailPartCount":30}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_EDIT").unwrap();
+        let codes = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding.get("code").and_then(|code| code.as_str()))
+            .collect::<Vec<_>>();
+
+        assert!(codes.contains(&"missing_direct_building_shells"));
+        assert!(codes.contains(&"merged_building_geometry_dominates"));
+        assert!(codes.contains(&"road_detail_overwhelms_mesh"));
+    }
+
+    #[test]
+    fn scene_audit_flags_missing_sidewalk_and_curb_surfaces() {
+        let manifest = r#"{
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [
+                        { "id": "road_1", "hasSidewalk": true }
+                    ],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":200.0,"rootName":"GeneratedWorld_AustinPreview","scene":{"chunkCount":1,"buildingModelCount":0,"chunksWithBuildingModels":0,"roadTaggedPartCount":1,"chunksWithRoadGeometry":1,"roadMeshPartCount":1,"roadDetailPartCount":0,"sidewalkSurfacePartCount":0,"curbSurfacePartCount":0,"chunksWithSidewalkSurfaces":0,"chunksWithCurbSurfaces":0}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_EDIT").unwrap();
+        let codes = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding.get("code").and_then(|code| code.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(report["manifest"]["roadsWithSidewalks"], 1);
+        assert_eq!(report["manifest"]["chunksWithSidewalkRoads"], 1);
+        assert!(codes.contains(&"missing_sidewalk_surfaces"));
+        assert!(codes.contains(&"missing_curb_surfaces"));
+    }
+
+    #[test]
+    fn scene_audit_flags_missing_crossing_surfaces() {
+        let manifest = r#"{
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [
+                        { "id": "road_1", "kind": "footway", "subkind": "crossing" }
+                    ],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+        let log = r#"2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":128.0,"z":128.0},"radius":200.0,"rootName":"GeneratedWorld_AustinPreview","scene":{"chunkCount":1,"buildingModelCount":0,"chunksWithBuildingModels":0,"roadTaggedPartCount":0,"chunksWithRoadGeometry":0,"roadMeshPartCount":0,"roadDetailPartCount":0,"crossingSurfacePartCount":0,"chunksWithCrossingSurfaces":0}}"#;
+
+        let report = build_scene_audit_report_from_str(manifest, log, "ARNIS_SCENE_EDIT").unwrap();
+        let codes = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding.get("code").and_then(|code| code.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(report["manifest"]["roadsWithCrossings"], 1);
+        assert_eq!(report["manifest"]["chunksWithCrossingRoads"], 1);
+        assert!(codes.contains(&"missing_crossing_surfaces"));
+    }
+
+    #[test]
+    fn scene_index_summarizes_chunk_counts_for_fast_audits() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [{ "id": "road_1" }],
+                    "buildings": [{ "id": "bldg_1" }, { "id": "bldg_2" }],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+
+        let index = build_scene_manifest_index_from_str(manifest).unwrap();
+
+        assert_eq!(index["meta"]["chunkSizeStuds"], 256);
+        assert_eq!(index["meta"]["sceneIndexVersion"], SCENE_INDEX_VERSION);
+        assert_eq!(index["chunks"][0]["id"], "0_0");
+        assert_eq!(index["chunks"][0]["roadCount"], 1);
+        assert_eq!(index["chunks"][0]["buildingCount"], 2);
+        assert_eq!(index["chunks"][0]["chunksWithRoads"], true);
+        assert_eq!(index["chunks"][0]["chunksWithBuildings"], true);
+    }
+
+    #[test]
+    fn scene_index_counts_sidewalk_subkind_roads() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [
+                        { "id": "road_1", "kind": "footway", "subkind": "sidewalk" },
+                        { "id": "road_2", "kind": "residential", "hasSidewalk": true },
+                        { "id": "road_3", "kind": "path" }
+                    ],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+
+        let index = build_scene_manifest_index_from_str(manifest).unwrap();
+
+        assert_eq!(index["chunks"][0]["roadsWithSidewalks"], 2);
+        assert_eq!(index["chunks"][0]["chunksWithSidewalkRoads"], true);
+        assert_eq!(index["chunks"][0]["roadsWithCrossings"], 0);
+        assert_eq!(index["chunks"][0]["chunksWithCrossingRoads"], false);
+    }
+
+    #[test]
+    fn scene_index_counts_crossing_subkind_roads() {
+        let manifest = r#"{
+            "schemaVersion": "0.4.0",
+            "meta": {
+                "worldName": "SceneAuditTown",
+                "metersPerStud": 0.3,
+                "chunkSizeStuds": 256
+            },
+            "chunks": [
+                {
+                    "id": "0_0",
+                    "originStuds": { "x": 0, "y": 0, "z": 0 },
+                    "roads": [
+                        { "id": "road_1", "kind": "footway", "subkind": "crossing" },
+                        { "id": "road_2", "kind": "pedestrian", "subkind": "crossing" },
+                        { "id": "road_3", "kind": "path" }
+                    ],
+                    "buildings": [],
+                    "water": [],
+                    "props": [],
+                    "landuse": [],
+                    "barriers": [],
+                    "rails": []
+                }
+            ]
+        }"#;
+
+        let index = build_scene_manifest_index_from_str(manifest).unwrap();
+
+        assert_eq!(index["chunks"][0]["roadsWithCrossings"], 2);
+        assert_eq!(index["chunks"][0]["chunksWithCrossingRoads"], true);
     }
 }

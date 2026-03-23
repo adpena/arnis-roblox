@@ -3,7 +3,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 
 local GroundSampler = require(script.Parent.Parent.GroundSampler)
-local GeoUtils = require(script.Parent.Parent.GeoUtils)
 local PolygonBatcher = require(script.Parent.Parent.PolygonBatcher)
 local _Logger = require(ReplicatedStorage.Shared.Logger)
 local WorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
@@ -29,7 +28,7 @@ local function getWaterDetailParent(parent)
     return detailFolder
 end
 
-local function createWaterSurface(parent, cframe, size, name)
+local function createWaterSurface(parent, cframe, size, name, surfaceType, waterKind, waterId)
     local surface = Instance.new("Part")
     surface.Name = name or "WaterSurface"
     surface.Size = size
@@ -39,6 +38,15 @@ local function createWaterSurface(parent, cframe, size, name)
     surface.Transparency = 0.4
     surface:SetAttribute("BaseTransparency", surface.Transparency)
     surface:SetAttribute("ArnisBaseTransparency", surface.Transparency)
+    if type(surfaceType) == "string" and surfaceType ~= "" then
+        surface:SetAttribute("ArnisWaterSurfaceType", surfaceType)
+    end
+    if type(waterKind) == "string" and waterKind ~= "" then
+        surface:SetAttribute("ArnisWaterKind", waterKind)
+    end
+    if type(waterId) == "string" and waterId ~= "" then
+        surface:SetAttribute("ArnisWaterSourceId", waterId)
+    end
     surface.Reflectance = 0.35
     surface.Anchored = true
     surface.CanCollide = false
@@ -93,7 +101,11 @@ local function paintRibbonSegment(terrain, p1, p2, width, waterMaterial)
     local endPos = Vector3.new(p2.X, p2.Y - WATER_DEPTH * 0.5, p2.Z)
     local midPos = (startPos + endPos) * 0.5
     local cf = CFrame.lookAt(midPos, endPos)
-    terrain:FillBlock(cf, Vector3.new(width, WATER_DEPTH, length), waterMaterial or Enum.Material.Water)
+    terrain:FillBlock(
+        cf,
+        Vector3.new(width, WATER_DEPTH, length),
+        waterMaterial or Enum.Material.Water
+    )
 end
 
 -- Carve a channel of Air below a ribbon water segment.
@@ -122,7 +134,10 @@ local function mergeRibbonSegments(points, width, material)
         if currentDir:Dot(nextDir) < 0.999 then
             return false
         end
-        if math.abs(current.width - nextSegment.width) > 1e-6 or current.material ~= nextSegment.material then
+        if
+            math.abs(current.width - nextSegment.width) > 1e-6
+            or current.material ~= nextSegment.material
+        then
             return false
         end
         return (current.p2 - nextSegment.p1).Magnitude <= 1e-6
@@ -159,13 +174,170 @@ end
 -- material defaults to Water; pass Enum.Material.LeafyGrass etc. to cut islands.
 local SCAN_STEP = 4 -- studs resolution per scanline row
 
-local function emitPolygonWaterSurfaces(detailParent, worldPts, surfaceY)
-    for index, rect in ipairs(PolygonBatcher.BuildRects(worldPts, SCAN_STEP)) do
+local function getPointXZ(point)
+    if point == nil then
+        return nil, nil
+    end
+
+    local x = point.X
+    if x == nil then
+        x = point.x
+    end
+
+    local z = point.Z
+    if z == nil then
+        z = point.z
+    end
+
+    return x, z
+end
+
+local function buildPolygonSegmentsForRow(worldPts, z)
+    local xs = table.create(#worldPts)
+    for i = 1, #worldPts do
+        local p1 = worldPts[i]
+        local p2 = worldPts[(i % #worldPts) + 1]
+        local x1, z1 = getPointXZ(p1)
+        local x2, z2 = getPointXZ(p2)
+        if x1 == nil or z1 == nil or x2 == nil or z2 == nil then
+            continue
+        end
+        if (z1 <= z and z < z2) or (z2 <= z and z < z1) then
+            local t = (z - z1) / (z2 - z1)
+            table.insert(xs, x1 + t * (x2 - x1))
+        end
+    end
+    table.sort(xs)
+
+    local segments = {}
+    local i = 1
+    while i + 1 <= #xs do
+        local x0, x1 = xs[i], xs[i + 1]
+        if x1 - x0 > 0.1 then
+            segments[#segments + 1] = { x0 = x0, x1 = x1 }
+        end
+        i += 2
+    end
+    return segments
+end
+
+local function subtractCutSegments(outerSegments, cutSegments)
+    if #cutSegments == 0 then
+        return outerSegments
+    end
+
+    table.sort(cutSegments, function(a, b)
+        if a.x0 == b.x0 then
+            return a.x1 < b.x1
+        end
+        return a.x0 < b.x0
+    end)
+
+    local result = {}
+    for _, outer in ipairs(outerSegments) do
+        local fragments = { {
+            x0 = outer.x0,
+            x1 = outer.x1,
+        } }
+
+        for _, cut in ipairs(cutSegments) do
+            local nextFragments = {}
+            for _, fragment in ipairs(fragments) do
+                if cut.x1 <= fragment.x0 or cut.x0 >= fragment.x1 then
+                    nextFragments[#nextFragments + 1] = fragment
+                else
+                    if cut.x0 > fragment.x0 then
+                        nextFragments[#nextFragments + 1] = {
+                            x0 = fragment.x0,
+                            x1 = math.min(cut.x0, fragment.x1),
+                        }
+                    end
+                    if cut.x1 < fragment.x1 then
+                        nextFragments[#nextFragments + 1] = {
+                            x0 = math.max(cut.x1, fragment.x0),
+                            x1 = fragment.x1,
+                        }
+                    end
+                end
+            end
+            fragments = nextFragments
+            if #fragments == 0 then
+                break
+            end
+        end
+
+        for _, fragment in ipairs(fragments) do
+            if fragment.x1 - fragment.x0 > 0.1 then
+                result[#result + 1] = fragment
+            end
+        end
+    end
+
+    return result
+end
+
+local function buildPolygonRows(worldPts, stripDepth, holePtsList)
+    if #worldPts < 3 then
+        return {}
+    end
+
+    local minZ, maxZ = math.huge, -math.huge
+    for _, p in ipairs(worldPts) do
+        local _x, pointZ = getPointXZ(p)
+        if pointZ ~= nil then
+            minZ = math.min(minZ, pointZ)
+            maxZ = math.max(maxZ, pointZ)
+        end
+    end
+
+    if minZ == math.huge or maxZ == -math.huge then
+        return {}
+    end
+
+    local rows = {}
+    local z = minZ + stripDepth * 0.5
+    while z <= maxZ do
+        local segments = buildPolygonSegmentsForRow(worldPts, z)
+        if holePtsList and #holePtsList > 0 and #segments > 0 then
+            local holeSegments = {}
+            for _, holePts in ipairs(holePtsList) do
+                for _, holeSegment in ipairs(buildPolygonSegmentsForRow(holePts, z)) do
+                    holeSegments[#holeSegments + 1] = holeSegment
+                end
+            end
+            segments = subtractCutSegments(segments, holeSegments)
+        end
+
+        if #segments > 0 then
+            rows[#rows + 1] = {
+                z = z,
+                segments = segments,
+            }
+        end
+        z += stripDepth
+    end
+
+    return rows
+end
+
+local function emitPolygonWaterSurfaces(
+    detailParent,
+    worldPts,
+    surfaceY,
+    holePtsList,
+    waterKind,
+    waterId
+)
+    local rows = buildPolygonRows(worldPts, SCAN_STEP, holePtsList)
+    for index, rect in ipairs(PolygonBatcher.BuildRectsFromRows(rows, SCAN_STEP)) do
         createWaterSurface(
             detailParent,
             CFrame.new(rect.centerX, surfaceY + 0.05, rect.centerZ),
             Vector3.new(rect.width, 0.1, rect.depth),
-            string.format("PolygonWaterSurface_%d", index)
+            string.format("PolygonWaterSurface_%d", index),
+            "polygon",
+            waterKind,
+            waterId
         )
     end
 end
@@ -188,68 +360,13 @@ local function carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
     if #worldPts < 3 then
         return
     end
-    local n = #worldPts
-    local minZ, maxZ = math.huge, -math.huge
-    for _, p in ipairs(worldPts) do
-        minZ = math.min(minZ, p.Z)
-        maxZ = math.max(maxZ, p.Z)
-    end
 
     -- Carve block starts just below the water surface.
     local carveSurfaceY = surfaceY - WATER_DEPTH
     local carveHeight = CARVE_DEPTH
     local carveCenterY = carveSurfaceY - carveHeight * 0.5
 
-    local rows = {}
-    local z = minZ + SCAN_STEP * 0.5
-    while z <= maxZ do
-        local xs = {}
-        for i = 1, n do
-            local p1 = worldPts[i]
-            local p2 = worldPts[(i % n) + 1]
-            local z1, z2 = p1.Z, p2.Z
-            if (z1 <= z and z < z2) or (z2 <= z and z < z1) then
-                local t = (z - z1) / (z2 - z1)
-                table.insert(xs, p1.X + t * (p2.X - p1.X))
-            end
-        end
-        table.sort(xs)
-        local i = 1
-        local segments = {}
-        while i + 1 <= #xs do
-            local x0, x1 = xs[i], xs[i + 1]
-            if x1 - x0 > 0.1 then
-                local cx = (x0 + x1) * 0.5
-
-                -- Skip this cell if it falls inside any island polygon.
-                local inHole = false
-                if holePtsList then
-                    for _, holePts in ipairs(holePtsList) do
-                        if GeoUtils.pointInPolygon(cx, z, holePts) then
-                            inHole = true
-                            break
-                        end
-                    end
-                end
-
-                if not inHole then
-                    segments[#segments + 1] = {
-                        x0 = x0,
-                        x1 = x1,
-                    }
-                end
-            end
-            i = i + 2
-        end
-        if #segments > 0 then
-            rows[#rows + 1] = {
-                z = z,
-                segments = segments,
-            }
-        end
-        z = z + SCAN_STEP
-    end
-
+    local rows = buildPolygonRows(worldPts, SCAN_STEP, holePtsList)
     for _, rect in ipairs(PolygonBatcher.BuildRectsFromRows(rows, SCAN_STEP)) do
         terrain:FillBlock(
             CFrame.new(rect.centerX, carveCenterY, rect.centerZ),
@@ -263,7 +380,9 @@ function WaterBuilder.BuildAll(parent, waters, originStuds, chunk)
     if not waters or #waters == 0 then
         return
     end
-    local sampleGroundY = if chunk and chunk.terrain then GroundSampler.createSampler(chunk) else nil
+    local sampleGroundY = if chunk and chunk.terrain
+        then GroundSampler.createRenderedSurfaceSampler(chunk)
+        else nil
     for _, water in ipairs(waters) do
         WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
     end
@@ -275,7 +394,7 @@ end
 
 function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGroundY)
     local terrain = Workspace.Terrain
-    sampleGroundY = sampleGroundY or GroundSampler.createSampler(chunk)
+    sampleGroundY = sampleGroundY or GroundSampler.createRenderedSurfaceSampler(chunk)
     -- Intermittent water bodies (seasonal streambeds) render as dry sand
     local waterMaterial = Enum.Material.Water
     if water.intermittent then
@@ -317,14 +436,17 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
                         detailParent,
                         CFrame.lookAt(midSurf, endSurf),
                         Vector3.new(segment.width, 0.1, segmentLength),
-                        "RibbonWaterSurface"
+                        "RibbonWaterSurface",
+                        "ribbon",
+                        water.kind,
+                        water.id
                     )
                 end
             end
         end
     elseif water.footprint and #water.footprint >= 3 then
         -- Build world-space point array
-        local worldPts = {}
+        local worldPts = table.create(#water.footprint)
         for _, p in ipairs(water.footprint) do
             table.insert(worldPts, Vector3.new(p.x + originStuds.x, 0, p.z + originStuds.z))
         end
@@ -335,21 +457,17 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
         -- Restore islands: fill inner rings (holes) with terrain
         local holePtsList = nil
         if water.holes then
-            holePtsList = {}
+            holePtsList = table.create(#water.holes)
             for _, hole in ipairs(water.holes) do
                 if #hole >= 3 then
-                    -- Vector3 array for scanline fill (uses .X/.Z)
-                    local holePtsV3 = {}
-                    -- Plain {x, z} array for point-in-polygon test (uses .x/.z)
-                    local holePtsXZ = {}
+                    local holePtsV3 = table.create(#hole)
                     for _, p in ipairs(hole) do
                         local wx = p.x + originStuds.x
                         local wz = p.z + originStuds.z
                         table.insert(holePtsV3, Vector3.new(wx, cy, wz))
-                        table.insert(holePtsXZ, { x = wx, z = wz })
                     end
                     paintPolygonScanline(terrain, holePtsV3, cy, Enum.Material.LeafyGrass)
-                    table.insert(holePtsList, holePtsXZ)
+                    table.insert(holePtsList, holePtsV3)
                 end
             end
         end
@@ -357,7 +475,14 @@ function WaterBuilder.FallbackBuild(parent, water, originStuds, chunk, sampleGro
         -- Island polygons (holes) are excluded so they stay solid.
         carvePolygonBelow(terrain, worldPts, surfaceY, holePtsList)
         if not water.intermittent then
-            emitPolygonWaterSurfaces(getWaterDetailParent(parent), worldPts, surfaceY)
+            emitPolygonWaterSurfaces(
+                getWaterDetailParent(parent),
+                worldPts,
+                surfaceY,
+                holePtsList,
+                water.kind,
+                water.id
+            )
         end
     end
 end

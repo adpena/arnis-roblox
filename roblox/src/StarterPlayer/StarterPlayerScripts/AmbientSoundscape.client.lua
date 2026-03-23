@@ -65,9 +65,13 @@ local UPDATE_INTERVAL = 0.3
 
 local function updateAmbience()
     local character = player.Character
-    if not character then return end
+    if not character then
+        return
+    end
     local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    if not hrp then
+        return
+    end
     local pos = hrp.Position
 
     -- Smooth volume helper: lerp toward target to prevent audio pops
@@ -84,9 +88,7 @@ local function updateAmbience()
     -- Near water? Scan water-surface parts tagged by the importer.
     local nearWater = false
     for _, waterPart in ipairs(CollectionService:GetTagged("LOD_Detail")) do
-        if waterPart.Name == "RibbonWaterSurface"
-            or waterPart.Name == "PolygonWaterSurface"
-        then
+        if waterPart.Name == "RibbonWaterSurface" or waterPart.Name == "PolygonWaterSurface" then
             -- Use a fast squared-distance check before the sqrt.
             local delta = waterPart.Position - pos
             if delta.X * delta.X + delta.Z * delta.Z < 100 * 100 then
@@ -101,7 +103,8 @@ local function updateAmbience()
     local nearNature = false
     local rayResult = workspace:Raycast(pos, Vector3.new(0, -100, 0))
     if rayResult and rayResult.Material then
-        if rayResult.Material == Enum.Material.Grass
+        if
+            rayResult.Material == Enum.Material.Grass
             or rayResult.Material == Enum.Material.LeafyGrass
         then
             nearNature = true
@@ -126,29 +129,33 @@ end
 -- ---------------------------------------------------------------------------
 
 local FOOTSTEP_SOUNDS = {
-    [Enum.Material.Asphalt]    = "rbxassetid://9114105209",  -- hard step
-    [Enum.Material.Concrete]   = "rbxassetid://9114105209",  -- hard step
+    [Enum.Material.Asphalt] = "rbxassetid://9114105209", -- hard step
+    [Enum.Material.Concrete] = "rbxassetid://9114105209", -- hard step
     [Enum.Material.Cobblestone] = "rbxassetid://9114105209", -- hard step
-    [Enum.Material.Brick]      = "rbxassetid://9114105209",  -- hard step
-    [Enum.Material.Grass]      = "rbxassetid://9114077935",  -- soft grass
-    [Enum.Material.LeafyGrass] = "rbxassetid://9114077935",  -- soft grass
-    [Enum.Material.Sand]       = "rbxassetid://9114077935",  -- soft step
-    [Enum.Material.Ground]     = "rbxassetid://9114077935",  -- earth step
-    [Enum.Material.WoodPlanks] = "rbxassetid://9114119441",  -- wood creak
-    [Enum.Material.Metal]      = "rbxassetid://9114119441",  -- metal clang
+    [Enum.Material.Brick] = "rbxassetid://9114105209", -- hard step
+    [Enum.Material.Grass] = "rbxassetid://9114077935", -- soft grass
+    [Enum.Material.LeafyGrass] = "rbxassetid://9114077935", -- soft grass
+    [Enum.Material.Sand] = "rbxassetid://9114077935", -- soft step
+    [Enum.Material.Ground] = "rbxassetid://9114077935", -- earth step
+    [Enum.Material.WoodPlanks] = "rbxassetid://9114119441", -- wood creak
+    [Enum.Material.Metal] = "rbxassetid://9114119441", -- metal clang
 }
 
 local FOOTSTEP_DEFAULT = FOOTSTEP_SOUNDS[Enum.Material.Concrete]
 
-local footstepSound = nil       -- Sound instance parented to HumanoidRootPart
+local footstepSound = nil -- Sound instance parented to HumanoidRootPart
 local lastFootstepMaterial = nil
 
 local function updateFootsteps()
     local character = player.Character
-    if not character then return end
+    if not character then
+        return
+    end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not hrp then return end
+    if not humanoid or not hrp then
+        return
+    end
 
     local walking = humanoid.MoveDirection.Magnitude > 0.1
         and humanoid:GetState() == Enum.HumanoidStateType.Running
@@ -186,7 +193,6 @@ local function updateFootsteps()
         -- Scale playback speed with WalkSpeed so slow-walks feel heavy and
         -- sprints feel snappy. Baseline is 16 studs/s.
         footstepSound.PlaybackSpeed = 0.8 + (humanoid.WalkSpeed / 16) * 0.4
-
     elseif footstepSound and footstepSound.IsPlaying then
         footstepSound:Stop()
     end

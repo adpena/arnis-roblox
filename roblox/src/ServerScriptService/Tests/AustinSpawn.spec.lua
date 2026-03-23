@@ -44,7 +44,12 @@ return function()
     }
 
     local spawnPoint = AustinSpawn.findSpawnPoint(manifest, 500)
-    Assert.near(spawnPoint.X, 25, 0.001, "expected nearby walkable road midpoint to win over primary road")
+    Assert.near(
+        spawnPoint.X,
+        25,
+        0.001,
+        "expected nearby walkable road midpoint to win over primary road"
+    )
     Assert.near(spawnPoint.Z, 0, 0.001, "expected spawn Z from selected road")
 
     local tallBuildingManifest = {
@@ -81,10 +86,20 @@ return function()
     }
 
     local focusPoint = AustinSpawn.findFocusPoint(tallBuildingManifest)
-    Assert.near(focusPoint.Y, 0, 0.001, "expected focus Y to stay grounded instead of averaging building tops")
+    Assert.near(
+        focusPoint.Y,
+        0,
+        0.001,
+        "expected focus Y to stay grounded instead of averaging building tops"
+    )
 
     local groundedSpawn = AustinSpawn.findSpawnPoint(tallBuildingManifest, 500)
-    Assert.near(groundedSpawn.X, 20, 0.001, "expected grounded road midpoint to remain the spawn target")
+    Assert.near(
+        groundedSpawn.X,
+        20,
+        0.001,
+        "expected grounded road midpoint to remain the spawn target"
+    )
     Assert.near(groundedSpawn.Y, 0, 0.001, "expected spawn Y to stay on the road, not in the air")
 
     local skewedManifest = {
@@ -178,7 +193,12 @@ return function()
     }
 
     local canonicalSpawn = AustinSpawn.findSpawnPoint(canonicalAustinManifest, 500)
-    Assert.near(canonicalSpawn.X, 20, 0.001, "expected canonical Austin anchor to preserve road midpoint X")
+    Assert.near(
+        canonicalSpawn.X,
+        20,
+        0.001,
+        "expected canonical Austin anchor to preserve road midpoint X"
+    )
     Assert.near(
         canonicalSpawn.Z,
         -192,
@@ -186,8 +206,15 @@ return function()
         "expected canonical anchor metadata to move spawn to the south side of the current Capitol heuristic"
     )
 
-    local lookTarget = AustinSpawn.getPreferredLookTarget(canonicalAustinManifest, canonicalSpawn, Vector3.new(0, 0, 0))
-    Assert.truthy(lookTarget.Z > canonicalSpawn.Z, "expected canonical Austin facing direction to point south")
+    local lookTarget = AustinSpawn.getPreferredLookTarget(
+        canonicalAustinManifest,
+        canonicalSpawn,
+        Vector3.new(0, 0, 0)
+    )
+    Assert.truthy(
+        lookTarget.Z > canonicalSpawn.Z,
+        "expected canonical Austin facing direction to point south"
+    )
 
     local canonicalPreviewFocus = AustinSpawn.findPreviewFocusPoint(canonicalAustinManifest, 500)
     Assert.near(
@@ -314,9 +341,34 @@ return function()
     }
 
     local explicitAnchor = AustinSpawn.resolveAnchor(explicitAnchorManifest, 500)
-    Assert.near(explicitAnchor.spawnPoint.X, 123, 0.001, "expected explicit canonical anchor X to win over heuristics")
-    Assert.near(explicitAnchor.spawnPoint.Y, 7, 0.001, "expected explicit canonical anchor Y to win over heuristics")
-    Assert.near(explicitAnchor.spawnPoint.Z, -456, 0.001, "expected explicit canonical anchor Z to win over heuristics")
-    Assert.near(explicitAnchor.focusPoint.X, 123, 0.001, "expected explicit canonical focus X to match explicit spawn")
-    Assert.near(explicitAnchor.focusPoint.Z, -456, 0.001, "expected explicit canonical focus Z to match explicit spawn")
+    Assert.near(
+        explicitAnchor.spawnPoint.X,
+        123,
+        0.001,
+        "expected explicit canonical anchor X to win over heuristics"
+    )
+    Assert.near(
+        explicitAnchor.spawnPoint.Y,
+        7,
+        0.001,
+        "expected explicit canonical anchor Y to win over heuristics"
+    )
+    Assert.near(
+        explicitAnchor.spawnPoint.Z,
+        -456,
+        0.001,
+        "expected explicit canonical anchor Z to win over heuristics"
+    )
+    Assert.near(
+        explicitAnchor.focusPoint.X,
+        123,
+        0.001,
+        "expected explicit canonical focus X to match explicit spawn"
+    )
+    Assert.near(
+        explicitAnchor.focusPoint.Z,
+        -456,
+        0.001,
+        "expected explicit canonical focus Z to match explicit spawn"
+    )
 end

@@ -24,7 +24,7 @@ SOURCE_JSON = ROOT / "rust" / "out" / "austin-manifest.json"
 PREVIEW_DIR = ROOT / "roblox" / "src" / "ServerScriptService" / "StudioPreview"
 PREVIEW_INDEX = PREVIEW_DIR / "AustinPreviewManifestIndex.lua"
 PREVIEW_SHARDS = PREVIEW_DIR / "AustinPreviewManifestChunks"
-MAX_PREVIEW_BYTES = 199_999
+MAX_PREVIEW_BYTES = 199_998
 
 TARGET_CHUNK_IDS = ["-1_-1", "0_-1", "-1_0", "0_0"]
 
@@ -289,6 +289,38 @@ def chunk_fragment_len(fragment: dict) -> int:
     return lua_len({"chunks": [fragment]})
 
 
+def fragment_list_payloads(
+    chunk_id: str,
+    values: list[Any],
+    max_bytes: int,
+    field_label: str,
+    fragment_builder,
+) -> list[dict]:
+    fragments: list[dict] = []
+
+    start = 0
+    while start < len(values):
+        low = start + 1
+        high = len(values)
+        best_end = start
+
+        while low <= high:
+            mid = (low + high) // 2
+            if chunk_fragment_len(fragment_builder(values[start:mid])) <= max_bytes:
+                best_end = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        if best_end == start:
+            raise SystemExit(f"preview chunk {chunk_id} {field_label} contains an entry larger than max bytes {max_bytes}")
+
+        fragments.append(fragment_builder(values[start:best_end]))
+        start = best_end
+
+    return fragments
+
+
 def fragment_preview_chunk(chunk: dict, max_bytes: int) -> list[dict]:
     fragments: list[dict] = []
 
@@ -303,6 +335,23 @@ def fragment_preview_chunk(chunk: dict, max_bytes: int) -> list[dict]:
             terrain_value = terrain.get(terrain_key)
             if terrain_value is None:
                 continue
+            if isinstance(terrain_value, list):
+                fragments.extend(
+                    fragment_list_payloads(
+                        chunk["id"],
+                        terrain_value,
+                        max_bytes,
+                        f"terrain field {terrain_key}",
+                        lambda items: {
+                            "id": chunk["id"],
+                            "terrain": {
+                                terrain_key: list(items),
+                            },
+                        },
+                    )
+                )
+                continue
+
             fragment = {
                 "id": chunk["id"],
                 "terrain": {
@@ -320,22 +369,15 @@ def fragment_preview_chunk(chunk: dict, max_bytes: int) -> list[dict]:
         if not isinstance(values, list) or not values:
             continue
 
-        current = {"id": chunk["id"], field: []}
-        for item in values:
-            current[field].append(item)
-            if chunk_fragment_len(current) <= max_bytes:
-                continue
-
-            current[field].pop()
-            if not current[field]:
-                raise SystemExit(f"preview chunk {chunk.get('id')} field {field} contains an entry larger than max bytes {max_bytes}")
-            fragments.append(current)
-            current = {"id": chunk["id"], field: [item]}
-            if chunk_fragment_len(current) > max_bytes:
-                raise SystemExit(f"preview chunk {chunk.get('id')} field {field} contains an entry larger than max bytes {max_bytes}")
-
-        if current[field]:
-            fragments.append(current)
+        fragments.extend(
+            fragment_list_payloads(
+                chunk["id"],
+                values,
+                max_bytes,
+                f"field {field}",
+                lambda items: {"id": chunk["id"], field: list(items)},
+            )
+        )
 
     return fragments
 

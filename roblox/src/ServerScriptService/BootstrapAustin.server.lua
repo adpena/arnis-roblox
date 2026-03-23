@@ -20,6 +20,7 @@ local RunService = game:GetService("RunService")
 local AustinSpawn = require(script.Parent.ImportService.AustinSpawn)
 local RunAustin = require(script.Parent.ImportService.RunAustin)
 local StreamingService = require(script.Parent.ImportService.StreamingService)
+local SubplanRollout = require(script.Parent.ImportService.SubplanRollout)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 
 if not RunService:IsStudio() then
@@ -33,12 +34,12 @@ local importReady = false
 local spawnCFrame
 local holdingPad
 
-local WALKABLE_WORLD_GROUPS = {
+local WALKABLE_WORLD_GROUPS = table.freeze({
     Terrain = true,
     Roads = true,
     Landuse = true,
     Rails = true,
-}
+})
 
 local function isWalkableWorldDescendant(hitInstance, worldRoot)
     if not hitInstance or not worldRoot then
@@ -115,7 +116,8 @@ local function findGroundYNear(worldRoot, point, loadingPad, spawn)
 end
 
 local function moveCharacterToSpawn(character)
-    local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
+    local root = character:FindFirstChild("HumanoidRootPart")
+        or character:WaitForChild("HumanoidRootPart", 10)
     if root and spawnCFrame then
         character:PivotTo(spawnCFrame)
     end
@@ -194,7 +196,6 @@ local worldRoot = Workspace:FindFirstChild("GeneratedWorld_Austin")
 print("[BootstrapAustin] Done.")
 
 local anchor = AustinSpawn.resolveAnchor(manifestSource, RunAustin.LOAD_RADIUS, result.focusPoint)
-local focusPoint = result.focusPoint or anchor.focusPoint
 local spawnPoint = result.spawnPoint or anchor.spawnPoint
 local spawn = Instance.new("SpawnLocation")
 spawn.Name = "CongressAveSpawn"
@@ -233,9 +234,21 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 if WorldConfig.StreamingEnabled then
+    local rolloutDescription = SubplanRollout.Describe(WorldConfig)
+    print(
+        ("[BootstrapAustin] Subplan rollout enabled=%s mode=%s layers=%d chunks=%d"):format(
+            tostring(rolloutDescription.enabled),
+            tostring(rolloutDescription.mode),
+            rolloutDescription.allowedLayerCount,
+            rolloutDescription.allowlistedChunkCount
+        )
+    )
     StreamingService.Start(manifestSource, {
         worldRootName = "GeneratedWorld_Austin",
         config = WorldConfig,
+        nonBlocking = true,
+        frameBudgetSeconds = WorldConfig.StreamingImportFrameBudgetSeconds,
+        preferredLookVector = lookTarget - Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z),
     })
     StreamingService.Update(spawnPoint)
     print("[BootstrapAustin] StreamingService started.")

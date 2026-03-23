@@ -26,7 +26,7 @@ pub struct SatelliteTileProvider {
     zoom: u32,
     cache_dir: PathBuf,
     tiles: HashMap<(u32, u32), DynamicImage>,
-    access_order: Vec<(u32, u32)>,  // most recently used at the end
+    access_order: Vec<(u32, u32)>, // most recently used at the end
 }
 
 impl SatelliteTileProvider {
@@ -34,7 +34,7 @@ impl SatelliteTileProvider {
         let cache_path = PathBuf::from(cache_dir);
         fs::create_dir_all(&cache_path).ok();
         Self {
-            zoom: 19,  // z19 ≈ 0.3m/pixel — per-stud satellite resolution
+            zoom: 19, // z19 ≈ 0.3m/pixel — per-stud satellite resolution
             cache_dir: cache_path,
             tiles: HashMap::new(),
             access_order: Vec::new(),
@@ -50,12 +50,18 @@ impl SatelliteTileProvider {
         let px = px.min(tile.width() - 1);
         let py = py.min(tile.height() - 1);
         let pixel = tile.get_pixel(px, py);
-        Some(Rgb { r: pixel[0], g: pixel[1], b: pixel[2] })
+        Some(Rgb {
+            r: pixel[0],
+            g: pixel[1],
+            b: pixel[2],
+        })
     }
 
     /// Sample dominant color at centroid of a polygon given as LatLon points
     pub fn sample_polygon_centroid(&mut self, points: &[LatLon]) -> Option<Rgb> {
-        if points.is_empty() { return None; }
+        if points.is_empty() {
+            return None;
+        }
         let n = points.len() as f64;
         let lat = points.iter().map(|p| p.lat).sum::<f64>() / n;
         let lon = points.iter().map(|p| p.lon).sum::<f64>() / n;
@@ -91,7 +97,9 @@ impl SatelliteTileProvider {
     }
 
     fn fetch_tile(&self, tx: u32, ty: u32) -> Option<DynamicImage> {
-        let cache_file = self.cache_dir.join(format!("sat_z{}_{tx}_{ty}.jpg", self.zoom));
+        let cache_file = self
+            .cache_dir
+            .join(format!("sat_z{}_{tx}_{ty}.jpg", self.zoom));
         if cache_file.exists() {
             return image::open(&cache_file).ok();
         }
@@ -112,17 +120,24 @@ impl SatelliteTileProvider {
             .args([
                 "-sL",
                 "--fail",
-                "--user-agent", "arnis-roblox/1.0 (open-source educational project)",
-                "--retry", "2",
-                "--retry-delay", "3",
-                "-o", cache_str,
+                "--user-agent",
+                "arnis-roblox/1.0 (open-source educational project)",
+                "--retry",
+                "2",
+                "--retry-delay",
+                "3",
+                "-o",
+                cache_str,
                 &url,
             ])
             .output()
             .ok()?;
 
         if !output.status.success() {
-            eprintln!("[satellite] WARN: tile fetch failed z{}/{}/{}", self.zoom, tx, ty);
+            eprintln!(
+                "[satellite] WARN: tile fetch failed z{}/{}/{}",
+                self.zoom, tx, ty
+            );
             let _ = fs::remove_file(&cache_file);
             return None;
         }
@@ -140,12 +155,24 @@ pub fn classify_roof_material(rgb: Rgb) -> &'static str {
     let g = rgb.g as f32;
     let blue = rgb.b as f32;
 
-    if b < 80.0 { return "Asphalt"; }
-    if b > 200.0 && (r - g).abs() < 30.0 { return "Metal"; }
-    if r > 150.0 && g < 120.0 && blue < 120.0 { return "Brick"; }
-    if r > 100.0 && g > 80.0 && blue < 80.0 { return "WoodPlanks"; }
-    if g > r && g > blue && g > 120.0 { return "Slate"; }
-    if b > 160.0 { return "Concrete"; }
+    if b < 80.0 {
+        return "Asphalt";
+    }
+    if b > 200.0 && (r - g).abs() < 30.0 {
+        return "Metal";
+    }
+    if r > 150.0 && g < 120.0 && blue < 120.0 {
+        return "Brick";
+    }
+    if r > 100.0 && g > 80.0 && blue < 80.0 {
+        return "WoodPlanks";
+    }
+    if g > r && g > blue && g > 120.0 {
+        return "Slate";
+    }
+    if b > 160.0 {
+        return "Concrete";
+    }
     "Concrete"
 }
 
@@ -154,12 +181,24 @@ pub fn classify_ground_material(rgb: Rgb) -> &'static str {
     let green_dom = (rgb.g as f32 - rgb.r as f32) / 255.0;
     let b = rgb.brightness();
 
-    if green_dom > 0.15 { return "Grass"; }
-    if green_dom > 0.05 { return "LeafyGrass"; }
-    if b > 200.0 { return "Concrete"; }
-    if b > 160.0 { return "Pavement"; }
-    if b > 100.0 { return "Asphalt"; }
-    if b > 60.0 { return "Ground"; }
+    if green_dom > 0.15 {
+        return "Grass";
+    }
+    if green_dom > 0.05 {
+        return "LeafyGrass";
+    }
+    if b > 200.0 {
+        return "Concrete";
+    }
+    if b > 160.0 {
+        return "Pavement";
+    }
+    if b > 100.0 {
+        return "Asphalt";
+    }
+    if b > 60.0 {
+        return "Ground";
+    }
     "Rock"
 }
 
@@ -179,7 +218,8 @@ fn latlon_to_tile(ll: LatLon, zoom: u32) -> (u32, u32) {
     let n = 2u64.pow(zoom) as f64;
     let x = ((ll.lon + 180.0) / 360.0 * n) as u32;
     let lat_rad = ll.lat.to_radians();
-    let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n) as u32;
+    let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n)
+        as u32;
     (x, y)
 }
 
@@ -187,7 +227,9 @@ fn latlon_to_pixel_in_tile(ll: LatLon, zoom: u32, tx: u32, ty: u32) -> (u32, u32
     let n = 2u64.pow(zoom) as f64;
     let x_frac = (ll.lon + 180.0) / 360.0 * n - tx as f64;
     let lat_rad = ll.lat.to_radians();
-    let y_frac = (1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n - ty as f64;
+    let y_frac = (1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0
+        * n
+        - ty as f64;
     ((x_frac * 256.0) as u32, (y_frac * 256.0) as u32)
 }
 
@@ -197,7 +239,11 @@ mod tests {
 
     #[test]
     fn brightness_formula_is_correct() {
-        let white = Rgb { r: 255, g: 255, b: 255 };
+        let white = Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
         let black = Rgb { r: 0, g: 0, b: 0 };
         assert!((white.brightness() - 255.0).abs() < 1.0);
         assert_eq!(black.brightness(), 0.0);
@@ -205,37 +251,61 @@ mod tests {
 
     #[test]
     fn classify_roof_dark_is_asphalt() {
-        let dark = Rgb { r: 30, g: 30, b: 30 };
+        let dark = Rgb {
+            r: 30,
+            g: 30,
+            b: 30,
+        };
         assert_eq!(classify_roof_material(dark), "Asphalt");
     }
 
     #[test]
     fn classify_roof_bright_neutral_is_metal() {
-        let bright_neutral = Rgb { r: 210, g: 210, b: 210 };
+        let bright_neutral = Rgb {
+            r: 210,
+            g: 210,
+            b: 210,
+        };
         assert_eq!(classify_roof_material(bright_neutral), "Metal");
     }
 
     #[test]
     fn classify_roof_red_is_brick() {
-        let reddish = Rgb { r: 180, g: 90, b: 80 };
+        let reddish = Rgb {
+            r: 180,
+            g: 90,
+            b: 80,
+        };
         assert_eq!(classify_roof_material(reddish), "Brick");
     }
 
     #[test]
     fn classify_ground_green_dominant_is_grass() {
-        let green = Rgb { r: 60, g: 120, b: 50 };
+        let green = Rgb {
+            r: 60,
+            g: 120,
+            b: 50,
+        };
         assert_eq!(classify_ground_material(green), "Grass");
     }
 
     #[test]
     fn classify_ground_bright_grey_is_concrete() {
-        let bright = Rgb { r: 210, g: 210, b: 210 };
+        let bright = Rgb {
+            r: 210,
+            g: 210,
+            b: 210,
+        };
         assert_eq!(classify_ground_material(bright), "Concrete");
     }
 
     #[test]
     fn roof_pixel_to_color_desaturates() {
-        let rgb = Rgb { r: 200, g: 100, b: 50 };
+        let rgb = Rgb {
+            r: 200,
+            g: 100,
+            b: 50,
+        };
         let (r, g, b) = roof_pixel_to_color(rgb);
         // Result should be between source channel and brightness average
         assert!(r > 0 && g > 0 && b > 0);

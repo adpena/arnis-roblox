@@ -45,9 +45,18 @@ function RunAll.run()
                     allResults.total = allResults.total + results.total
 
                     if results.failed > 0 then
-                        Logger.warn(("Test module %s had %d failures"):format(moduleScript.Name, results.failed))
+                        Logger.warn(
+                            ("Test module %s had %d failures"):format(
+                                moduleScript.Name,
+                                results.failed
+                            )
+                        )
                     else
-                        Logger.info("PASS", moduleScript.Name, ("(%d tests)"):format(results.passed))
+                        Logger.info(
+                            "PASS",
+                            moduleScript.Name,
+                            ("(%d tests)"):format(results.passed)
+                        )
                     end
                 end
             end

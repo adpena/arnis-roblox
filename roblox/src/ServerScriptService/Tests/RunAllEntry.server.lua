@@ -18,4 +18,13 @@ elseif not RUN_IN_EDIT_MODE then
 end
 
 local RunAll = require(script.Parent.RunAll)
-RunAll.run()
+workspace:SetAttribute("VertigoSyncEditPreviewSuspended", true)
+workspace:SetAttribute("VertigoSyncEditPreviewSuspendReason", "arnis_tests")
+local ok, err = pcall(function()
+    RunAll.run()
+end)
+workspace:SetAttribute("VertigoSyncEditPreviewSuspended", false)
+workspace:SetAttribute("VertigoSyncEditPreviewSuspendReason", "")
+if not ok then
+    error(err)
+end

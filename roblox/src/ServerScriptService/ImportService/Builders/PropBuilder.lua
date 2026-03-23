@@ -312,7 +312,11 @@ local function buildRealisticCanopy(parent, trunkTop, canopyRadius, canopyColor,
         lobe.Anchored = true
         lobe.CanCollide = false
         lobe.CastShadow = true
-        lobe.CFrame = CFrame.new(trunkTop.X + offsetX, trunkTop.Y + canopyRadius * 0.5 + offsetY, trunkTop.Z + offsetZ)
+        lobe.CFrame = CFrame.new(
+            trunkTop.X + offsetX,
+            trunkTop.Y + canopyRadius * 0.5 + offsetY,
+            trunkTop.Z + offsetZ
+        )
         lobe.Parent = parent
     end
 end
@@ -327,7 +331,8 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     local yaw = math.rad(prop.yawDegrees or 0)
     -- prop.scale defaults to 1.0 from exporter; use getTreeScale for real height-based scaling
     local scale = getTreeScale(prop)
-    local canopySeed = hashId(prop.id or tostring(prop.position.x) .. ":" .. tostring(prop.position.z))
+    local canopySeed =
+        hashId(prop.id or tostring(prop.position.x) .. ":" .. tostring(prop.position.z))
 
     local model = Instance.new("Model")
     model.Name = prop.id or "Tree"
@@ -351,7 +356,8 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
         trunk.Anchored = true
         trunk.Size = Vector3.new(trunkR * 0.6 * 2, trunkH, trunkR * 0.6 * 2)
         trunk.Shape = Enum.PartType.Cylinder
-        trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+        trunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.5, 0))
+            * CFrame.Angles(0, yaw, math.pi * 0.5)
         trunk.Material = Enum.Material.Wood
         trunk.Color = Color3.fromRGB(139, 109, 75)
         trunk.CastShadow = false
@@ -388,7 +394,8 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     baseTrunk.Anchored = true
     baseTrunk.Shape = Enum.PartType.Cylinder
     baseTrunk.Size = Vector3.new(trunkH * 0.3, trunkR * 1.4, trunkR * 1.4)
-    baseTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.15, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+    baseTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.15, 0))
+        * CFrame.Angles(0, yaw, math.pi * 0.5)
     baseTrunk.Material = Enum.Material.WoodPlanks
     baseTrunk.Color = trunkColor
     baseTrunk.CastShadow = false
@@ -400,7 +407,8 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     upperTrunk.Anchored = true
     upperTrunk.Shape = Enum.PartType.Cylinder
     upperTrunk.Size = Vector3.new(trunkH * 0.7, trunkR, trunkR)
-    upperTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.65, 0)) * CFrame.Angles(0, yaw, math.pi * 0.5)
+    upperTrunk.CFrame = CFrame.new(worldPos + Vector3.new(0, trunkH * 0.65, 0))
+        * CFrame.Angles(0, yaw, math.pi * 0.5)
     upperTrunk.Material = Enum.Material.WoodPlanks
     upperTrunk.Color = trunkColor
     upperTrunk.CastShadow = false
@@ -432,11 +440,28 @@ local function buildTree(parent, prop, originStuds, baseYOverride)
     return model
 end
 
+local function annotatePropRoot(instance, prop)
+    if instance == nil or prop == nil then
+        return instance
+    end
+    if type(prop.id) == "string" and prop.id ~= "" then
+        instance:SetAttribute("ArnisPropSourceId", prop.id)
+    end
+    instance:SetAttribute("ArnisPropKind", tostring(prop.kind or "unknown"))
+    if type(prop.species) == "string" and prop.species ~= "" then
+        instance:SetAttribute("ArnisPropSpecies", string.lower(prop.species))
+    end
+    return instance
+end
+
 function PropBuilder.Build(parent, prop, originStuds, chunk)
     local detailParent = getPropDetailParent(parent)
     if prop.kind == "tree" then
         -- Use manifest Y directly; DEM elevation is authoritative
-        return buildTree(detailParent, prop, originStuds, prop.position.y + originStuds.y)
+        return annotatePropRoot(
+            buildTree(detailParent, prop, originStuds, prop.position.y + originStuds.y),
+            prop
+        )
     end
 
     if prop.kind == "street_lamp" or prop.kind == "amenity_street_lamp" then
@@ -444,7 +469,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         local wz = prop.position.z + originStuds.z
         wx, wz = alignRoadsideProp(prop, chunk, originStuds, wx, wz)
         local wy = resolveBaseY(chunk, wx, prop.position.y + originStuds.y, wz)
-        return buildStreetLamp(wx, wy, wz, detailParent)
+        return annotatePropRoot(buildStreetLamp(wx, wy, wz, detailParent), prop)
     end
 
     if prop.kind == "bench" then
@@ -474,7 +499,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         back.Size = Vector3.new(5, 1.2, 0.2)
         back.Material = Enum.Material.WoodPlanks
         back.Color = Color3.fromRGB(110, 72, 40)
-        back.CFrame = CFrame.new(wx, wy + 2.3, wz) * CFrame.Angles(0, yaw, 0) * CFrame.new(0, 0, -0.65)
+        back.CFrame = CFrame.new(wx, wy + 2.3, wz)
+            * CFrame.Angles(0, yaw, 0)
+            * CFrame.new(0, 0, -0.65)
         back.Anchored = true
         back.CanCollide = false
         back.CastShadow = false
@@ -487,7 +514,9 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
             leg.Size = Vector3.new(0.3, 1.5, 1.5)
             leg.Material = Enum.Material.Metal
             leg.Color = Color3.fromRGB(60, 60, 65)
-            leg.CFrame = CFrame.new(wx, wy + 0.75, wz) * CFrame.Angles(0, yaw, 0) * CFrame.new(legOffset, 0, 0)
+            leg.CFrame = CFrame.new(wx, wy + 0.75, wz)
+                * CFrame.Angles(0, yaw, 0)
+                * CFrame.new(legOffset, 0, 0)
             leg.Anchored = true
             leg.CanCollide = false
             leg.CastShadow = false
@@ -495,7 +524,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         end
 
         model.Parent = detailParent
-        return model
+        return annotatePropRoot(model, prop)
     end
 
     if prop.kind == "bus_stop" then
@@ -524,7 +553,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         sign.Color = Color3.fromRGB(0, 80, 180)
         sign.Parent = model
         model.Parent = detailParent
-        return model
+        return annotatePropRoot(model, prop)
     end
 
     if prop.kind == "traffic_signal" then
@@ -580,7 +609,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         end
 
         model.Parent = detailParent
-        return model
+        return annotatePropRoot(model, prop)
     end
 
     if prop.kind == "waste_basket" then
@@ -598,7 +627,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         bin.Material = Enum.Material.Metal
         bin.Color = Color3.fromRGB(70, 70, 70)
         bin.Parent = detailParent
-        return bin
+        return annotatePropRoot(bin, prop)
     end
 
     if prop.kind == "fire_hydrant" then
@@ -616,7 +645,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         hydrant.Material = Enum.Material.SmoothPlastic
         hydrant.Color = Color3.fromRGB(220, 30, 30)
         hydrant.Parent = detailParent
-        return hydrant
+        return annotatePropRoot(hydrant, prop)
     end
 
     if prop.kind == "crossing" then
@@ -650,7 +679,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         end
 
         crosswalkModel.Parent = detailParent
-        return crosswalkModel
+        return annotatePropRoot(crosswalkModel, prop)
     end
 
     if prop.kind == "fountain" then
@@ -676,7 +705,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         water.CFrame = CFrame.new(wx, wy + 0.8, wz) * CFrame.Angles(0, 0, math.pi / 2)
         water.Anchored = true
         water.Parent = detailParent
-        return basin
+        return annotatePropRoot(basin, prop)
     end
 
     if prop.kind == "post_box" then
@@ -690,7 +719,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         box.CFrame = CFrame.new(wx, wy + 2, wz)
         box.Anchored = true
         box.Parent = detailParent
-        return box
+        return annotatePropRoot(box, prop)
     end
 
     if prop.kind == "drinking_water" then
@@ -704,7 +733,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         fountain.CFrame = CFrame.new(wx, wy + 1.5, wz)
         fountain.Anchored = true
         fountain.Parent = detailParent
-        return fountain
+        return annotatePropRoot(fountain, prop)
     end
 
     if prop.kind == "bollard" then
@@ -719,7 +748,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         bollard.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi / 2)
         bollard.Anchored = true
         bollard.Parent = detailParent
-        return bollard
+        return annotatePropRoot(bollard, prop)
     end
 
     if prop.kind == "vending_machine" then
@@ -733,7 +762,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         machine.CFrame = CFrame.new(wx, wy + 3, wz)
         machine.Anchored = true
         machine.Parent = detailParent
-        return machine
+        return annotatePropRoot(machine, prop)
     end
 
     if prop.kind == "telephone" then
@@ -748,7 +777,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         booth.CFrame = CFrame.new(wx, wy + 3.5, wz)
         booth.Anchored = true
         booth.Parent = detailParent
-        return booth
+        return annotatePropRoot(booth, prop)
     end
 
     if prop.kind == "parking_meter" then
@@ -773,7 +802,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         head.Anchored = true
         head.Parent = model
         model.Parent = detailParent
-        return model
+        return annotatePropRoot(model, prop)
     end
 
     if prop.kind == "bicycle_parking" then
@@ -789,7 +818,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         rack.CFrame = CFrame.new(wx, wy + 1.5, wz) * CFrame.Angles(0, 0, math.pi / 2)
         rack.Anchored = true
         rack.Parent = detailParent
-        return rack
+        return annotatePropRoot(rack, prop)
     end
 
     if prop.kind == "power_tower" then
@@ -806,7 +835,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         base.CFrame = CFrame.new(wx, wy + towerHeight / 2, wz)
         base.Anchored = true
         base.Parent = detailParent
-        return base
+        return annotatePropRoot(base, prop)
     end
 
     if prop.kind == "power_pole" then
@@ -822,7 +851,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         pole.CFrame = CFrame.new(wx, wy + poleHeight / 2, wz) * CFrame.Angles(0, 0, math.pi / 2)
         pole.Anchored = true
         pole.Parent = detailParent
-        return pole
+        return annotatePropRoot(pole, prop)
     end
 
     if prop.kind == "flagpole" then
@@ -838,7 +867,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         pole.CFrame = CFrame.new(wx, wy + fpHeight / 2, wz) * CFrame.Angles(0, 0, math.pi / 2)
         pole.Anchored = true
         pole.Parent = detailParent
-        return pole
+        return annotatePropRoot(pole, prop)
     end
 
     if prop.kind == "surveillance" then
@@ -863,7 +892,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
         cam.Anchored = true
         cam.Parent = model
         model.Parent = detailParent
-        return model
+        return annotatePropRoot(model, prop)
     end
 
     local pool = getOrCreatePool(prop.kind)
@@ -871,6 +900,7 @@ function PropBuilder.Build(parent, prop, originStuds, chunk)
 
     instance.Name = prop.id or prop.kind
     instance:SetAttribute("PoolKind", prop.kind)
+    annotatePropRoot(instance, prop)
 
     local worldPos = Vector3.new(
         prop.position.x + originStuds.x,

@@ -4,12 +4,12 @@ return function()
     local Assert = require(script.Parent.Assert)
 
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "RoofTruth",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 1,
         },
@@ -55,12 +55,20 @@ return function()
     ImportService.ImportManifest(manifest, {
         clearFirst = true,
         worldRootName = worldRootName,
+        config = {
+            BuildingMode = "shellParts",
+            TerrainMode = "none",
+            RoadMode = "none",
+            WaterMode = "none",
+            LanduseMode = "none",
+        },
     })
 
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected roof truth world root")
 
-    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("l_shape")
+    local building =
+        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("l_shape")
     Assert.truthy(building, "expected l-shape building")
 
     local function collectRoofParts(model)
@@ -78,8 +86,12 @@ return function()
 
     local function pointCovered(pointX, pointZ)
         for _, roofPart in ipairs(roofParts) do
-            local localPoint = roofPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roofPart.Position.Y, pointZ))
-            if math.abs(localPoint.X) <= roofPart.Size.X * 0.5 and math.abs(localPoint.Z) <= roofPart.Size.Z * 0.5 then
+            local localPoint =
+                roofPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roofPart.Position.Y, pointZ))
+            if
+                math.abs(localPoint.X) <= roofPart.Size.X * 0.5
+                and math.abs(localPoint.Z) <= roofPart.Size.Z * 0.5
+            then
                 return true
             end
         end
@@ -90,12 +102,12 @@ return function()
     Assert.falsy(pointCovered(24, 24), "expected roof to leave empty L-shape corner uncovered")
 
     local rotatedManifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "RoofRotationTruth",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 1,
         },
@@ -138,10 +150,18 @@ return function()
     ImportService.ImportManifest(rotatedManifest, {
         clearFirst = true,
         worldRootName = worldRootName,
+        config = {
+            BuildingMode = "shellParts",
+            TerrainMode = "none",
+            RoadMode = "none",
+            WaterMode = "none",
+            LanduseMode = "none",
+        },
     })
 
     worldRoot = Workspace:FindFirstChild(worldRootName)
-    local rotatedBuilding = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("rotated_shape")
+    local rotatedBuilding =
+        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("rotated_shape")
     Assert.truthy(rotatedBuilding, "expected rotated building")
 
     local rotatedRoofParts = collectRoofParts(rotatedBuilding)
@@ -149,7 +169,8 @@ return function()
     local rotatedRoof = rotatedRoofParts[1]
     Assert.truthy(rotatedRoof, "expected rotated roof strip")
     Assert.truthy(
-        math.abs(rotatedRoof.CFrame.LookVector.X) > 0.1 and math.abs(rotatedRoof.CFrame.LookVector.Z) > 0.1,
+        math.abs(rotatedRoof.CFrame.LookVector.X) > 0.1
+            and math.abs(rotatedRoof.CFrame.LookVector.Z) > 0.1,
         "expected roof strips to rotate with the building instead of staying axis-aligned"
     )
 

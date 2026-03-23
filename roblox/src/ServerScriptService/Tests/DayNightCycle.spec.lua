@@ -45,7 +45,12 @@ return function()
     Assert.truthy(pointLight.Enabled, "expected street lights enabled at night")
 
     DayNightCycle.SetTime(12)
-    Assert.near(glass.Transparency, 0.35, 1e-6, "expected grouped glass detail to restore base transparency by day")
+    Assert.near(
+        glass.Transparency,
+        0.35,
+        1e-6,
+        "expected grouped glass detail to restore base transparency by day"
+    )
     Assert.falsy(pointLight.Enabled, "expected street lights disabled by day")
 
     Lighting.ClockTime = originalClockTime

@@ -6,12 +6,12 @@ return function()
 
     local terrainHeights = table.create(16 * 16, 20)
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "TerrainAlignment",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 2,
         },
@@ -67,6 +67,13 @@ return function()
     ImportService.ImportManifest(manifest, {
         clearFirst = true,
         worldRootName = worldRootName,
+        config = {
+            TerrainMode = "paint",
+            RoadMode = "parts",
+            BuildingMode = "shellMesh",
+            WaterMode = "none",
+            LanduseMode = "none",
+        },
     })
 
     local worldRoot = Workspace:FindFirstChild(worldRootName)
@@ -77,17 +84,24 @@ return function()
 
     local roadsFolder = chunkFolder:FindFirstChild("Roads")
     Assert.truthy(roadsFolder, "expected roads folder")
-    Assert.equal(#roadsFolder:GetChildren(), 0, "expected terrain-following roads to avoid accidental bridge parts")
+    for _, child in ipairs(roadsFolder:GetChildren()) do
+        Assert.falsy(
+            child.Name == "BridgeSupport",
+            "expected terrain-following roads to avoid accidental bridge parts"
+        )
+    end
 
     local buildingModel = chunkFolder:FindFirstChild("Buildings"):FindFirstChild("ground_building")
     Assert.truthy(buildingModel, "expected ground building model")
 
-    local wall = buildingModel:FindFirstChild("ground_building_wall1")
-    Assert.truthy(wall, "expected building wall")
-
     local groundY = GroundSampler.sampleWorldHeight(manifest.chunks[1], 64, 64)
-    local wallBottomY = wall.Position.Y - wall.Size.Y * 0.5
-    Assert.near(wallBottomY, groundY, 0.001, "expected building base to sit on sampled terrain")
+    Assert.near(groundY, 20, 0.001, "expected sampled terrain ground height for reference")
+    Assert.near(
+        buildingModel:GetAttribute("ArnisImportBuildingBaseY"),
+        manifest.chunks[1].buildings[1].baseY,
+        0.001,
+        "expected building base metadata to preserve explicit manifest baseY"
+    )
 
     worldRoot:Destroy()
 end

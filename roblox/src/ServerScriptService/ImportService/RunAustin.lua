@@ -4,6 +4,7 @@ local ManifestLoader = require(script.Parent.ManifestLoader)
 local Profiler = require(script.Parent.Profiler)
 local RunService = game:GetService("RunService")
 local ServerScriptService = game:GetService("ServerScriptService")
+local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local RunAustin = {}
@@ -13,7 +14,8 @@ RunAustin.STARTUP_CHUNK_COUNT = 2
 RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS = 30
 RunAustin.STUDIO_MANIFEST_INDEX_NAME = "AustinPreviewManifestIndex"
 RunAustin.STUDIO_MANIFEST_CHUNKS_NAME = "AustinPreviewManifestChunks"
-RunAustin.FULL_MANIFEST_INDEX_NAME = "AustinHDManifestIndex"
+RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME = "AustinManifestIndex"
+RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME = "AustinHDManifestIndex"
 
 local function isStudioEditMode()
     return RunService:IsStudio() and not RunService:IsRunning()
@@ -64,24 +66,39 @@ function RunAustin.getManifestName()
         return RunAustin.STUDIO_MANIFEST_INDEX_NAME
     end
 
-    return RunAustin.FULL_MANIFEST_INDEX_NAME
+    return RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME
+end
+
+function RunAustin.getRuntimeManifestCandidates()
+    return {
+        RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME,
+        RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME,
+    }
 end
 
 function RunAustin.loadManifestSource()
     if isStudioEditMode() then
-        local previewFolder = ServerScriptService:WaitForChild("StudioPreview", RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS)
+        print("[RunAustin] Loading preview manifest source")
+        local previewFolder = ServerScriptService:WaitForChild(
+            "StudioPreview",
+            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
+        )
         if not previewFolder then
             error("ServerScriptService.StudioPreview was not provisioned into the live DataModel")
         end
-        local previewIndex =
-            previewFolder:WaitForChild(RunAustin.STUDIO_MANIFEST_INDEX_NAME, RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS)
+        local previewIndex = previewFolder:WaitForChild(
+            RunAustin.STUDIO_MANIFEST_INDEX_NAME,
+            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
+        )
         if not previewIndex then
             error(
                 "ServerScriptService.StudioPreview.AustinPreviewManifestIndex was not provisioned into the live DataModel"
             )
         end
-        local previewChunks =
-            previewFolder:WaitForChild(RunAustin.STUDIO_MANIFEST_CHUNKS_NAME, RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS)
+        local previewChunks = previewFolder:WaitForChild(
+            RunAustin.STUDIO_MANIFEST_CHUNKS_NAME,
+            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
+        )
         if not previewChunks then
             error(
                 "ServerScriptService.StudioPreview.AustinPreviewManifestChunks was not provisioned into the live DataModel"
@@ -91,25 +108,53 @@ function RunAustin.loadManifestSource()
             previewIndex,
             previewChunks,
             RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        )
+        ),
+            RunAustin.STUDIO_MANIFEST_INDEX_NAME
     end
 
-    local success, manifestOrErr = pcall(function()
-        return ManifestLoader.LoadNamedShardedSampleHandle(
-            RunAustin.FULL_MANIFEST_INDEX_NAME,
-            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        )
-    end)
-    if success then
-        return manifestOrErr
+    local sampleData = ServerStorage:WaitForChild("SampleData", 5)
+    if not sampleData then
+        error("ServerStorage.SampleData was not provisioned into the live DataModel")
     end
 
-    error(manifestOrErr)
+    local loadErrors = {}
+    for index, manifestName in ipairs(RunAustin.getRuntimeManifestCandidates()) do
+        local manifestModule = sampleData:FindFirstChild(manifestName)
+        if manifestModule then
+            print(("[RunAustin] Loading runtime manifest source %s"):format(manifestName))
+            local success, manifestOrErr = pcall(function()
+                return ManifestLoader.LoadNamedShardedSampleHandle(
+                    manifestName,
+                    RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
+                )
+            end)
+            if success then
+                if index > 1 then
+                    warn(
+                        ("[RunAustin] Falling back to runtime manifest %s because canonical %s is unavailable in the live DataModel"):format(
+                            manifestName,
+                            RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME
+                        )
+                    )
+                end
+                return manifestOrErr, manifestName
+            end
+            table.insert(loadErrors, ("%s: %s"):format(manifestName, tostring(manifestOrErr)))
+        else
+            table.insert(
+                loadErrors,
+                ("%s: module missing from ServerStorage.SampleData"):format(manifestName)
+            )
+        end
+    end
+
+    error(table.concat(loadErrors, "; "))
 end
 
 function RunAustin.run()
     setPerfAttribute("Status", "loading")
-    local success, manifestOrErr = pcall(function()
+    print(("[RunAustin] Starting run for manifest %s"):format(RunAustin.getManifestName()))
+    local success, manifestOrErr, resolvedManifestName = pcall(function()
         return RunAustin.loadManifestSource()
     end)
 
@@ -120,6 +165,13 @@ function RunAustin.run()
     end
 
     local manifestSource = manifestOrErr
+    setPerfAttribute("ManifestName", resolvedManifestName or RunAustin.getManifestName())
+    print(
+        ("[RunAustin] Manifest source loaded from %s"):format(
+            resolvedManifestName or RunAustin.getManifestName()
+        )
+    )
+    print("[RunAustin] Manifest source loaded")
     local anchor = AustinSpawn.resolveAnchor(manifestSource, RunAustin.LOAD_RADIUS)
     -- Use the exact runtime spawn anchor as the import/load center so edit preview,
     -- play-mode chunk coverage, and the eventual player spawn stay locked together.

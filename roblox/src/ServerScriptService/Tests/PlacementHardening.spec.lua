@@ -101,7 +101,10 @@ return function()
     Assert.truthy(lamp, "expected street lamp model")
     local pole = lamp:FindFirstChild("Pole")
     Assert.truthy(pole, "expected street lamp pole")
-    Assert.truthy(math.abs(pole.Position.Z - 128) > 1, "expected street lamp to shift off road centerline")
+    Assert.truthy(
+        math.abs(pole.Position.Z - 128) > 1,
+        "expected street lamp to shift off road centerline"
+    )
 
     worldRoot:Destroy()
 end

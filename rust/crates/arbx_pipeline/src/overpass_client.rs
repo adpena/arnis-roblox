@@ -40,6 +40,8 @@ fn build_query(bbox: BoundingBox) -> String {
   way["natural"]({bb});
   way["leisure"]({bb});
   way["amenity"]({bb});
+  way["amenity"="fountain"]({bb});
+  relation["amenity"="fountain"]({bb});
   way["barrier"]({bb});
   way["power"]({bb});
   node["natural"="tree"]({bb});
@@ -101,10 +103,7 @@ pub fn fetch_overpass(bbox: BoundingBox, cache_dir: &str) -> PipelineResult<Path
     let cached_path = PathBuf::from(cache_dir).join(&filename);
 
     if cached_path.exists() {
-        eprintln!(
-            "[overpass] cache hit: {}",
-            cached_path.display()
-        );
+        eprintln!("[overpass] cache hit: {}", cached_path.display());
         return Ok(cached_path);
     }
 
@@ -118,9 +117,9 @@ pub fn fetch_overpass(bbox: BoundingBox, cache_dir: &str) -> PipelineResult<Path
 
     let query = build_query(bbox);
 
-    let out_str = cached_path.to_str().ok_or_else(|| {
-        PipelineError::IO("cache path is not valid UTF-8".to_string())
-    })?;
+    let out_str = cached_path
+        .to_str()
+        .ok_or_else(|| PipelineError::IO("cache path is not valid UTF-8".to_string()))?;
 
     let output = std::process::Command::new("curl")
         .args([
@@ -183,8 +182,9 @@ fn urlencoded(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for byte in s.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
-            | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
             b' ' => out.push('+'),
             b => out.push_str(&format!("%{:02X}", b)),
         }
@@ -205,7 +205,10 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.starts_with("overpass_"));
         assert!(a.ends_with(".json"));
-        assert!(!a.contains('.') || a.ends_with(".json"), "dots only in .json suffix");
+        assert!(
+            !a.contains('.') || a.ends_with(".json"),
+            "dots only in .json suffix"
+        );
     }
 
     #[test]
@@ -220,30 +223,111 @@ mod tests {
         let bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
         let q = build_query(bbox);
         // south,west,north,east
-        assert!(q.contains("30.26,-97.75,30.27,-97.74"), "query should embed bbox: {}", q);
+        assert!(
+            q.contains("30.26,-97.75,30.27,-97.74"),
+            "query should embed bbox: {}",
+            q
+        );
         assert!(q.contains("way[\"building\"]"));
         assert!(q.contains("node[\"natural\"=\"tree\"]"));
         // highway covered by generic way["highway"] — redundant subtypes must NOT appear
-        assert!(!q.contains("way[\"highway\"=\"footway\"]"), "redundant footway should be removed");
-        assert!(!q.contains("way[\"highway\"=\"path\"]"), "redundant path should be removed");
-        assert!(!q.contains("way[\"highway\"=\"pedestrian\"]"), "redundant pedestrian should be removed");
-        assert!(!q.contains("way[\"highway\"=\"steps\"]"), "redundant steps should be removed");
-        assert!(!q.contains("way[\"highway\"=\"cycleway\"]"), "redundant cycleway should be removed");
-        assert!(q.contains("way[\"man_made\"=\"bridge\"]"), "missing bridge: {}", q);
+        assert!(
+            !q.contains("way[\"highway\"=\"footway\"]"),
+            "redundant footway should be removed"
+        );
+        assert!(
+            !q.contains("way[\"highway\"=\"path\"]"),
+            "redundant path should be removed"
+        );
+        assert!(
+            !q.contains("way[\"highway\"=\"pedestrian\"]"),
+            "redundant pedestrian should be removed"
+        );
+        assert!(
+            !q.contains("way[\"highway\"=\"steps\"]"),
+            "redundant steps should be removed"
+        );
+        assert!(
+            !q.contains("way[\"highway\"=\"cycleway\"]"),
+            "redundant cycleway should be removed"
+        );
+        assert!(
+            q.contains("way[\"man_made\"=\"bridge\"]"),
+            "missing bridge: {}",
+            q
+        );
         // crosswalks and urban furniture nodes
-        assert!(q.contains("node[\"highway\"=\"crossing\"]"), "missing crossing node: {}", q);
-        assert!(q.contains("node[\"tourism\"=\"information\"]"), "missing tourism info: {}", q);
-        assert!(q.contains("node[\"amenity\"=\"fountain\"]"), "missing fountain: {}", q);
-        assert!(q.contains("node[\"amenity\"=\"drinking_water\"]"), "missing drinking_water: {}", q);
-        assert!(q.contains("node[\"amenity\"=\"telephone\"]"), "missing telephone: {}", q);
-        assert!(q.contains("node[\"amenity\"=\"post_box\"]"), "missing post_box: {}", q);
-        assert!(q.contains("node[\"amenity\"=\"vending_machine\"]"), "missing vending_machine: {}", q);
+        assert!(
+            q.contains("node[\"highway\"=\"crossing\"]"),
+            "missing crossing node: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"tourism\"=\"information\"]"),
+            "missing tourism info: {}",
+            q
+        );
+        assert!(
+            q.contains("way[\"amenity\"=\"fountain\"]"),
+            "missing fountain way: {}",
+            q
+        );
+        assert!(
+            q.contains("relation[\"amenity\"=\"fountain\"]"),
+            "missing fountain relation: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"amenity\"=\"fountain\"]"),
+            "missing fountain: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"amenity\"=\"drinking_water\"]"),
+            "missing drinking_water: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"amenity\"=\"telephone\"]"),
+            "missing telephone: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"amenity\"=\"post_box\"]"),
+            "missing post_box: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"amenity\"=\"vending_machine\"]"),
+            "missing vending_machine: {}",
+            q
+        );
         // barrier/power/man_made nodes previously missing
-        assert!(q.contains("node[\"barrier\"=\"bollard\"]"), "missing bollard: {}", q);
-        assert!(q.contains("node[\"power\"=\"tower\"]"), "missing power tower: {}", q);
-        assert!(q.contains("node[\"power\"=\"pole\"]"), "missing power pole: {}", q);
-        assert!(q.contains("node[\"man_made\"=\"surveillance\"]"), "missing surveillance: {}", q);
-        assert!(q.contains("node[\"man_made\"=\"flagpole\"]"), "missing flagpole: {}", q);
+        assert!(
+            q.contains("node[\"barrier\"=\"bollard\"]"),
+            "missing bollard: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"power\"=\"tower\"]"),
+            "missing power tower: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"power\"=\"pole\"]"),
+            "missing power pole: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"man_made\"=\"surveillance\"]"),
+            "missing surveillance: {}",
+            q
+        );
+        assert!(
+            q.contains("node[\"man_made\"=\"flagpole\"]"),
+            "missing flagpole: {}",
+            q
+        );
     }
 
     #[test]

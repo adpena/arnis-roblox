@@ -7,6 +7,8 @@ set -euo pipefail
 #
 # Usage (from repo root):
 #   bash scripts/export_austin_from_osm.sh
+#   bash scripts/export_austin_from_osm.sh --yolo
+#   bash scripts/export_austin_from_osm.sh --profile high --satellite
 #
 # Outputs:
 #   rust/data/austin_overpass.json
@@ -29,7 +31,7 @@ cd "$RUST_DIR"
 cargo run -p arbx_cli -- compile \
   --source "data/austin_overpass.json" \
   --bbox "30.245,-97.765,30.305,-97.715" \
+  "$@" \
   --out "out/austin-manifest.json"
 
 echo "[export_austin_from_osm] Done. Manifest written to rust/out/austin-manifest.json"
-

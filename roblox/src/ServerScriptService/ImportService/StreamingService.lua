@@ -5,6 +5,8 @@ local Workspace = game:GetService("Workspace")
 
 local ImportService = require(script.Parent)
 local ChunkLoader = require(script.Parent.ChunkLoader)
+local ChunkPriority = require(script.Parent.ChunkPriority)
+local SubplanRollout = require(script.Parent.SubplanRollout)
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 
@@ -16,7 +18,7 @@ local streamingOptions = nil
 local streamingChunkIndex = nil
 local heartbeatConn = nil
 local lastUpdate = 0
-local UPDATE_INTERVAL = 1.0 -- seconds between distance checks
+local DEFAULT_UPDATE_INTERVAL = 0.25 -- seconds between distance checks
 local HYSTERESIS_RATIO = 0.15
 
 -- LOD detail toggle: runs at a lower frequency to keep per-frame cost cheap.
@@ -29,6 +31,20 @@ local LOD_LOW = "Low"
 local loadedChunkLods = {}
 local lodConfigCache = setmetatable({}, { __mode = "k" })
 local streamingChunkOptionsByLod = nil
+local streamingLastFocalPoint = nil
+local streamingPreferredForward = nil
+local observedChunkImportMsById = {}
+local streamingSubplanRollout = nil
+
+local function normalizePositiveNumber(value)
+    if type(value) ~= "number" then
+        return nil
+    end
+    if value <= 0 then
+        return nil
+    end
+    return value
+end
 
 local function getChunkCenter(chunkRef, chunkSizeStuds)
     local originData = chunkRef.originStuds or { x = 0, y = 0, z = 0 }
@@ -108,9 +124,55 @@ local function getMaterializedChunk(chunkEntry)
     end
 
     local chunkRef = chunkEntry.ref
-    local chunk = if streamingManifest.GetChunk then streamingManifest:GetChunk(chunkRef.id) else chunkRef
+    local chunk = if streamingManifest.GetChunk
+        then streamingManifest:GetChunk(chunkRef.id)
+        else chunkRef
     chunkEntry.materializedChunk = chunk
     return chunk
+end
+
+local function appendStreamingWorkItems(workItems, chunkEntry, chunkOptions, config, targetLod)
+    local chunkRef = chunkEntry.ref
+    local allowedSubplans = SubplanRollout.GetFullySchedulableSubplans(chunkRef, config)
+    if allowedSubplans == nil then
+        workItems[#workItems + 1] = {
+            chunkEntry = chunkEntry,
+            chunkOptions = chunkOptions,
+            chunkId = chunkRef.id,
+            originStuds = chunkRef.originStuds,
+            targetLod = targetLod,
+        }
+        return false
+    end
+
+    for _, subplan in ipairs(allowedSubplans) do
+        workItems[#workItems + 1] = {
+            chunkEntry = chunkEntry,
+            chunkOptions = chunkOptions,
+            chunkId = chunkRef.id,
+            originStuds = chunkRef.originStuds,
+            subplan = subplan,
+            targetLod = targetLod,
+        }
+    end
+    return true
+end
+
+local function getPendingSubplans(chunkRef, config)
+    local allowedSubplans = SubplanRollout.GetFullySchedulableSubplans(chunkRef, config)
+    if allowedSubplans == nil then
+        return nil
+    end
+
+    local state = ImportService.GetSubplanState(chunkRef.id)
+    local pending = {}
+    for _, subplan in ipairs(allowedSubplans) do
+        local layer = if type(subplan) == "table" then subplan.layer or subplan.id else nil
+        if type(layer) == "string" and not state.importedLayers[layer] then
+            pending[#pending + 1] = subplan
+        end
+    end
+    return pending
 end
 
 local function getConfigSignature(config)
@@ -159,7 +221,14 @@ local function getExitRadius(enterRadius, maxRadius)
     return expanded
 end
 
-local function chooseTargetLod(distSq, currentLod, highRadiusSq, highExitRadiusSq, targetRadiusSq, targetExitRadiusSq)
+local function chooseTargetLod(
+    distSq,
+    currentLod,
+    highRadiusSq,
+    highExitRadiusSq,
+    targetRadiusSq,
+    targetExitRadiusSq
+)
     if currentLod == LOD_HIGH then
         if distSq <= highExitRadiusSq then
             return LOD_HIGH
@@ -210,11 +279,18 @@ local function getLodConfig(level, baseConfig)
 end
 
 local function buildChunkOptionsByLod(options, baseConfig)
+    local frameBudgetSeconds = normalizePositiveNumber(options.frameBudgetSeconds)
+        or normalizePositiveNumber(baseConfig.StreamingImportFrameBudgetSeconds)
+    local nonBlocking = options.nonBlocking
+    if nonBlocking == nil then
+        nonBlocking = frameBudgetSeconds ~= nil
+    end
+
     return {
         [LOD_HIGH] = {
             worldRootName = options.worldRootName,
-            frameBudgetSeconds = options.frameBudgetSeconds,
-            nonBlocking = options.nonBlocking,
+            frameBudgetSeconds = frameBudgetSeconds,
+            nonBlocking = nonBlocking,
             shouldCancel = options.shouldCancel,
             config = getLodConfig(LOD_HIGH, baseConfig),
             configSignature = getConfigSignature(getLodConfig(LOD_HIGH, baseConfig)),
@@ -222,8 +298,8 @@ local function buildChunkOptionsByLod(options, baseConfig)
         },
         [LOD_LOW] = {
             worldRootName = options.worldRootName,
-            frameBudgetSeconds = options.frameBudgetSeconds,
-            nonBlocking = options.nonBlocking,
+            frameBudgetSeconds = frameBudgetSeconds,
+            nonBlocking = nonBlocking,
             shouldCancel = options.shouldCancel,
             config = getLodConfig(LOD_LOW, baseConfig),
             configSignature = getConfigSignature(getLodConfig(LOD_LOW, baseConfig)),
@@ -235,7 +311,9 @@ end
 local function setInstanceVisible(instance, visible)
     if instance:IsA("BasePart") then
         instance.Transparency = if visible
-            then (instance:GetAttribute("BaseTransparency") or instance:GetAttribute("ArnisBaseTransparency") or 0)
+            then (instance:GetAttribute("BaseTransparency") or instance:GetAttribute(
+                "ArnisBaseTransparency"
+            ) or 0)
             else 1
     elseif instance:IsA("BillboardGui") then
         instance.Enabled = visible
@@ -268,10 +346,13 @@ local function updateChunkEntryLodGroups(chunkEntry, camPos, highDetailRadius, i
     end
     if chunkCenter == nil and chunkEntry.chunk then
         local origin = chunkEntry.chunk.originStuds or { x = 0, y = 0, z = 0 }
-        local chunkSize = streamingOptions and streamingOptions.config and streamingOptions.config.ChunkSizeStuds
+        local chunkSize = streamingOptions
+                and streamingOptions.config
+                and streamingOptions.config.ChunkSizeStuds
             or DefaultWorldConfig.ChunkSizeStuds
             or 256
-        chunkCenter = Vector3.new(origin.x + chunkSize * 0.5, origin.y or 0, origin.z + chunkSize * 0.5)
+        chunkCenter =
+            Vector3.new(origin.x + chunkSize * 0.5, origin.y or 0, origin.z + chunkSize * 0.5)
     end
     if chunkCenter == nil then
         return
@@ -300,7 +381,8 @@ local function updateLOD()
         return
     end
     local camPos = camera.CFrame.Position
-    local config = streamingOptions and (streamingOptions.config or DefaultWorldConfig) or DefaultWorldConfig
+    local config = streamingOptions and (streamingOptions.config or DefaultWorldConfig)
+        or DefaultWorldConfig
     local highDetailRadius = config.HighDetailRadius or 2048
     local interiorRadius = highDetailRadius * 0.25 -- interiors only very close
 
@@ -319,6 +401,11 @@ function StreamingService.Start(manifest, options)
     streamingChunkRefs = manifest and (manifest.chunkRefs or manifest.chunks) or nil
     streamingOptions = options or {}
     local config = streamingOptions.config or DefaultWorldConfig
+    streamingSubplanRollout = SubplanRollout.Describe(config)
+    streamingPreferredForward = if typeof(streamingOptions.preferredLookVector) == "Vector3"
+        then streamingOptions.preferredLookVector
+        else nil
+    streamingLastFocalPoint = nil
     streamingChunkOptionsByLod = buildChunkOptionsByLod(streamingOptions, config)
     streamingChunkIndex = buildChunkSpatialIndex(streamingChunkRefs, config)
 
@@ -327,11 +414,30 @@ function StreamingService.Start(manifest, options)
         return
     end
 
+    Workspace:SetAttribute("ArnisStreamingSubplanRolloutEnabled", streamingSubplanRollout.enabled)
+    Workspace:SetAttribute("ArnisStreamingSubplanRolloutMode", streamingSubplanRollout.mode)
+    Workspace:SetAttribute(
+        "ArnisStreamingSubplanRolloutAllowedLayerCount",
+        streamingSubplanRollout.allowedLayerCount
+    )
+    Workspace:SetAttribute(
+        "ArnisStreamingSubplanRolloutAllowlistedChunkCount",
+        streamingSubplanRollout.allowlistedChunkCount
+    )
     Logger.info("StreamingService started for world:", manifest.meta.worldName)
+    Logger.info(
+        "StreamingService subplan rollout:",
+        streamingSubplanRollout.mode,
+        "enabled=" .. tostring(streamingSubplanRollout.enabled),
+        "layers=" .. tostring(streamingSubplanRollout.allowedLayerCount),
+        "chunks=" .. tostring(streamingSubplanRollout.allowlistedChunkCount)
+    )
 
     heartbeatConn = RunService.Heartbeat:Connect(function(dt)
         local now = os.clock()
-        if now - lastUpdate >= UPDATE_INTERVAL then
+        local updateInterval = normalizePositiveNumber(config.StreamingUpdateIntervalSeconds)
+            or DEFAULT_UPDATE_INTERVAL
+        if now - lastUpdate >= updateInterval then
             lastUpdate = now
             StreamingService.Update()
         end
@@ -349,11 +455,16 @@ function StreamingService.Stop()
         heartbeatConn:Disconnect()
         heartbeatConn = nil
     end
+    ImportService.ResetSubplanState()
     streamingManifest = nil
     streamingChunkRefs = nil
     streamingChunkIndex = nil
     streamingOptions = nil
     streamingChunkOptionsByLod = nil
+    streamingLastFocalPoint = nil
+    streamingPreferredForward = nil
+    streamingSubplanRollout = nil
+    table.clear(observedChunkImportMsById)
     loadedChunkLods = {}
     lastLODUpdate = 0
 end
@@ -377,6 +488,7 @@ function StreamingService.Update(focalPoint)
     local config = streamingOptions.config or DefaultWorldConfig
     local targetRadius = config.StreamingTargetRadius or 2048
     local highRadius = config.HighDetailRadius or 1024
+    local chunkSizeStuds = config.ChunkSizeStuds or DefaultWorldConfig.ChunkSizeStuds or 256
 
     local targetRadiusSq = targetRadius * targetRadius
     local highRadiusSq = highRadius * highRadius
@@ -385,33 +497,77 @@ function StreamingService.Update(focalPoint)
     local highExitRadiusSq = highExitRadius * highExitRadius
     local targetExitRadiusSq = targetExitRadius * targetExitRadius
     local interiorRadius = highRadius * 0.25
+    local movementForward = nil
+    if typeof(streamingLastFocalPoint) == "Vector3" then
+        local delta = playerPos - streamingLastFocalPoint
+        if Vector3.new(delta.X, 0, delta.Z).Magnitude >= 1 then
+            movementForward = delta
+        end
+    end
+    local forwardVector = movementForward or streamingPreferredForward
 
     local desiredChunkIds = {}
-    for _, chunkEntry in ipairs(getCandidateChunkRefs(streamingChunkIndex, playerPos, targetExitRadius)) do
+    local candidateChunkEntries =
+        getCandidateChunkRefs(streamingChunkIndex, playerPos, targetExitRadius)
+    local importWorkItems = {}
+    ChunkPriority.SortChunkEntriesByPriority(
+        candidateChunkEntries,
+        playerPos,
+        chunkSizeStuds,
+        forwardVector,
+        observedChunkImportMsById
+    )
+
+    for _, chunkEntry in ipairs(candidateChunkEntries) do
         local chunkRef = chunkEntry.ref
         local dx = playerPos.X - chunkEntry.centerX
         local dz = playerPos.Z - chunkEntry.centerZ
         local distSq = dx * dx + dz * dz
 
         local currentLod = loadedChunkLods[chunkRef.id]
-        local targetLod =
-            chooseTargetLod(distSq, currentLod, highRadiusSq, highExitRadiusSq, targetRadiusSq, targetExitRadiusSq)
+        local targetLod = chooseTargetLod(
+            distSq,
+            currentLod,
+            highRadiusSq,
+            highExitRadiusSq,
+            targetRadiusSq,
+            targetExitRadiusSq
+        )
 
         if targetLod ~= currentLod then
             if targetLod then
                 -- Load or Upgrade/Downgrade
                 local chunkOptions = streamingChunkOptionsByLod[targetLod]
                 local currentEntry = ChunkLoader.GetChunkEntry(chunkRef.id)
-                if currentEntry and currentEntry.configSignature == chunkOptions.configSignature then
+                if
+                    currentEntry
+                    and currentEntry.configSignature == chunkOptions.configSignature
+                then
                     loadedChunkLods[chunkRef.id] = targetLod
+                    desiredChunkIds[chunkRef.id] = true
                     continue
                 end
 
                 if currentEntry then
-                    local changedLayers =
-                        computeChangedLayers(currentEntry.layerSignatures, chunkOptions.layerSignatures)
+                    local changedLayers = computeChangedLayers(
+                        currentEntry.layerSignatures,
+                        chunkOptions.layerSignatures
+                    )
                     if not changedLayers then
-                        loadedChunkLods[chunkRef.id] = targetLod
+                        local pendingSubplans = getPendingSubplans(chunkRef, chunkOptions.config)
+                        if pendingSubplans == nil or #pendingSubplans == 0 then
+                            loadedChunkLods[chunkRef.id] = targetLod
+                            desiredChunkIds[chunkRef.id] = true
+                            continue
+                        end
+                        appendStreamingWorkItems(
+                            importWorkItems,
+                            chunkEntry,
+                            chunkOptions,
+                            chunkOptions.config,
+                            targetLod
+                        )
+                        desiredChunkIds[chunkRef.id] = true
                         continue
                     end
                     chunkOptions = {
@@ -426,13 +582,18 @@ function StreamingService.Update(focalPoint)
                     }
                 end
 
-                local chunk = getMaterializedChunk(chunkEntry)
-                ImportService.ImportChunk(chunk, chunkOptions)
-                loadedChunkLods[chunkRef.id] = targetLod
+                appendStreamingWorkItems(
+                    importWorkItems,
+                    chunkEntry,
+                    chunkOptions,
+                    chunkOptions.config,
+                    targetLod
+                )
                 desiredChunkIds[chunkRef.id] = true
             else
                 -- Unload
                 ChunkLoader.UnloadChunk(chunkRef.id)
+                ImportService.ResetSubplanState(chunkRef.id)
                 loadedChunkLods[chunkRef.id] = nil
             end
         elseif targetLod then
@@ -440,9 +601,56 @@ function StreamingService.Update(focalPoint)
         end
     end
 
+    ChunkPriority.SortWorkItems(
+        importWorkItems,
+        playerPos,
+        chunkSizeStuds,
+        forwardVector,
+        observedChunkImportMsById
+    )
+
+    local maxWorkItemsPerUpdate = config.StreamingMaxWorkItemsPerUpdate
+    if type(maxWorkItemsPerUpdate) ~= "number" or maxWorkItemsPerUpdate < 1 then
+        maxWorkItemsPerUpdate = #importWorkItems
+    else
+        maxWorkItemsPerUpdate = math.max(1, math.floor(maxWorkItemsPerUpdate))
+    end
+
+    local processedWorkItems = 0
+    for _, workItem in ipairs(importWorkItems) do
+        if processedWorkItems >= maxWorkItemsPerUpdate then
+            break
+        end
+        local chunkEntry = workItem.chunkEntry
+        local chunkRef = chunkEntry.ref
+        local chunk = getMaterializedChunk(chunkEntry)
+        local importStartedAt = os.clock()
+        if workItem.subplan then
+            local subplanOptions = table.clone(workItem.chunkOptions)
+            subplanOptions.registrationChunk = chunkRef
+            ImportService.ImportChunkSubplan(chunk, workItem.subplan, subplanOptions)
+        else
+            ImportService.ImportChunk(chunk, workItem.chunkOptions)
+        end
+        local elapsedMs = (os.clock() - importStartedAt) * 1000
+        local observedCostKey = ChunkPriority.GetObservedCostKey(
+            chunkRef.id,
+            type(workItem.subplan) == "table" and workItem.subplan.id or nil
+        ) or chunkRef.id
+        local previous = observedChunkImportMsById[observedCostKey]
+        if previous == nil then
+            observedChunkImportMsById[observedCostKey] = elapsedMs
+        else
+            observedChunkImportMsById[observedCostKey] = previous * 0.7 + elapsedMs * 0.3
+        end
+        loadedChunkLods[chunkRef.id] = workItem.targetLod or loadedChunkLods[chunkRef.id]
+        processedWorkItems += 1
+    end
+
     for chunkId, _ in pairs(loadedChunkLods) do
         if not desiredChunkIds[chunkId] then
             ChunkLoader.UnloadChunk(chunkId)
+            ImportService.ResetSubplanState(chunkId)
             loadedChunkLods[chunkId] = nil
         end
     end
@@ -451,6 +659,8 @@ function StreamingService.Update(focalPoint)
         local chunkEntry = ChunkLoader.GetChunkEntry(chunkId)
         updateChunkEntryLodGroups(chunkEntry, playerPos, highRadius, interiorRadius)
     end
+
+    streamingLastFocalPoint = playerPos
 end
 
 return StreamingService

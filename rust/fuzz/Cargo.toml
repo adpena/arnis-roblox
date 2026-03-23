@@ -1,0 +1,22 @@
+[package]
+name = "arbx_fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.4.2", features = ["derive"] }
+arbx_geo = { path = "../crates/arbx_geo" }
+arbx_roblox_export = { path = "../crates/arbx_roblox_export" }
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[[bin]]
+name = "subplan_chunk_ref"
+path = "fuzz_targets/subplan_chunk_ref.rs"
+test = false
+doc = false
+bench = false

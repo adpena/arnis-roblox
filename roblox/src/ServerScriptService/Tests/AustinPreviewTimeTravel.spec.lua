@@ -17,6 +17,7 @@ return function()
         Workspace:SetAttribute("VertigoSyncTimeTravelSeq", nil)
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
         Workspace:SetAttribute("VertigoSyncTimeTravelEpoch", nil)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, nil)
         Workspace:SetAttribute("VertigoPreviewSyncState", nil)
         Workspace:SetAttribute("VertigoPreviewManifestSource", nil)
     end
@@ -52,9 +53,11 @@ return function()
                 chunkSizeStuds = 256,
             },
             chunkRefs = chunkRefs,
+            radiusCallCount = 0,
         }
 
         function handle:GetChunkIdsWithinRadius(_focusPoint, _radius)
+            self.radiusCallCount += 1
             return { "0_0", "1_0" }
         end
 
@@ -87,16 +90,19 @@ return function()
         local freezeCalls = {}
         local importCalls = {}
         local cancelOnFirstImport = false
+        local bumpStateOnlyEpochOnFirstImport = false
+        local manifestTag = "live"
 
         ManifestLoader.LoadNamedShardedSampleHandle = function(indexName, timeoutSeconds, options)
+            local fresh = type(options) == "table" and options.freshRequire == true
+            local handle = makeHandle(if fresh then manifestTag .. ":fresh" else manifestTag)
             table.insert(loadCalls, {
                 indexName = indexName,
                 timeoutSeconds = timeoutSeconds,
                 options = options,
+                handle = handle,
             })
-
-            local fresh = type(options) == "table" and options.freshRequire == true
-            return makeHandle(if fresh then "fresh" else "live")
+            return handle
         end
 
         ManifestLoader.FreezeHandleForChunkIds = function(handle, chunkIds)
@@ -116,6 +122,17 @@ return function()
 
             if cancelOnFirstImport then
                 cancelOnFirstImport = false
+                Workspace:SetAttribute(
+                    AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR,
+                    (
+                        Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
+                        or 0
+                    ) + 1
+                )
+            end
+
+            if bumpStateOnlyEpochOnFirstImport then
+                bumpStateOnlyEpochOnFirstImport = false
                 Workspace:SetAttribute(
                     AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR,
                     (Workspace:GetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR) or 0) + 1
@@ -147,6 +164,7 @@ return function()
         -- Live mode should use the full manifest path once, then reuse the cached handle.
         Workspace:SetAttribute("VertigoSyncHash", "live-hash")
         Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 1)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 1)
         Workspace:SetAttribute("VertigoSyncTimeTravel", false)
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
         AustinPreviewBuilder.Build()
@@ -154,9 +172,71 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(#loadCalls, 1, "expected live preview to reuse cached full Austin manifest handle")
-        Assert.truthy(loadCalls[1].options.freshRequire ~= true, "expected live preview to avoid fresh require")
+        Assert.equal(
+            #loadCalls,
+            1,
+            "expected live preview to reuse cached full Austin manifest handle"
+        )
+        Assert.truthy(
+            loadCalls[1].options.freshRequire ~= true,
+            "expected live preview to avoid fresh require"
+        )
         Assert.equal(#freezeCalls, 0, "expected live preview not to freeze manifest handles")
+        Assert.equal(
+            loadCalls[1].handle.radiusCallCount,
+            2,
+            "expected live preview to resolve preview chunk ids once per build"
+        )
+
+        -- State-only source churn should not trigger visible chunk reimports when the semantic chunk content is unchanged.
+        clearPreviewState()
+        loadCalls = {}
+        freezeCalls = {}
+        importCalls = {}
+        manifestTag = "live-a"
+
+        Workspace:SetAttribute("VertigoSyncHash", "semantic-a")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 11)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 11)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", false)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
+        AustinPreviewBuilder.Build()
+        waitForTasks(4)
+
+        Assert.equal(
+            #importCalls,
+            2,
+            "expected initial semantic preview build to import both chunks"
+        )
+
+        manifestTag = "live-b"
+        Workspace:SetAttribute("VertigoSyncHash", "semantic-b")
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 12)
+        AustinPreviewBuilder.Build()
+        waitForTasks(4)
+
+        Assert.equal(
+            #importCalls,
+            2,
+            "expected source-only fingerprint churn with identical chunk content not to trigger chunk reimports"
+        )
+
+        clearPreviewState()
+        loadCalls = {}
+
+        Workspace:SetAttribute("VertigoSyncHash", "live-hash")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 2)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 2)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", false)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
+        AustinPreviewBuilder.Build()
+        waitForTasks(4)
+
+        Assert.equal(
+            #loadCalls,
+            1,
+            "expected Clear to invalidate cached full Austin manifest handle"
+        )
 
         -- Hard pause should force a fresh manifest load and freeze the selected chunk set.
         clearPreviewState()
@@ -166,18 +246,36 @@ return function()
 
         Workspace:SetAttribute("VertigoSyncHash", "rewound-hash")
         Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 7)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 7)
         Workspace:SetAttribute("VertigoSyncTimeTravel", true)
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", true)
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
         Assert.equal(#loadCalls, 1, "expected hard pause to reload the Austin manifest handle")
-        Assert.truthy(loadCalls[1].options.freshRequire == true, "expected hard pause to use fresh require")
-        Assert.equal(#freezeCalls, 1, "expected hard pause to freeze the selected Austin preview chunk set")
-        Assert.equal(#freezeCalls[1].chunkIds, 2, "expected hard pause to freeze the visible chunk ids")
+        Assert.truthy(
+            loadCalls[1].options.freshRequire == true,
+            "expected hard pause to use fresh require"
+        )
+        Assert.equal(
+            #freezeCalls,
+            1,
+            "expected hard pause to freeze the selected Austin preview chunk set"
+        )
+        Assert.equal(
+            #freezeCalls[1].chunkIds,
+            2,
+            "expected hard pause to freeze the visible chunk ids"
+        )
         Assert.truthy(#importCalls >= 1, "expected preview build to import frozen chunks")
+        Assert.equal(
+            loadCalls[1].handle.radiusCallCount,
+            1,
+            "expected hard pause preview to resolve preview chunk ids once"
+        )
 
-        -- If the epoch changes mid-build, stale preview imports must cancel instead of repainting live.
+        -- If the preview invalidation epoch changes mid-build, the current preview should finish coherently
+        -- and then rerun, rather than cancelling into a visible flash.
         clearPreviewState()
         loadCalls = {}
         freezeCalls = {}
@@ -186,6 +284,7 @@ return function()
 
         Workspace:SetAttribute("VertigoSyncHash", "rewound-hash-2")
         Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 20)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 20)
         Workspace:SetAttribute("VertigoSyncTimeTravel", true)
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", true)
         AustinPreviewBuilder.Build()
@@ -193,8 +292,8 @@ return function()
 
         Assert.equal(
             Workspace:GetAttribute("VertigoPreviewSyncState"),
-            "cancelled",
-            "expected stale preview work to cancel when the time-travel epoch changes"
+            "idle",
+            "expected preview invalidation changes to keep the visible preview coherent"
         )
 
         local previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
@@ -206,11 +305,86 @@ return function()
                 end
             end
         end
-        Assert.equal(liveChunkCount, 0, "expected cancelled preview build not to leave imported stale chunks behind")
+        Assert.equal(
+            liveChunkCount,
+            2,
+            "expected deferred preview invalidation to preserve imported preview chunks"
+        )
+
+        -- State-only time-travel epoch changes should not cancel the preview when the geometry invalidation epoch is stable.
+        clearPreviewState()
+        loadCalls = {}
+        freezeCalls = {}
+        importCalls = {}
+        bumpStateOnlyEpochOnFirstImport = true
+
+        Workspace:SetAttribute("VertigoSyncHash", "state-only-hash")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 30)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 9)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", true)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
+        AustinPreviewBuilder.Build()
+        waitForTasks(6)
+
+        Assert.equal(
+            Workspace:GetAttribute("VertigoPreviewSyncState"),
+            "idle",
+            "expected state-only time-travel epoch changes not to cancel the preview build"
+        )
+        previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
+        liveChunkCount = 0
+        if previewRoot then
+            for _, child in ipairs(previewRoot:GetChildren()) do
+                if child:IsA("Folder") and child.Name ~= "PreviewFocus" then
+                    liveChunkCount += 1
+                end
+            end
+        end
+        Assert.equal(
+            liveChunkCount,
+            2,
+            "expected state-only epoch changes to preserve imported preview chunks"
+        )
+
+        -- Hard-pause time-travel epoch changes should also defer cleanly instead of cancelling the visible preview.
+        clearPreviewState()
+        loadCalls = {}
+        freezeCalls = {}
+        importCalls = {}
+        bumpStateOnlyEpochOnFirstImport = true
+
+        Workspace:SetAttribute("VertigoSyncHash", "state-only-hard-pause-hash")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 40)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 10)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", true)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", true)
+        AustinPreviewBuilder.Build()
+        waitForTasks(6)
+
+        Assert.equal(
+            Workspace:GetAttribute("VertigoPreviewSyncState"),
+            "idle",
+            "expected hard-pause state-only time-travel epoch changes not to cancel the preview build"
+        )
+        previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
+        liveChunkCount = 0
+        if previewRoot then
+            for _, child in ipairs(previewRoot:GetChildren()) do
+                if child:IsA("Folder") and child.Name ~= "PreviewFocus" then
+                    liveChunkCount += 1
+                end
+            end
+        end
+        Assert.equal(
+            liveChunkCount,
+            2,
+            "expected hard-pause state-only epoch changes to preserve imported preview chunks"
+        )
 
         -- Integration smoke: the real full Austin handle should remain provisioned and chunked.
         clearPreviewState()
-        local realHandle = originalLoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME)
+        local realHandle =
+            originalLoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME)
         Assert.truthy(realHandle ~= nil, "expected full Austin manifest handle to load")
         Assert.truthy(
             type(realHandle.GetChunkIdsWithinRadius) == "function",

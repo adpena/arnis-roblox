@@ -147,7 +147,10 @@ return function()
     Assert.equal(planActivity.extra.featureCount, 8, "expected all landuse features to be planned")
     Assert.truthy(planActivity.extra.cellCount > 0, "expected planned cells")
     Assert.truthy(planActivity.extra.rectCount > 0, "expected planned rects")
-    Assert.truthy(planActivity.extra.cellCount >= 200, "expected heavier fixture to plan many cells")
+    Assert.truthy(
+        planActivity.extra.cellCount >= 200,
+        "expected heavier fixture to plan many cells"
+    )
     Assert.truthy(
         planActivity.extra.rectCount <= planActivity.extra.cellCount,
         "expected merged terrain rect count to stay bounded by planned cells"
@@ -157,13 +160,22 @@ return function()
         planActivity.extra.rectCount,
         "expected executed terrain rects to match the planned rect count"
     )
-    Assert.truthy(executeActivity.extra.detailInstances > 0, "expected landuse detail instances to be emitted")
+    Assert.truthy(
+        executeActivity.extra.detailInstances > 0,
+        "expected landuse detail instances to be emitted"
+    )
     Assert.truthy(
         executeActivity.extra.detailInstances <= planActivity.extra.cellCount,
         "expected detail instance count to stay bounded by planned cells"
     )
-    Assert.truthy(planActivity.elapsedMs < 1500, "expected landuse planning to stay bounded for heavier fixture")
-    Assert.truthy(executeActivity.elapsedMs < 1500, "expected landuse execution to stay bounded for heavier fixture")
+    Assert.truthy(
+        planActivity.elapsedMs < 1500,
+        "expected landuse planning to stay bounded for heavier fixture"
+    )
+    Assert.truthy(
+        executeActivity.elapsedMs < 1500,
+        "expected landuse execution to stay bounded for heavier fixture"
+    )
 
     local worldRoot = Workspace:FindFirstChild("GeneratedWorld_LandusePerfTruth")
     if worldRoot then

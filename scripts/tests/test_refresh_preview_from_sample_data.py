@@ -293,6 +293,46 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
         self.assertNotIn("partitionVersion", fragments[-1])
         self.assertNotIn("subplans", fragments[-1])
 
+    def test_fragment_preview_chunk_splits_large_terrain_payloads(self) -> None:
+        module = load_module()
+
+        heights = list(range(128))
+        materials = ["Grass"] * 128
+        fragments = module.fragment_preview_chunk(
+            {
+                "id": "0_0",
+                "originStuds": {"x": 0, "y": 0, "z": 0},
+                "terrain": {
+                    "cellSizeStuds": 4,
+                    "width": 16,
+                    "depth": 16,
+                    "heights": heights,
+                    "materials": materials,
+                },
+            },
+            350,
+        )
+
+        self.assertGreater(len(fragments), 2)
+        self.assertEqual(
+            fragments[0]["terrain"],
+            {
+                "cellSizeStuds": 4,
+                "width": 16,
+                "depth": 16,
+            },
+        )
+
+        height_fragments = [fragment["terrain"]["heights"] for fragment in fragments if "heights" in fragment.get("terrain", {})]
+        material_fragments = [
+            fragment["terrain"]["materials"] for fragment in fragments if "materials" in fragment.get("terrain", {})
+        ]
+
+        self.assertGreater(len(height_fragments), 1)
+        self.assertGreater(len(material_fragments), 1)
+        self.assertEqual([item for fragment in height_fragments for item in fragment], heights)
+        self.assertEqual([item for fragment in material_fragments for item in fragment], materials)
+
     def test_main_keeps_canonical_chunk_origin_when_source_index_is_stale(self) -> None:
         module = load_module()
 

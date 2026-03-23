@@ -84,7 +84,11 @@ return function()
             },
         })
 
-        Assert.equal(buildCalls, 1, "expected one road chunk plan build for the whole imported road layer")
+        Assert.equal(
+            buildCalls,
+            1,
+            "expected one road chunk plan build for the whole imported road layer"
+        )
 
         local worldRoot = Workspace:FindFirstChild("GeneratedWorld_RoadChunkPlanReuse")
         if worldRoot then

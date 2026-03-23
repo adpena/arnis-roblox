@@ -9,6 +9,7 @@ arbx_roblox_export = { path = "../arbx_roblox_export" }
 arbx_pipeline = { path = "../arbx_pipeline" }
 arbx_geo = { path = "../arbx_geo" }
 serde_json.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 tempfile = "3.10"

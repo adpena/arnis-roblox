@@ -4,12 +4,12 @@ return function()
     local Assert = require(script.Parent.Assert)
 
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "RoomCoplanarMerge",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 1,
         },
@@ -36,12 +36,14 @@ return function()
                             { x = 0, z = 32 },
                         },
                         baseY = 0,
+                        height = 14,
                         levels = 1,
                         roof = "flat",
                         material = "Concrete",
                         rooms = {
                             {
                                 id = "left",
+                                name = "Left",
                                 footprint = {
                                     { x = 0, z = 0 },
                                     { x = 24, z = 0 },
@@ -54,6 +56,7 @@ return function()
                             },
                             {
                                 id = "right",
+                                name = "Right",
                                 footprint = {
                                     { x = 24, z = 0 },
                                     { x = 48, z = 0 },
@@ -91,7 +94,8 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected coplanar merge world root")
 
-    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("merge_building")
+    local building =
+        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("merge_building")
     Assert.truthy(building, "expected merge building model")
     local roomsFolder = building:FindFirstChild("Rooms")
     Assert.truthy(roomsFolder, "expected Rooms folder under merge building")
@@ -122,7 +126,11 @@ return function()
     end
 
     Assert.equal(#floorParts, 1, "expected coplanar adjacent room floors to merge into one slab")
-    Assert.equal(#ceilingParts, 1, "expected coplanar adjacent room ceilings to merge into one slab")
+    Assert.equal(
+        #ceilingParts,
+        1,
+        "expected coplanar adjacent room ceilings to merge into one slab"
+    )
     Assert.equal(#partitionWalls, 1, "expected one shared partition wall between adjacent rooms")
     Assert.near(floorParts[1].Size.X, 48, 1e-6, "expected merged floor slab to span both rooms")
     Assert.near(ceilingParts[1].Size.X, 48, 1e-6, "expected merged ceiling slab to span both rooms")

@@ -158,18 +158,111 @@ local function makePlanningContext(originStuds, chunk)
     return planningContext
 end
 
+local function clipPolygonAgainstVerticalEdge(points, boundX, keepGreater)
+    if not points or #points < 3 then
+        return {}
+    end
+
+    local clipped = {}
+    for index = 1, #points do
+        local current = points[index]
+        local previous = points[((index - 2) % #points) + 1]
+        local currentInside = if keepGreater then current.x >= boundX else current.x <= boundX
+        local previousInside = if keepGreater then previous.x >= boundX else previous.x <= boundX
+
+        if currentInside ~= previousInside then
+            local dx = current.x - previous.x
+            if math.abs(dx) > 1e-9 then
+                local t = (boundX - previous.x) / dx
+                clipped[#clipped + 1] = {
+                    x = boundX,
+                    z = previous.z + (current.z - previous.z) * t,
+                }
+            end
+        end
+
+        if currentInside then
+            clipped[#clipped + 1] = current
+        end
+    end
+
+    return clipped
+end
+
+local function clipPolygonAgainstHorizontalEdge(points, boundZ, keepGreater)
+    if not points or #points < 3 then
+        return {}
+    end
+
+    local clipped = {}
+    for index = 1, #points do
+        local current = points[index]
+        local previous = points[((index - 2) % #points) + 1]
+        local currentInside = if keepGreater then current.z >= boundZ else current.z <= boundZ
+        local previousInside = if keepGreater then previous.z >= boundZ else previous.z <= boundZ
+
+        if currentInside ~= previousInside then
+            local dz = current.z - previous.z
+            if math.abs(dz) > 1e-9 then
+                local t = (boundZ - previous.z) / dz
+                clipped[#clipped + 1] = {
+                    x = previous.x + (current.x - previous.x) * t,
+                    z = boundZ,
+                }
+            end
+        end
+
+        if currentInside then
+            clipped[#clipped + 1] = current
+        end
+    end
+
+    return clipped
+end
+
+local function clipPolygonToBounds(points, bounds)
+    if type(bounds) ~= "table" then
+        return points
+    end
+
+    local minX = bounds.minX
+    local minY = bounds.minY
+    local maxX = bounds.maxX
+    local maxY = bounds.maxY
+    if
+        type(minX) ~= "number"
+        or type(minY) ~= "number"
+        or type(maxX) ~= "number"
+        or type(maxY) ~= "number"
+    then
+        return points
+    end
+
+    local clipped = clipPolygonAgainstVerticalEdge(points, minX, true)
+    clipped = clipPolygonAgainstVerticalEdge(clipped, maxX, false)
+    clipped = clipPolygonAgainstHorizontalEdge(clipped, minY, true)
+    clipped = clipPolygonAgainstHorizontalEdge(clipped, maxY, false)
+    if #clipped < 3 then
+        return {}
+    end
+    return clipped
+end
+
 local function collectCells(landuse, planningContext)
     local originStuds = planningContext.originStuds
     local worldPoly = table.create(#landuse.footprint)
-    local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
     for _, p in ipairs(landuse.footprint) do
         local wx = p.x + originStuds.x
         local wz = p.z + originStuds.z
         worldPoly[#worldPoly + 1] = { x = wx, z = wz }
-        minX = math.min(minX, wx)
-        minZ = math.min(minZ, wz)
-        maxX = math.max(maxX, wx)
-        maxZ = math.max(maxZ, wz)
+    end
+
+    local subplanBounds = landuse.subplanBounds
+    if subplanBounds ~= nil then
+        worldPoly = clipPolygonToBounds(worldPoly, subplanBounds)
+        if #worldPoly < 3 then
+            return {}
+        end
     end
 
     local cells = {}
@@ -290,7 +383,8 @@ local function placeParkFurniture(cells, parent)
         bench.Size = Vector3.new(3, 0.3, 0.6)
         local yawUnit
         state, yawUnit = nextRandomUnit(state)
-        bench.CFrame = CFrame.new(cell.x, cell.y + 0.15, cell.z) * CFrame.Angles(0, yawUnit * math.pi, 0)
+        bench.CFrame = CFrame.new(cell.x, cell.y + 0.15, cell.z)
+            * CFrame.Angles(0, yawUnit * math.pi, 0)
         bench.Material = Enum.Material.WoodPlanks
         bench.Color = Color3.fromRGB(139, 90, 43)
         bench.CastShadow = false
@@ -356,19 +450,23 @@ local function placeVegetation(kind, cells, parent)
 
         local model = Instance.new("Model")
         model.Name = kind .. "_tree"
+        model:SetAttribute("ArnisProceduralVegetationKind", kind)
 
         local trunk = Instance.new("Part")
+        trunk.Name = "Trunk"
         trunk.Anchored = true
         trunk.CanCollide = false
         trunk.CastShadow = false
         trunk.Size = Vector3.new(0.8 * scale, trunkH, 0.8 * scale)
         trunk.Shape = Enum.PartType.Cylinder
-        trunk.CFrame = CFrame.new(tx, cell.y + trunkH * 0.5, tz) * CFrame.Angles(0, 0, math.pi * 0.5)
+        trunk.CFrame = CFrame.new(tx, cell.y + trunkH * 0.5, tz)
+            * CFrame.Angles(0, 0, math.pi * 0.5)
         trunk.Material = Enum.Material.Wood
         trunk.Color = Color3.fromRGB(90, 65, 40)
         trunk.Parent = model
 
         local canopy = Instance.new("Part")
+        canopy.Name = "Canopy"
         canopy.Anchored = true
         canopy.CanCollide = false
         canopy.CastShadow = false
@@ -419,6 +517,8 @@ function LanduseBuilder.ExecutePlan(plan, parent)
         return {
             terrainFillRects = 0,
             detailInstances = 0,
+            terrainFillMs = 0,
+            detailMs = 0,
         }
     end
 
@@ -426,6 +526,7 @@ function LanduseBuilder.ExecutePlan(plan, parent)
     local detailParent = nil
     local filledRects = 0
     local detailInstances = 0
+    local terrainFillStartedAt = os.clock()
 
     local function ensureDetailParent()
         if not detailParent then
@@ -449,7 +550,11 @@ function LanduseBuilder.ExecutePlan(plan, parent)
                 end
             end
         end
+    end
+    local terrainFillMs = (os.clock() - terrainFillStartedAt) * 1000
 
+    local detailStartedAt = os.clock()
+    for _, item in ipairs(plan.items) do
         if item.wantsParkingStalls then
             detailInstances += placeParkingStalls(ensureDetailParent(), item.cells, item.id)
         end
@@ -458,10 +563,13 @@ function LanduseBuilder.ExecutePlan(plan, parent)
         end
         detailInstances += placeVegetation(item.vegetationKind, item.cells, ensureDetailParent())
     end
+    local detailMs = (os.clock() - detailStartedAt) * 1000
 
     return {
         terrainFillRects = filledRects,
         detailInstances = detailInstances,
+        terrainFillMs = terrainFillMs,
+        detailMs = detailMs,
     }
 end
 
@@ -517,16 +625,26 @@ end
 
 function LanduseBuilder.BuildAll(landuseList, originStuds, parent, chunk, preparedPlan)
     if not landuseList or #landuseList == 0 then
-        return
+        return {
+            featureCount = 0,
+            cellCount = 0,
+            rectCount = 0,
+            terrainFillRects = 0,
+            detailInstances = 0,
+            planMs = 0,
+            executeMs = 0,
+            terrainFillMs = 0,
+            detailMs = 0,
+        }
     end
 
     local planProfile = Profiler.begin("PlanLanduse")
     local plan = preparedPlan or LanduseBuilder.PlanAll(landuseList, originStuds, chunk)
-    Profiler.finish(planProfile, plan.stats)
+    local planResult = Profiler.finish(planProfile, plan.stats)
 
     local executeProfile = Profiler.begin("ExecuteLanduse")
     local executionStats = LanduseBuilder.ExecutePlan(plan, parent)
-    Profiler.finish(executeProfile, {
+    local executeResult = Profiler.finish(executeProfile, {
         featureCount = plan.stats.featureCount,
         cellCount = plan.stats.cellCount,
         rectCount = plan.stats.rectCount,
@@ -534,7 +652,17 @@ function LanduseBuilder.BuildAll(landuseList, originStuds, parent, chunk, prepar
         detailInstances = executionStats.detailInstances,
     })
 
-    return executionStats
+    return {
+        featureCount = plan.stats.featureCount,
+        cellCount = plan.stats.cellCount,
+        rectCount = plan.stats.rectCount,
+        terrainFillRects = executionStats.terrainFillRects,
+        detailInstances = executionStats.detailInstances,
+        planMs = planResult.elapsedMs,
+        executeMs = executeResult.elapsedMs,
+        terrainFillMs = executionStats.terrainFillMs or 0,
+        detailMs = executionStats.detailMs or 0,
+    }
 end
 
 return LanduseBuilder

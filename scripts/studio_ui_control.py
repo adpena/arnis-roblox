@@ -19,6 +19,132 @@ STARTUP_DISMISS_BUTTONS = [
 ]
 
 
+def normalize_window_name(front_window: str) -> str:
+    return front_window.strip().lower()
+
+
+def is_blocking_file_panel(front_window: str) -> bool:
+    normalized = normalize_window_name(front_window)
+    if not normalized:
+        return False
+    return normalized in {
+        "open roblox file",
+        "open",
+        "save",
+        "save as",
+        "export selection",
+    }
+
+
+def is_lighting_migration_window(front_window: str) -> bool:
+    normalized = normalize_window_name(front_window)
+    return "lighting" in normalized and "migration" in normalized
+
+
+def is_save_close_window(front_window: str) -> bool:
+    normalized = normalize_window_name(front_window)
+    if not normalized:
+        return False
+    return (
+        "save changes" in normalized
+        or "want to save" in normalized
+        or "before closing" in normalized
+    )
+
+
+def is_blocked_modal_window(front_window: str) -> bool:
+    return (
+        is_blocking_file_panel(front_window)
+        or is_lighting_migration_window(front_window)
+        or is_save_close_window(front_window)
+    )
+
+
+def infer_state_label(snapshot: dict) -> str:
+    front_window = str(snapshot.get("front_window") or "")
+    normalized_window_name = normalize_window_name(front_window)
+    button_names = [str(name) for name in snapshot.get("button_names") or []]
+    has_dont_recover = any(name in {"Don't Recover", "Don’t Recover"} for name in button_names)
+    has_dont_save = any(name in {"Don't Save", "Don’t Save"} for name in button_names)
+    has_test_menu = bool(snapshot.get("has_test_menu"))
+    has_stop_menu_item_enabled = bool(snapshot.get("has_stop_menu_item_enabled"))
+    has_file_menu = bool(snapshot.get("has_file_menu"))
+    window_count = int(snapshot.get("window_count") or 0)
+
+    if has_dont_recover or "auto-recovery" in normalized_window_name:
+        return "recovery_blocked"
+    if has_dont_save:
+        return "save_prompt"
+    if "auto recovered" in normalized_window_name or "recovered" in normalized_window_name:
+        return "recovery_blocked"
+    if "start page" in normalized_window_name or "home" in normalized_window_name:
+        return "start_page"
+    if has_stop_menu_item_enabled:
+        return "playing"
+    if has_test_menu:
+        return "editor_ready"
+    if normalized_window_name == "roblox studio" and not has_test_menu:
+        return "start_page"
+    if has_file_menu:
+        return "menu_ready"
+    if window_count > 0 or front_window:
+        return "window_open"
+    return "unknown"
+
+
+def capture_process_count() -> int:
+    result = subprocess.run(
+        ["pgrep", "-x", APP_NAME],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return 0
+    return sum(1 for line in result.stdout.splitlines() if line.strip())
+
+
+def classify_session_status(snapshot: dict, pid_count: int) -> dict:
+    process_running = pid_count > 0
+    state = str(snapshot.get("state") or "unknown")
+    front_window = str(snapshot.get("front_window") or "")
+    window_count = int(snapshot.get("window_count") or 0)
+    modal_window_blocked = is_blocked_modal_window(front_window)
+
+    if not process_running:
+        status = "not_running"
+    elif modal_window_blocked:
+        status = "blocked_dialog"
+    elif state == "playing":
+        status = "ready_play"
+    elif state in {"editor_ready", "menu_ready"}:
+        status = "ready_edit"
+    elif state in {"save_prompt", "recovery_blocked"}:
+        status = "blocked_dialog"
+    elif state == "start_page":
+        status = "start_page"
+    else:
+        status = "transitioning"
+
+    return {
+        "status": status,
+        "state": state,
+        "pid_count": pid_count,
+        "process_running": process_running,
+        "front_window": front_window,
+        "window_count": window_count,
+        "blocked_dialog": status == "blocked_dialog",
+        "ready_edit": status == "ready_edit",
+        "ready_play": status == "ready_play",
+        "ready_for_menu": status in {"ready_edit", "ready_play"},
+        "ready_for_harness": status in {"ready_edit", "ready_play", "start_page"},
+        "start_page": status == "start_page",
+        "transitioning": status == "transitioning",
+        "safe_to_open": status in {"not_running", "start_page", "ready_edit", "ready_play"},
+        "safe_to_quit": process_running,
+    }
+
+
 def run_osascript(script: str) -> int:
     result = subprocess.run(["osascript", "-e", script], check=False)
     return result.returncode
@@ -35,6 +161,22 @@ def capture_osascript(script: str) -> tuple[int, str]:
 
 
 def capture_state_snapshot() -> tuple[int, dict]:
+    pid_count = capture_process_count()
+    if pid_count <= 0:
+        return 0, {
+            "state": "not_running",
+            "front_window": "",
+            "window_count": 0,
+            "menu_count": 0,
+            "has_file_menu": False,
+            "has_plugins_menu": False,
+            "has_test_menu": False,
+            "has_stop_menu_item": False,
+            "has_stop_menu_item_enabled": False,
+            "window_names": [],
+            "button_names": [],
+        }
+
     code, output = capture_osascript(
         f"""
 tell application id "{APP_ID}"
@@ -57,8 +199,12 @@ tell application "System Events"
       end try
     end if
 
+    set windowNames to {{}}
     set buttonNames to {{}}
     repeat with w in windows
+      try
+        set end of windowNames to (name of w as text)
+      end try
       try
         repeat with b in buttons of w
           try
@@ -113,39 +259,30 @@ tell application "System Events"
     end try
 
     set hasStopMenuItem to false
+    set hasStopMenuItemEnabled to false
     if hasTestMenu then
       try
         set hasStopMenuItem to exists menu item "Stop" of menu 1 of menu bar item "Test" of menu bar 1
       end try
+      if hasStopMenuItem then
+        try
+          set hasStopMenuItemEnabled to enabled of menu item "Stop" of menu 1 of menu bar item "Test" of menu bar 1
+        end try
+      end if
     end if
 
-    set normalizedWindowName to ""
-    if frontWindowName is not "" then
-      set normalizedWindowName to do shell script "printf %s " & quoted form of frontWindowName & " | tr '[:upper:]' '[:lower:]'"
-    end if
+    set AppleScript's text item delimiters to ";;"
+    set windowNamesText to ""
+    try
+      set windowNamesText to windowNames as text
+    end try
+    set buttonNamesText to ""
+    try
+      set buttonNamesText to buttonNames as text
+    end try
+    set AppleScript's text item delimiters to ""
 
-    set stateLabel to "unknown"
-    if hasDontRecover or normalizedWindowName contains "auto-recovery" then
-      set stateLabel to "recovery_blocked"
-    else if hasDontSave then
-      set stateLabel to "save_prompt"
-    else if normalizedWindowName contains "auto recovered" or normalizedWindowName contains "recovered" then
-      set stateLabel to "recovery_blocked"
-    else if normalizedWindowName contains "start page" or normalizedWindowName contains "home" then
-      set stateLabel to "start_page"
-    else if hasStopMenuItem then
-      set stateLabel to "playing"
-    else if hasTestMenu then
-      set stateLabel to "editor_ready"
-    else if normalizedWindowName is "roblox studio" and not hasTestMenu then
-      set stateLabel to "start_page"
-    else if hasFileMenu then
-      set stateLabel to "menu_ready"
-    else if windowCount > 0 or frontWindowName is not "" then
-      set stateLabel to "window_open"
-    end if
-
-    return stateLabel & "||" & frontWindowName & "||" & (windowCount as text) & "||" & (count of menuNames as text) & "||" & (hasFileMenu as text) & "||" & (hasPluginsMenu as text) & "||" & (hasTestMenu as text) & "||" & (hasStopMenuItem as text)
+    return frontWindowName & "||" & (windowCount as text) & "||" & (count of menuNames as text) & "||" & (hasFileMenu as text) & "||" & (hasPluginsMenu as text) & "||" & (hasTestMenu as text) & "||" & (hasStopMenuItem as text) & "||" & (hasStopMenuItemEnabled as text) & "||" & windowNamesText & "||" & buttonNamesText
   end tell
 end tell
 """
@@ -155,15 +292,18 @@ end tell
 
     parts = output.split("||")
     payload = {
-        "state": parts[0] if len(parts) > 0 else "unknown",
-        "front_window": parts[1] if len(parts) > 1 else "",
-        "window_count": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
-        "menu_count": int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0,
-        "has_file_menu": parts[4].lower() == "true" if len(parts) > 4 else False,
-        "has_plugins_menu": parts[5].lower() == "true" if len(parts) > 5 else False,
-        "has_test_menu": parts[6].lower() == "true" if len(parts) > 6 else False,
-        "has_stop_menu_item": parts[7].lower() == "true" if len(parts) > 7 else False,
+        "front_window": parts[0] if len(parts) > 0 else "",
+        "window_count": int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0,
+        "menu_count": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
+        "has_file_menu": parts[3].lower() == "true" if len(parts) > 3 else False,
+        "has_plugins_menu": parts[4].lower() == "true" if len(parts) > 4 else False,
+        "has_test_menu": parts[5].lower() == "true" if len(parts) > 5 else False,
+        "has_stop_menu_item": parts[6].lower() == "true" if len(parts) > 6 else False,
+        "has_stop_menu_item_enabled": parts[7].lower() == "true" if len(parts) > 7 else False,
+        "window_names": [item for item in parts[8].split(";;") if item] if len(parts) > 8 else [],
+        "button_names": [item for item in parts[9].split(";;") if item] if len(parts) > 9 else [],
     }
+    payload["state"] = infer_state_label(payload)
     return 0, payload
 
 
@@ -216,6 +356,18 @@ end tell
     )
 
 
+def force_quit_app() -> int:
+    result = subprocess.run(
+        ["pkill", "-KILL", "-x", APP_NAME],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode not in {0, 1}:
+        return result.returncode
+    return 0
+
+
 def dismiss_dont_save() -> int:
     return run_osascript(
         f"""
@@ -240,6 +392,27 @@ end tell
 
 
 def dismiss_startup_dialogs() -> int:
+    lighting_button_checks = "\n".join(
+        f'''
+        try
+          click button "{label}" of w
+          return
+        end try
+        try
+          click button "{label}" of sheet 1 of w
+          return
+        end try
+'''
+        for label in [
+            "Not Now",
+            "Later",
+            "Skip",
+            "Cancel",
+            "Close",
+            "No",
+            "Keep Existing",
+        ]
+    )
     button_checks = "\n".join(
         f'''
         try
@@ -265,6 +438,26 @@ tell application "System Events"
             return
           end if
         end try
+        try
+          if name of w is "Open Roblox File" or name of w is "Open" or name of w is "Save" or name of w is "Save As" or name of w is "Export Selection" then
+            try
+              click button "Cancel" of w
+              return
+            end try
+            keystroke "." using command down
+            delay 0.1
+            key code 53
+            return
+          end if
+        end try
+        try
+          set normalizedWindowName to do shell script "printf %s " & quoted form of (name of w as text) & " | tr '[:upper:]' '[:lower:]'"
+          if normalizedWindowName contains "lighting" and normalizedWindowName contains "migration" then
+{lighting_button_checks}
+            key code 53
+            return
+          end if
+        end try
 {button_checks}
       end repeat
     end if
@@ -282,11 +475,42 @@ def get_state() -> int:
     return 0
 
 
+def get_session_status() -> int:
+    code, payload = capture_state_snapshot()
+    if code != 0:
+        return code
+    pid_count = capture_process_count()
+    print(json.dumps(classify_session_status(payload, pid_count), separators=(",", ":")))
+    return 0
+
+
 def get_state_value(field: str) -> int:
     code, payload = capture_state_snapshot()
     if code != 0:
         return code
     print(payload.get(field, ""))
+    return 0
+
+
+def get_session_status_value(field: str) -> int:
+    code, payload = capture_state_snapshot()
+    if code != 0:
+        return code
+    pid_count = capture_process_count()
+    status = classify_session_status(payload, pid_count)
+    print(status.get(field, ""))
+    return 0
+
+
+def dump_ui() -> int:
+    code, payload = capture_state_snapshot()
+    if code != 0:
+        return code
+    pid_count = capture_process_count()
+    status = classify_session_status(payload, pid_count)
+    debug_payload = dict(payload)
+    debug_payload["session_status"] = status
+    print(json.dumps(debug_payload, separators=(",", ":")))
     return 0
 
 
@@ -314,11 +538,35 @@ def main() -> int:
     click.add_argument("menu_bar_item")
     click.add_argument("menu_item")
     sub.add_parser("quit")
+    sub.add_parser("force-quit")
     sub.add_parser("dismiss-dont-save")
     sub.add_parser("dismiss-startup-dialogs")
     sub.add_parser("get-state")
+    sub.add_parser("get-session-status")
+    sub.add_parser("dump-ui")
     state_value = sub.add_parser("get-state-value")
     state_value.add_argument("field", choices=["state", "front_window", "window_count"])
+    session_value = sub.add_parser("get-session-status-value")
+    session_value.add_argument(
+        "field",
+        choices=[
+            "status",
+            "state",
+            "pid_count",
+            "process_running",
+            "front_window",
+            "window_count",
+            "blocked_dialog",
+            "ready_edit",
+            "ready_play",
+            "ready_for_menu",
+            "ready_for_harness",
+            "start_page",
+            "transitioning",
+            "safe_to_open",
+            "safe_to_quit",
+        ],
+    )
     sub.add_parser("new-file")
     sub.add_parser("start-test-session")
     sub.add_parser("stop-test-session")
@@ -330,14 +578,22 @@ def main() -> int:
         return click_menu(args.menu_bar_item, args.menu_item)
     if args.command == "quit":
         return quit_app()
+    if args.command == "force-quit":
+        return force_quit_app()
     if args.command == "dismiss-dont-save":
         return dismiss_dont_save()
     if args.command == "dismiss-startup-dialogs":
         return dismiss_startup_dialogs()
     if args.command == "get-state":
         return get_state()
+    if args.command == "get-session-status":
+        return get_session_status()
+    if args.command == "dump-ui":
+        return dump_ui()
     if args.command == "get-state-value":
         return get_state_value(args.field)
+    if args.command == "get-session-status-value":
+        return get_session_status_value(args.field)
     if args.command == "new-file":
         return new_file()
     if args.command == "start-test-session":

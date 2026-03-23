@@ -1,14 +1,16 @@
+#[cfg(not(miri))]
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-use arbx_geo::{ChunkId, ElevationProvider, LatLon, Vec2, Vec3};
+use arbx_geo::{ChunkId, ElevationProvider, LatLon, Mercator, Vec3};
 use arbx_pipeline::{Feature, WaterFeature as PipelineWaterFeature};
 
 use crate::manifest::{
     BarrierSegment, BuildingShell, Chunk, ChunkManifest, GroundPoint, LanduseShell, ManifestMeta,
-    PropInstance, RailSegment, RoadSegment, Room, TerrainGrid, WaterFeature as ManifestWaterFeature,
+    PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature as ManifestWaterFeature,
 };
 use crate::materials::StyleMapper;
+use crate::subplans::derive_chunk_ref;
 
 pub fn world_to_chunk(position: Vec3, chunk_size_studs: i32) -> ChunkId {
     let size = chunk_size_studs as f64;
@@ -27,15 +29,8 @@ pub fn chunk_origin(
     let size = chunk_size_studs as f64;
     let x = id.x as f64 * size;
     let z = id.z as f64 * size;
-
-    let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
-    let lon_per_stud = 1.0 / (111_111.0 * center_latlon.lat.to_radians().cos() * meters_per_stud);
-
-    // Z+ = south, so a positive Z offset means decreasing latitude.
-    let lat = center_latlon.lat - (z as f64 * lat_per_stud);
-    let lon = center_latlon.lon + (x as f64 * lon_per_stud);
-
-    let y_meters = elevation.sample_height_at(LatLon::new(lat, lon));
+    let latlon = Mercator::unproject(Vec3::new(x, 0.0, z), center_latlon, meters_per_stud);
+    let y_meters = elevation.sample_height_at(latlon);
     let y_studs = y_meters as f64 / meters_per_stud;
 
     Vec3::new(x, y_studs, z)
@@ -50,21 +45,77 @@ fn parse_css_color(s: &str) -> Option<crate::manifest::Color> {
         return Some(Color { r, g, b });
     }
     match s {
-        "white"       => Some(Color { r: 255, g: 255, b: 255 }),
-        "black"       => Some(Color { r: 30,  g: 30,  b: 30  }),
-        "gray"|"grey" => Some(Color { r: 128, g: 128, b: 128 }),
-        "red"         => Some(Color { r: 180, g: 50,  b: 50  }),
-        "brown"       => Some(Color { r: 139, g: 90,  b: 43  }),
-        "beige"       => Some(Color { r: 245, g: 245, b: 220 }),
-        "yellow"      => Some(Color { r: 255, g: 220, b: 50  }),
-        "blue"        => Some(Color { r: 50,  g: 100, b: 200 }),
-        "green"       => Some(Color { r: 50,  g: 140, b: 50  }),
-        "orange"      => Some(Color { r: 230, g: 120, b: 30  }),
-        "pink"        => Some(Color { r: 255, g: 180, b: 180 }),
-        "tan"         => Some(Color { r: 210, g: 180, b: 140 }),
-        "silver"      => Some(Color { r: 192, g: 192, b: 192 }),
-        "gold"        => Some(Color { r: 212, g: 175, b: 55  }),
-        _             => None,
+        "white" => Some(Color {
+            r: 255,
+            g: 255,
+            b: 255,
+        }),
+        "black" => Some(Color {
+            r: 30,
+            g: 30,
+            b: 30,
+        }),
+        "gray" | "grey" => Some(Color {
+            r: 128,
+            g: 128,
+            b: 128,
+        }),
+        "red" => Some(Color {
+            r: 180,
+            g: 50,
+            b: 50,
+        }),
+        "brown" => Some(Color {
+            r: 139,
+            g: 90,
+            b: 43,
+        }),
+        "beige" => Some(Color {
+            r: 245,
+            g: 245,
+            b: 220,
+        }),
+        "yellow" => Some(Color {
+            r: 255,
+            g: 220,
+            b: 50,
+        }),
+        "blue" => Some(Color {
+            r: 50,
+            g: 100,
+            b: 200,
+        }),
+        "green" => Some(Color {
+            r: 50,
+            g: 140,
+            b: 50,
+        }),
+        "orange" => Some(Color {
+            r: 230,
+            g: 120,
+            b: 30,
+        }),
+        "pink" => Some(Color {
+            r: 255,
+            g: 180,
+            b: 180,
+        }),
+        "tan" => Some(Color {
+            r: 210,
+            g: 180,
+            b: 140,
+        }),
+        "silver" => Some(Color {
+            r: 192,
+            g: 192,
+            b: 192,
+        }),
+        "gold" => Some(Color {
+            r: 212,
+            g: 175,
+            b: 55,
+        }),
+        _ => None,
     }
 }
 
@@ -87,6 +138,252 @@ fn landuse_material(kind: &str) -> String {
     .to_string()
 }
 
+fn terrain_material_priority(material: &str) -> u8 {
+    match material {
+        "Water" => 100,
+        "Asphalt" | "Concrete" | "SmoothPlastic" => 80,
+        "Rock" | "Sandstone" | "Granite" => 70,
+        "Sand" | "Mud" => 60,
+        "LeafyGrass" => 50,
+        "Grass" => 40,
+        "Ground" => 30,
+        _ => 10,
+    }
+}
+
+fn point_in_ring(x: f64, z: f64, ring: &[GroundPoint]) -> bool {
+    if ring.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut prev = &ring[ring.len() - 1];
+    for current in ring {
+        let current_above = current.z > z;
+        let prev_above = prev.z > z;
+        if current_above != prev_above {
+            let intersect_x = (prev.x - current.x) * (z - current.z)
+                / ((prev.z - current.z) + f64::EPSILON)
+                + current.x;
+            if x < intersect_x {
+                inside = !inside;
+            }
+        }
+        prev = current;
+    }
+
+    inside
+}
+
+fn paint_terrain_polygon(
+    terrain: &mut TerrainGrid,
+    footprint: &[GroundPoint],
+    holes: &[Vec<GroundPoint>],
+    material: &str,
+) {
+    if footprint.len() < 3 {
+        return;
+    }
+
+    let Some(materials) = terrain.materials.as_mut() else {
+        return;
+    };
+
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut min_z = f64::INFINITY;
+    let mut max_z = f64::NEG_INFINITY;
+
+    for point in footprint {
+        min_x = min_x.min(point.x);
+        max_x = max_x.max(point.x);
+        min_z = min_z.min(point.z);
+        max_z = max_z.max(point.z);
+    }
+
+    let cell_size = terrain.cell_size_studs as f64;
+    let min_cx =
+        ((min_x / cell_size).floor() as isize).clamp(0, terrain.width as isize - 1) as usize;
+    let max_cx =
+        ((max_x / cell_size).ceil() as isize).clamp(0, terrain.width as isize - 1) as usize;
+    let min_cz =
+        ((min_z / cell_size).floor() as isize).clamp(0, terrain.depth as isize - 1) as usize;
+    let max_cz =
+        ((max_z / cell_size).ceil() as isize).clamp(0, terrain.depth as isize - 1) as usize;
+    let new_priority = terrain_material_priority(material);
+
+    for cz in min_cz..=max_cz {
+        for cx in min_cx..=max_cx {
+            let sample_x = (cx as f64 + 0.5) * cell_size;
+            let sample_z = (cz as f64 + 0.5) * cell_size;
+            if !point_in_ring(sample_x, sample_z, footprint) {
+                continue;
+            }
+            if holes
+                .iter()
+                .any(|hole| point_in_ring(sample_x, sample_z, hole.as_slice()))
+            {
+                continue;
+            }
+
+            let idx = cz * terrain.width + cx;
+            if idx >= materials.len() {
+                continue;
+            }
+            let current_priority = terrain_material_priority(materials[idx].as_str());
+            if new_priority >= current_priority {
+                materials[idx] = material.to_string();
+            }
+        }
+    }
+}
+
+#[inline]
+fn sample_terrain_height_for_cell(
+    idx: usize,
+    grid_dim: usize,
+    row_lats: &[f64],
+    col_lons: &[f64],
+    meters_per_stud: f64,
+    origin_y: f64,
+    elevation: &dyn ElevationProvider,
+) -> f64 {
+    let cz = idx / grid_dim;
+    let cx = idx % grid_dim;
+    let lat = row_lats[cz];
+    let lon = col_lons[cx];
+    let h_meters = elevation.sample_height_at(LatLon::new(lat, lon));
+    let h_studs = h_meters as f64 / meters_per_stud;
+    h_studs - origin_y
+}
+
+#[cfg(miri)]
+fn collect_terrain_heights(
+    total_cells: usize,
+    grid_dim: usize,
+    row_lats: &[f64],
+    col_lons: &[f64],
+    meters_per_stud: f64,
+    origin_y: f64,
+    elevation: &dyn ElevationProvider,
+) -> Vec<f64> {
+    (0..total_cells)
+        .map(|idx| {
+            sample_terrain_height_for_cell(
+                idx,
+                grid_dim,
+                row_lats,
+                col_lons,
+                meters_per_stud,
+                origin_y,
+                elevation,
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn build_empty_chunk(
+    id: ChunkId,
+    chunk_size_studs: i32,
+    meters_per_stud: f64,
+    terrain_cell_size: i32,
+    center_latlon: LatLon,
+    elevation: &dyn ElevationProvider,
+    style: &StyleMapper,
+) -> Chunk {
+    let origin = chunk_origin(
+        id,
+        chunk_size_studs,
+        center_latlon,
+        meters_per_stud,
+        elevation,
+    );
+
+    let cell_size = terrain_cell_size;
+    let grid_dim = (chunk_size_studs / cell_size) as usize;
+    let total_cells = grid_dim * grid_dim;
+
+    let cell_size_f64 = cell_size as f64;
+    let (center_x_meters, center_y_meters) = Mercator::latlon_to_meters(center_latlon);
+    let chunk_world_x = id.x as f64 * chunk_size_studs as f64;
+    let chunk_world_z = id.z as f64 * chunk_size_studs as f64;
+
+    let row_lats: Vec<f64> = (0..grid_dim)
+        .map(|cz| {
+            let world_z = chunk_world_z + (cz as f64 * cell_size_f64);
+            let y_meters = center_y_meters - (world_z * meters_per_stud);
+            Mercator::meters_to_latlon(center_x_meters, y_meters).lat
+        })
+        .collect();
+
+    let col_lons: Vec<f64> = (0..grid_dim)
+        .map(|cx| {
+            let world_x = chunk_world_x + (cx as f64 * cell_size_f64);
+            let x_meters = center_x_meters + (world_x * meters_per_stud);
+            Mercator::meters_to_latlon(x_meters, center_y_meters).lon
+        })
+        .collect();
+
+    let default_material = style.get_terrain_material("grass");
+    let origin_y = origin.y;
+    let heights = collect_terrain_heights(
+        total_cells,
+        grid_dim,
+        &row_lats,
+        &col_lons,
+        meters_per_stud,
+        origin_y,
+        elevation,
+    );
+    let cell_materials = vec![default_material.clone(); total_cells];
+
+    Chunk {
+        id,
+        origin_studs: origin,
+        terrain: Some(TerrainGrid {
+            cell_size_studs: cell_size,
+            width: grid_dim,
+            depth: grid_dim,
+            heights,
+            materials: Some(cell_materials),
+            material: default_material,
+        }),
+        roads: Vec::new(),
+        rails: Vec::new(),
+        buildings: Vec::new(),
+        water: Vec::new(),
+        props: Vec::new(),
+        landuse: Vec::new(),
+        barriers: Vec::new(),
+    }
+}
+
+#[cfg(not(miri))]
+fn collect_terrain_heights(
+    total_cells: usize,
+    grid_dim: usize,
+    row_lats: &[f64],
+    col_lons: &[f64],
+    meters_per_stud: f64,
+    origin_y: f64,
+    elevation: &dyn ElevationProvider,
+) -> Vec<f64> {
+    (0..total_cells)
+        .into_par_iter()
+        .map(|idx| {
+            sample_terrain_height_for_cell(
+                idx,
+                grid_dim,
+                row_lats,
+                col_lons,
+                meters_per_stud,
+                origin_y,
+                elevation,
+            )
+        })
+        .collect()
+}
+
 pub struct Chunker {
     chunk_size_studs: i32,
     meters_per_stud: f64,
@@ -96,7 +393,12 @@ pub struct Chunker {
 }
 
 impl Chunker {
-    pub fn new(chunk_size_studs: i32, meters_per_stud: f64, terrain_cell_size: i32, center_latlon: LatLon) -> Self {
+    pub fn new(
+        chunk_size_studs: i32,
+        meters_per_stud: f64,
+        terrain_cell_size: i32,
+        center_latlon: LatLon,
+    ) -> Self {
         Self {
             chunk_size_studs,
             meters_per_stud,
@@ -117,73 +419,15 @@ impl Chunker {
         let center = self.center_latlon;
 
         self.chunks.entry(id).or_insert_with(|| {
-            let origin = chunk_origin(id, chunk_size, center, meters_per_stud, elevation);
-
-            // Build terrain grid for the chunk
-            // Cell size is configurable: 2-stud cells = 128×128 grid (insane fidelity)
-            // 4-stud cells = 64×64 grid (high fidelity), 8-stud cells = 32×32 (balanced)
-            let cell_size = self.terrain_cell_size;
-            let grid_dim = (chunk_size / cell_size) as usize;
-            let total_cells = grid_dim * grid_dim;
-
-            // Pre-compute constants for coordinate transformation
-            let lat_per_stud = 1.0 / (111_111.0 * meters_per_stud);
-            let lon_per_stud = 1.0 / (111_111.0 * center.lat.to_radians().cos() * meters_per_stud);
-            let cell_size_f64 = cell_size as f64;
-
-            // Pre-compute chunk corner coordinates.
-            // Z+ = south = decreasing latitude, so negate the Z contribution.
-            let chunk_lat_start = center.lat - (id.z as f64 * chunk_size as f64 * lat_per_stud);
-            let chunk_lon_start = center.lon + (id.x as f64 * chunk_size as f64 * lon_per_stud);
-
-            // Row 0 is the north edge (lowest Z in this chunk), increasing row index moves south.
-            let row_lats: Vec<f64> = (0..grid_dim)
-                .map(|cz| chunk_lat_start - (cz as f64 * cell_size_f64 * lat_per_stud))
-                .collect();
-
-            // Pre-compute column longitudes
-            let col_lons: Vec<f64> = (0..grid_dim)
-                .map(|cx| chunk_lon_start + (cx as f64 * cell_size_f64 * lon_per_stud))
-                .collect();
-
-            let default_material = style.get_terrain_material("grass");
-            let origin_y = origin.y;
-
-            // PARALLEL terrain sampling
-            let heights: Vec<f64> = (0..total_cells)
-                .into_par_iter()
-                .map(|idx| {
-                    let cz = idx / grid_dim;
-                    let cx = idx % grid_dim;
-                    let lat = row_lats[cz];
-                    let lon = col_lons[cx];
-                    let h_meters = elevation.sample_height_at(LatLon::new(lat, lon));
-                    let h_studs = h_meters as f64 / meters_per_stud;
-                    h_studs - origin_y
-                })
-                .collect();
-
-            let cell_materials = vec![default_material.clone(); total_cells];
-
-            Chunk {
+            build_empty_chunk(
                 id,
-                origin_studs: origin,
-                terrain: Some(TerrainGrid {
-                    cell_size_studs: cell_size,
-                    width: grid_dim,
-                    depth: grid_dim,
-                    heights,
-                    materials: Some(cell_materials),
-                    material: default_material,
-                }),
-                roads: Vec::new(),
-                rails: Vec::new(),
-                buildings: Vec::new(),
-                water: Vec::new(),
-                props: Vec::new(),
-                landuse: Vec::new(),
-                barriers: Vec::new(),
-            }
+                chunk_size,
+                meters_per_stud,
+                self.terrain_cell_size,
+                center,
+                elevation,
+                style,
+            )
         })
     }
 
@@ -209,6 +453,7 @@ impl Chunker {
                     chunk.roads.push(RoadSegment {
                         id: f.id.clone(),
                         kind: f.kind.clone(),
+                        subkind: f.subkind.clone(),
                         material,
                         color,
                         lanes: f.lanes,
@@ -292,10 +537,8 @@ impl Chunker {
                     // Must read self fields before the mutable borrow from ensure_chunk.
                     let mps = self.meters_per_stud;
                     let center = self.center_latlon;
-                    let cos_lat = center.lat.to_radians().cos();
-                    let centroid_lat = center.lat - (centroid.z * mps / 111_111.0);
-                    let centroid_lon = center.lon + (centroid.x * mps / (111_111.0 * cos_lat));
-                    let surface_h = elevation.sample_height_at(LatLon::new(centroid_lat, centroid_lon));
+                    let centroid_latlon = Mercator::unproject(centroid, center, mps);
+                    let surface_h = elevation.sample_height_at(centroid_latlon);
 
                     let chunk_id = world_to_chunk(centroid, self.chunk_size_studs);
                     let chunk = self.ensure_chunk(chunk_id, elevation, style);
@@ -303,7 +546,7 @@ impl Chunker {
 
                     let surface_y = Some(surface_h as f64 / mps - origin.y);
 
-                    let relative_footprint = p
+                    let relative_footprint: Vec<GroundPoint> = p
                         .footprint
                         .points
                         .iter()
@@ -323,6 +566,12 @@ impl Chunker {
 
                     let material = style.get_terrain_material(&p.kind);
                     let color = style.get_terrain_color(&p.kind);
+                    paint_terrain_polygon(
+                        chunk.terrain.as_mut().expect("terrain grid"),
+                        &relative_footprint,
+                        &relative_holes,
+                        &material,
+                    );
                     chunk.water.push(ManifestWaterFeature {
                         id: p.id,
                         kind: p.kind,
@@ -340,6 +589,7 @@ impl Chunker {
                 }
             },
             Feature::Building(f) => {
+                let scale = 1.0 / self.meters_per_stud;
                 let mut sum_x = 0.0;
                 let mut sum_z = 0.0;
                 for pt in &f.footprint.points {
@@ -358,74 +608,45 @@ impl Chunker {
                     .iter()
                     .map(|pt| GroundPoint::new(pt.x - origin.x, pt.y - origin.z))
                     .collect();
+                let relative_holes: Vec<Vec<GroundPoint>> = f
+                    .holes
+                    .iter()
+                    .map(|hole| {
+                        hole.points
+                            .iter()
+                            .map(|pt| GroundPoint::new(pt.x - origin.x, pt.y - origin.z))
+                            .collect()
+                    })
+                    .collect();
 
-                let material = style.get_building_material(&f.roof);
-                let material = if material == "Concrete" {
-                    style.get_building_material("default")
-                } else {
-                    material
-                };
+                let style_key = f.usage.as_deref().unwrap_or("default");
+                let material = style.get_building_material(style_key);
                 let color = if let Some(css) = f.colour.as_deref().and_then(parse_css_color) {
                     Some(css)
                 } else {
-                    let c = style.get_building_color(&f.roof);
-                    if c.is_none() {
-                        style.get_building_color("default")
-                    } else {
-                        c
-                    }
+                    style.get_building_color(style_key)
                 };
                 let material_override = f.material_tag.as_deref().map(|m| match m {
-                    "brick"                               => "Brick",
-                    "concrete"                            => "Concrete",
-                    "glass"                               => "Glass",
-                    "metal" | "steel"                     => "Metal",
-                    "wood"                                => "WoodPlanks",
-                    "stone" | "granite" | "limestone"     => "Limestone",
-                    "sandstone"                           => "Sandstone",
-                    "marble"                              => "Marble",
-                    _                                     => "Concrete",
+                    "brick" => "Brick",
+                    "masonry" => "Brick",
+                    "concrete" => "Concrete",
+                    "glass" => "Glass",
+                    "metal" | "steel" => "Metal",
+                    "wood" => "WoodPlanks",
+                    "stone" | "granite" | "limestone" => "Limestone",
+                    "sandstone" => "Sandstone",
+                    "marble" => "Marble",
+                    _ => "Concrete",
                 });
-                let material = if color.is_none() {
-                    material_override.map(|s| s.to_string()).unwrap_or(material)
-                } else {
-                    material
-                };
+                let material = material_override.map(|s| s.to_string()).unwrap_or(material);
 
                 // Resolve roof color: prefer explicit OSM roof:colour, fall back to style
                 let roof_color = f.roof_colour.as_deref().and_then(parse_css_color);
 
-                // Assign a procedural facade style if it's a default building
-                let facade_style = if f.roof == "dome" {
-                    Some("facade_modern".to_string())
-                } else if f.id.contains("osm") {
-                    Some("facade_brick".to_string())
-                } else {
-                    None
-                };
-
-                // Generate rooms (one per level)
-                let mut rooms = Vec::new();
-                let levels = f.levels.unwrap_or(1);
-                let floor_height = f.height / levels as f64;
-
-                for i in 0..levels {
-                    rooms.push(Room {
-                        id: format!("{}_floor_{}", f.id, i),
-                        name: format!("Floor {}", i + 1),
-                        footprint: relative_footprint.clone(),
-                        floor_y: (f.base_y - origin.y) + (i as f64 * floor_height),
-                        height: 0.2, // slab thickness
-                        wall_material: None,
-                        floor_material: Some("WoodPlanks".to_string()),
-                        has_door: i == 0,
-                        has_window: true,
-                    });
-                }
-
                 chunk.buildings.push(BuildingShell {
                     id: f.id,
                     footprint: relative_footprint,
+                    holes: relative_holes,
                     indices: f.indices,
                     material,
                     wall_color: color,
@@ -433,16 +654,16 @@ impl Chunker {
                     roof_shape: Some(f.roof.clone()),
                     roof_material: f.roof_material.clone(),
                     usage: f.usage.clone(),
-                    min_height: f.min_height,
+                    min_height: f.min_height.map(|height| height * scale),
                     base_y: f.base_y - origin.y,
-                    height: f.height,
+                    height: f.height * scale,
                     height_m: f.height_m,
                     levels: f.levels,
                     roof_levels: f.roof_levels,
-                    facade_style,
+                    facade_style: None,
                     roof: f.roof,
-                    rooms,
-                    roof_height: f.roof_height,
+                    rooms: Vec::new(),
+                    roof_height: f.roof_height.map(|height| height * scale),
                     name: f.name.clone(),
                 });
             }
@@ -484,6 +705,12 @@ impl Chunker {
                     .iter()
                     .map(|p| GroundPoint::new(p.x - origin.x, p.y - origin.z))
                     .collect();
+                paint_terrain_polygon(
+                    chunk.terrain.as_mut().expect("terrain grid"),
+                    &footprint,
+                    &[],
+                    &material,
+                );
                 chunk.landuse.push(LanduseShell {
                     id: f.id.clone(),
                     kind: f.kind.clone(),
@@ -581,7 +808,7 @@ impl Chunker {
                 );
                 let chunk_id = world_to_chunk(midpoint, chunk_size);
 
-                let chunk_segments = segments_by_chunk.entry(chunk_id).or_insert_with(Vec::new);
+                let chunk_segments = segments_by_chunk.entry(chunk_id).or_default();
 
                 let mut appended = false;
                 if let Some(last_seg) = chunk_segments.last_mut() {
@@ -627,11 +854,13 @@ impl Chunker {
         }
 
         chunks.sort_by_key(|c| (c.id.z, c.id.x));
+        let chunk_refs = chunks.iter().map(derive_chunk_ref).collect();
 
         ChunkManifest {
             schema_version: "0.4.0".to_string(),
             meta,
             chunks,
+            chunk_refs,
         }
     }
 }

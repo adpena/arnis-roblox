@@ -4,12 +4,12 @@ return function()
     local Assert = require(script.Parent.Assert)
 
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "RoomSmallTruth",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 1,
         },
@@ -36,6 +36,7 @@ return function()
                             { x = 0, z = 12 },
                         },
                         baseY = 0,
+                        height = 14,
                         levels = 1,
                         roof = "flat",
                         material = "Concrete",
@@ -79,7 +80,10 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected small room truth world root")
 
-    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("tiny_room_building")
+    local building = worldRoot
+        :FindFirstChild("0_0")
+        :FindFirstChild("Buildings")
+        :FindFirstChild("tiny_room_building")
     Assert.truthy(building, "expected tiny room building model")
     local roomsFolder = building:FindFirstChild("Rooms")
     Assert.truthy(roomsFolder, "expected Rooms folder under tiny room building")
@@ -102,25 +106,41 @@ return function()
             ceilingParts[#ceilingParts + 1] = child
         end
     end
-    Assert.truthy(#floorParts >= 1, "expected at least one floor part for small non-rectangular room")
-    Assert.truthy(#ceilingParts >= 1, "expected at least one ceiling part for small non-rectangular room")
+    Assert.truthy(
+        #floorParts >= 1,
+        "expected at least one floor part for small non-rectangular room"
+    )
+    Assert.truthy(
+        #ceilingParts >= 1,
+        "expected at least one ceiling part for small non-rectangular room"
+    )
 
     local function pointCovered(parts, pointX, pointZ)
         for _, part in ipairs(parts) do
-            local localPoint = part.CFrame:PointToObjectSpace(Vector3.new(pointX, part.Position.Y, pointZ))
-            if math.abs(localPoint.X) <= part.Size.X * 0.5 and math.abs(localPoint.Z) <= part.Size.Z * 0.5 then
+            local localPoint =
+                part.CFrame:PointToObjectSpace(Vector3.new(pointX, part.Position.Y, pointZ))
+            if
+                math.abs(localPoint.X) <= part.Size.X * 0.5
+                and math.abs(localPoint.Z) <= part.Size.Z * 0.5
+            then
                 return true
             end
         end
         return false
     end
 
-    Assert.truthy(pointCovered(floorParts, 2, 2), "expected floor coverage inside tiny triangular room")
+    Assert.truthy(
+        pointCovered(floorParts, 2, 2),
+        "expected floor coverage inside tiny triangular room"
+    )
     Assert.falsy(
         pointCovered(floorParts, 5, 7),
         "expected no floor coverage in bounding-box area outside tiny triangular room"
     )
-    Assert.truthy(pointCovered(ceilingParts, 2, 2), "expected ceiling coverage inside tiny triangular room")
+    Assert.truthy(
+        pointCovered(ceilingParts, 2, 2),
+        "expected ceiling coverage inside tiny triangular room"
+    )
     Assert.falsy(
         pointCovered(ceilingParts, 5, 7),
         "expected no ceiling coverage in bounding-box area outside tiny triangular room"

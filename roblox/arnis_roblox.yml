@@ -1,0 +1,6 @@
+base: roblox
+name: arnis_roblox
+globals:
+  Content.fromObject:
+    args:
+      - type: any
