@@ -35,12 +35,12 @@ class RepoAuditTests(unittest.TestCase):
     def test_missing_ignore_rules_are_reported(self) -> None:
         missing = repo_audit.find_missing_ignore_rules(
             ".venv/\nrust/out/\n",
-            ["rust/out/", "out/", ".env", "*.pem", "rust/fuzz/artifacts/", "rust/fuzz/corpus/"],
+            ["rust/out/", "out/", "exports/", ".env", "*.pem", "rust/fuzz/artifacts/", "rust/fuzz/corpus/"],
         )
 
         self.assertEqual(
             missing,
-            ["out/", ".env", "*.pem", "rust/fuzz/artifacts/", "rust/fuzz/corpus/"],
+            ["out/", "exports/", ".env", "*.pem", "rust/fuzz/artifacts/", "rust/fuzz/corpus/"],
         )
 
     def test_gitleaks_report_is_loaded(self) -> None:

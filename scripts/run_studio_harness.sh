@@ -2287,6 +2287,7 @@ run_scene_fidelity_audits() {
   local manifest_summary_path="$ROOT_DIR/rust/out/austin-manifest.scene-index.json"
   local audit_script="$ROOT_DIR/scripts/scene_fidelity_audit.py"
   local audit_log="$ACTIVE_LOG"
+  local scene_audit_dir="${ARNIS_SCENE_AUDIT_DIR:-/tmp}"
   if [[ ! -f "$manifest_path" || ! -f "$audit_script" ]]; then
     log "scene fidelity audit unavailable; missing manifest or script"
     return 0
@@ -2294,11 +2295,12 @@ run_scene_fidelity_audits() {
   if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" ]]; then
     audit_log="$LOG_SLICE_FILE"
   fi
+  mkdir -p "$scene_audit_dir"
 
-  local edit_json="/tmp/arnis-scene-fidelity-edit.json"
-  local edit_html="/tmp/arnis-scene-fidelity-edit.html"
-  local play_json="/tmp/arnis-scene-fidelity-play.json"
-  local play_html="/tmp/arnis-scene-fidelity-play.html"
+  local edit_json="$scene_audit_dir/arnis-scene-fidelity-edit.json"
+  local edit_html="$scene_audit_dir/arnis-scene-fidelity-edit.html"
+  local play_json="$scene_audit_dir/arnis-scene-fidelity-play.json"
+  local play_html="$scene_audit_dir/arnis-scene-fidelity-play.html"
 
   local refresh_manifest_summary=0
   if [[ ! -f "$manifest_summary_path" || "$manifest_path" -nt "$manifest_summary_path" ]]; then

@@ -28,6 +28,7 @@ These are generated or local-only and must stay out of Git:
 - `rust/out/`
 - `roblox/out/`
 - `out/`
+- `exports/`
 - `tmp/`
 - monolithic local Austin manifests such as `roblox/src/ServerStorage/SampleData/AustinManifest.lua`
 - local env files, keys, logs, and scratch assets

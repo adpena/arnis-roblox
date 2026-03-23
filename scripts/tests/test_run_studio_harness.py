@@ -143,6 +143,14 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('if bootstrap_count > 1:', self.text)
         self.assertIn("unexpected preview rebuild reasons", self.text)
 
+    def test_scene_fidelity_audits_support_configurable_output_dir(self) -> None:
+        self.assertIn('local scene_audit_dir="${ARNIS_SCENE_AUDIT_DIR:-/tmp}"', self.text)
+        self.assertIn('mkdir -p "$scene_audit_dir"', self.text)
+        self.assertIn('local edit_json="$scene_audit_dir/arnis-scene-fidelity-edit.json"', self.text)
+        self.assertIn('local edit_html="$scene_audit_dir/arnis-scene-fidelity-edit.html"', self.text)
+        self.assertIn('local play_json="$scene_audit_dir/arnis-scene-fidelity-play.json"', self.text)
+        self.assertIn('local play_html="$scene_audit_dir/arnis-scene-fidelity-play.html"', self.text)
+
 
 if __name__ == "__main__":
     unittest.main()

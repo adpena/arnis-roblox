@@ -249,7 +249,7 @@ local function collectTreeParts(treeRoot)
     for _, descendant in ipairs(treeRoot:GetDescendants()) do
         if isNamedTreePart(descendant, "trunk") then
             trunks[#trunks + 1] = descendant
-        elseif isNamedTreePart(descendant, "canopy") then
+        elseif isNamedTreePart(descendant, "canopy") or isNamedTreePart(descendant, "frond") then
             canopies[#canopies + 1] = descendant
         end
     end

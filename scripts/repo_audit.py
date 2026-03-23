@@ -23,6 +23,7 @@ REQUIRED_IGNORE_RULES = [
     "rust/fuzz/coverage/",
     "roblox/out/",
     "out/",
+    "exports/",
     "tmp/",
     "roblox/src/ServerStorage/SampleData/AustinManifest.lua",
     ".env",

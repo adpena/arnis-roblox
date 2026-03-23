@@ -59,13 +59,21 @@ For a stable Austin export outside `roblox/out`, use:
 bash scripts/build_austin_max_fidelity_place.sh
 ```
 
-That runs the Austin export with `--yolo` (`terrain_cell_size=1`, satellite on), then builds a clean `.rbxlx` into [`exports/`](/Users/adpena/Projects/arnis-roblox/exports).
+That runs the Austin export with `--yolo` (`terrain_cell_size=1`, satellite on), writes a timestamped local artifact under [`exports/`](/Users/adpena/Projects/arnis-roblox/exports), and refreshes the stable local copy at `exports/austin-max-fidelity-latest.rbxlx`.
 
 For an end-to-end Studio validation pass against that exported place, use:
 
 ```bash
 bash scripts/test_austin_max_fidelity_e2e.sh
 ```
+
+For the single-command export + Studio audit lane, use:
+
+```bash
+bash scripts/run_austin_fidelity.sh
+```
+
+That reuses `exports/austin-max-fidelity-latest.rbxlx` and writes stable scene-audit artifacts under `out/austin-fidelity/latest/`.
 
 ### 3. Enable live sync when you want iteration
 

@@ -45,6 +45,18 @@ For quick end-to-end tests with real OSM data, you can use the helper scripts un
     - `roblox/src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua`
     - `roblox/src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/`
   - Each shard currently contains one chunk so no generated `ModuleScript` exceeds Roblox's `Source` size cap during sync.
+- `scripts/build_austin_max_fidelity_place.sh`:
+  - Builds a clean Austin `.rbxlx` for local Studio testing.
+  - Output:
+    - `exports/austin-max-fidelity-<UTCSTAMP>.rbxlx` - timestamped local snapshot
+    - `exports/austin-max-fidelity-latest.rbxlx` - stable local latest copy
+- `scripts/run_austin_fidelity.sh`:
+  - Runs the bounded Austin Studio acceptance lane against the stable latest export.
+  - Output:
+    - `out/austin-fidelity/latest/arnis-scene-fidelity-edit.json`
+    - `out/austin-fidelity/latest/arnis-scene-fidelity-edit.html`
+    - `out/austin-fidelity/latest/arnis-scene-fidelity-play.json`
+    - `out/austin-fidelity/latest/arnis-scene-fidelity-play.html`
 
 You can swap the bbox or output paths in these scripts as needed, or use them as templates for other cities.
 

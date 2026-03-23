@@ -33,6 +33,7 @@ worktrees/
 
 # Generated outputs / temp
 out/
+exports/
 tmp/
 rust/out/
 rust/fuzz/artifacts/

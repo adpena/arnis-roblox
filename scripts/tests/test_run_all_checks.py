@@ -25,6 +25,74 @@ def load_module():
 
 
 class RunAllChecksTests(unittest.TestCase):
+    def test_main_optionally_runs_austin_fidelity_lane_when_requested(self) -> None:
+        module = load_module()
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str]) -> int:
+            calls.append(cmd)
+            return 0
+
+        def fake_which(name: str) -> str | None:
+            return {
+                "cargo": "/usr/bin/cargo",
+                "selene": "/usr/local/bin/selene",
+                "stylua": "/usr/local/bin/stylua",
+            }.get(name)
+
+        original_run = module.run
+        original_which = module.shutil.which
+        module.run = fake_run
+        module.shutil.which = fake_which
+        try:
+            exit_code = module.main(
+                [
+                    "--with-austin-fidelity",
+                    "--austin-fidelity-report-dir",
+                    str(ROOT / "out" / "tests" / "austin-fidelity"),
+                ]
+            )
+        finally:
+            module.run = original_run
+            module.shutil.which = original_which
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            calls[-1],
+            [
+                "bash",
+                str(ROOT / "scripts" / "run_austin_fidelity.sh"),
+                "--report-dir",
+                str(ROOT / "out" / "tests" / "austin-fidelity"),
+            ],
+        )
+
+    def test_main_treats_optional_austin_fidelity_lane_as_report_only(self) -> None:
+        module = load_module()
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str]) -> int:
+            calls.append(cmd)
+            if cmd and cmd[0] == "bash" and cmd[1] == str(ROOT / "scripts" / "run_austin_fidelity.sh"):
+                return 7
+            return 0
+
+        original_run = module.run
+        original_which = module.shutil.which
+        module.run = fake_run
+        module.shutil.which = lambda _name: None
+        output = io.StringIO()
+        try:
+            with redirect_stdout(output):
+                exit_code = module.main(["--with-austin-fidelity"])
+        finally:
+            module.run = original_run
+            module.shutil.which = original_which
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Austin fidelity lane failed in report-only mode", output.getvalue())
+        self.assertEqual(calls[-1], ["bash", str(ROOT / "scripts" / "run_austin_fidelity.sh")])
+
     def test_main_runs_python_luau_rust_and_fuzz_checks_when_tools_exist(self) -> None:
         module = load_module()
         calls: list[list[str]] = []
