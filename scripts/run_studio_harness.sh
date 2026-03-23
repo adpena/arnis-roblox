@@ -92,12 +92,16 @@ build_clean_place() {
     return 0
   fi
 
-  python3 - <<'PY'
+  mkdir -p "$roblox_dir/out"
+
+  ROOT_DIR_PY="$ROOT_DIR" python3 - <<'PY'
 import json
+import os
 from pathlib import Path
 
-src = Path("/Users/adpena/Projects/arnis-roblox/roblox/default.project.json")
-out = Path("/Users/adpena/Projects/arnis-roblox/roblox/default.build.project.json")
+root_dir = Path(os.environ["ROOT_DIR_PY"])
+src = root_dir / "roblox" / "default.project.json"
+out = root_dir / "roblox" / "default.build.project.json"
 data = json.loads(src.read_text(encoding="utf-8"))
 data.pop("vertigoSync", None)
 data.pop("globIgnorePaths", None)
