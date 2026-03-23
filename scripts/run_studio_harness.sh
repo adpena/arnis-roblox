@@ -358,15 +358,31 @@ EOF
 build_clean_place() {
   local roblox_dir="$ROOT_DIR/roblox"
   local output_place="$roblox_dir/out/arnis-test-clean.rbxlx"
+  local build_project="$roblox_dir/out/default.build.project.json"
 
   if [[ -z "$VSYNC_BINARY" ]]; then
     return 0
   fi
 
+  mkdir -p "$roblox_dir/out"
+
+  ROOT_DIR_PY="$ROOT_DIR" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root_dir = Path(os.environ["ROOT_DIR_PY"])
+src = root_dir / "roblox" / "default.project.json"
+out = root_dir / "roblox" / "out" / "default.build.project.json"
+data = json.loads(src.read_text(encoding="utf-8"))
+data.pop("vertigoSync", None)
+data.pop("globIgnorePaths", None)
+out.write_text(json.dumps(data, indent=2), encoding="utf-8")
+PY
   (
     cd "$roblox_dir"
     mkdir -p out
-    "$VSYNC_BINARY" --root "$roblox_dir" build --project default.project.json --output out/arnis-test-clean.rbxlx >/dev/null
+    "$VSYNC_BINARY" --root "$roblox_dir" build --project out/default.build.project.json --output out/arnis-test-clean.rbxlx >/dev/null
   )
 
   [[ -f "$output_place" ]]
