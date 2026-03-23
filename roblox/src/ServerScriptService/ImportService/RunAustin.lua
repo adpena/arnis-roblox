@@ -14,8 +14,8 @@ RunAustin.STARTUP_CHUNK_COUNT = 2
 RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS = 30
 RunAustin.STUDIO_MANIFEST_INDEX_NAME = "AustinPreviewManifestIndex"
 RunAustin.STUDIO_MANIFEST_CHUNKS_NAME = "AustinPreviewManifestChunks"
-RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME = "AustinManifestIndex"
-RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME = "AustinHDManifestIndex"
+RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME = "AustinHDManifestIndex"
+RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME = "AustinManifestIndex"
 
 local function isStudioEditMode()
     return RunService:IsStudio() and not RunService:IsRunning()
