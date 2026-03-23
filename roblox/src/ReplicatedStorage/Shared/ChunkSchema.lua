@@ -45,6 +45,113 @@ local function validatePoint2(point, label)
     assertType(point.z, "number", label .. ".z must be a number")
 end
 
+local function validateOptionalNonNegativeNumber(value, label)
+    if value == nil then
+        return
+    end
+
+    assertType(value, "number", label .. " must be a number")
+    assert(value >= 0, label .. " must be non-negative")
+end
+
+local function validateRequiredNonNegativeNumber(value, label)
+    assertType(value, "number", label .. " must be a number")
+    assert(value >= 0, label .. " must be non-negative")
+end
+
+local function validateOptionalNonNegativeInteger(value, label)
+    if value == nil then
+        return
+    end
+
+    assertType(value, "number", label .. " must be a number")
+    assert(value >= 0, label .. " must be non-negative")
+    assert(value % 1 == 0, label .. " must be an integer")
+end
+
+local function validateRequiredNonNegativeInteger(value, label)
+    assertType(value, "number", label .. " must be a number")
+    assert(value >= 0, label .. " must be non-negative")
+    assert(value % 1 == 0, label .. " must be an integer")
+end
+
+local function validateSubplanBounds(bounds, label)
+    assertType(bounds, "table", label .. " must be a table")
+    assertType(bounds.minX, "number", label .. ".minX must be a number")
+    assertType(bounds.minY, "number", label .. ".minY must be a number")
+    assertType(bounds.maxX, "number", label .. ".maxX must be a number")
+    assertType(bounds.maxY, "number", label .. ".maxY must be a number")
+end
+
+local function validateChunkRef(chunkRef, label)
+    assertType(chunkRef, "table", label .. " must be a table")
+    assertType(chunkRef.id, "string", label .. ".id must be a string")
+    validatePoint3(chunkRef.originStuds, label .. ".originStuds")
+    validateOptionalNonNegativeInteger(chunkRef.featureCount, label .. ".featureCount")
+    validateOptionalNonNegativeNumber(chunkRef.streamingCost, label .. ".streamingCost")
+
+    if chunkRef.partitionVersion ~= nil then
+        assertType(
+            chunkRef.partitionVersion,
+            "string",
+            label .. ".partitionVersion must be a string"
+        )
+    end
+
+    if chunkRef.shards ~= nil then
+        assertType(chunkRef.shards, "table", label .. ".shards must be an array-like table")
+        for shardIndex, shardName in ipairs(chunkRef.shards) do
+            assertType(
+                shardName,
+                "string",
+                ("%s.shards[%d] must be a string"):format(label, shardIndex)
+            )
+        end
+    end
+
+    if chunkRef.subplans ~= nil then
+        assertType(chunkRef.subplans, "table", label .. ".subplans must be an array-like table")
+        assertType(
+            chunkRef.partitionVersion,
+            "string",
+            label .. ".partitionVersion must be a string when subplans are present"
+        )
+
+        for subplanIndex, subplan in ipairs(chunkRef.subplans) do
+            local subplanLabel = ("%s.subplans[%d]"):format(label, subplanIndex)
+            assertType(subplan, "table", subplanLabel .. " must be a table")
+            assertType(subplan.id, "string", subplanLabel .. ".id must be a string")
+            assertType(subplan.layer, "string", subplanLabel .. ".layer must be a string")
+            validateRequiredNonNegativeInteger(
+                subplan.featureCount,
+                subplanLabel .. ".featureCount"
+            )
+            validateRequiredNonNegativeNumber(
+                subplan.streamingCost,
+                subplanLabel .. ".streamingCost"
+            )
+
+            if subplan.bounds ~= nil then
+                validateSubplanBounds(subplan.bounds, subplanLabel .. ".bounds")
+            end
+        end
+    end
+end
+
+function ChunkSchema.validateChunkRefs(chunkRefs, label)
+    if chunkRefs == nil then
+        return chunkRefs
+    end
+
+    local chunkRefsLabel = label or "manifest.chunkRefs"
+    assertType(chunkRefs, "table", chunkRefsLabel .. " must be an array-like table")
+    for chunkRefIndex, chunkRef in ipairs(chunkRefs) do
+        validateChunkRef(chunkRef, ("%s[%d]"):format(chunkRefsLabel, chunkRefIndex))
+    end
+
+    return chunkRefs
+end
+
 function ChunkSchema.validateManifest(manifest)
     assertType(manifest, "table", "manifest must be a table")
 
@@ -54,19 +161,38 @@ function ChunkSchema.validateManifest(manifest)
     end
 
     -- 2. Validate current version
-    assert(manifest.schemaVersion == Version.SchemaVersion, "unexpected schemaVersion after migration")
+    assert(
+        manifest.schemaVersion == Version.SchemaVersion,
+        "unexpected schemaVersion after migration"
+    )
 
     assertType(manifest.meta, "table", "manifest.meta must be a table")
     assertType(manifest.meta.worldName, "string", "manifest.meta.worldName must be a string")
     assertType(manifest.meta.generator, "string", "manifest.meta.generator must be a string")
     assertType(manifest.meta.source, "string", "manifest.meta.source must be a string")
-    assertType(manifest.meta.metersPerStud, "number", "manifest.meta.metersPerStud must be a number")
-    assertType(manifest.meta.chunkSizeStuds, "number", "manifest.meta.chunkSizeStuds must be a number")
+    assertType(
+        manifest.meta.metersPerStud,
+        "number",
+        "manifest.meta.metersPerStud must be a number"
+    )
+    assertType(
+        manifest.meta.chunkSizeStuds,
+        "number",
+        "manifest.meta.chunkSizeStuds must be a number"
+    )
 
     -- 0.2.0+ requirement
-    assertType(manifest.meta.totalFeatures, "number", "manifest.meta.totalFeatures must be a number")
+    assertType(
+        manifest.meta.totalFeatures,
+        "number",
+        "manifest.meta.totalFeatures must be a number"
+    )
     if manifest.meta.canonicalAnchor ~= nil then
-        assertType(manifest.meta.canonicalAnchor, "table", "manifest.meta.canonicalAnchor must be a table")
+        assertType(
+            manifest.meta.canonicalAnchor,
+            "table",
+            "manifest.meta.canonicalAnchor must be a table"
+        )
         validateOptionalPoint3(
             manifest.meta.canonicalAnchor.positionStuds,
             "manifest.meta.canonicalAnchor.positionStuds"
@@ -84,6 +210,8 @@ function ChunkSchema.validateManifest(manifest)
     assertType(manifest.chunks, "table", "manifest.chunks must be an array-like table")
     assert(#manifest.chunks > 0, "manifest.chunks must contain at least one chunk")
 
+    ChunkSchema.validateChunkRefs(manifest.chunkRefs)
+
     for chunkIndex, chunk in ipairs(manifest.chunks) do
         local prefix = ("manifest.chunks[%d]"):format(chunkIndex)
 
@@ -92,7 +220,11 @@ function ChunkSchema.validateManifest(manifest)
 
         if chunk.terrain ~= nil then
             local terrain = chunk.terrain
-            assertType(terrain.cellSizeStuds, "number", prefix .. ".terrain.cellSizeStuds must be a number")
+            assertType(
+                terrain.cellSizeStuds,
+                "number",
+                prefix .. ".terrain.cellSizeStuds must be a number"
+            )
             assertType(terrain.width, "number", prefix .. ".terrain.width must be a number")
             assertType(terrain.depth, "number", prefix .. ".terrain.depth must be a number")
             assertType(terrain.heights, "table", prefix .. ".terrain.heights must be a table")
@@ -114,14 +246,22 @@ function ChunkSchema.validateManifest(manifest)
             assertType(road.kind, "string", prefix .. ".roads[].kind must be a string")
             assertType(road.material, "string", prefix .. ".roads[].material must be a string")
             assertType(road.widthStuds, "number", prefix .. ".roads[].widthStuds must be a number")
-            assertType(road.hasSidewalk, "boolean", prefix .. ".roads[].hasSidewalk must be a boolean")
+            assertType(
+                road.hasSidewalk,
+                "boolean",
+                prefix .. ".roads[].hasSidewalk must be a boolean"
+            )
             assertType(road.points, "table", prefix .. ".roads[].points must be a table")
             assert(#road.points >= 2, prefix .. ".roads[].points must contain at least two points")
             if road.surface ~= nil then
                 assertType(road.surface, "string", prefix .. ".roads[].surface must be a string")
             end
             if road.elevated ~= nil then
-                assertType(road.elevated, "boolean", prefix .. ".roads[].elevated must be a boolean")
+                assertType(
+                    road.elevated,
+                    "boolean",
+                    prefix .. ".roads[].elevated must be a boolean"
+                )
             end
             if road.tunnel ~= nil then
                 assertType(road.tunnel, "boolean", prefix .. ".roads[].tunnel must be a boolean")
@@ -160,44 +300,99 @@ function ChunkSchema.validateManifest(manifest)
 
         for _, building in ipairs(chunk.buildings or {}) do
             assertType(building.id, "string", prefix .. ".buildings[].id must be a string")
-            assertType(building.material, "string", prefix .. ".buildings[].material must be a string")
-            assertType(building.footprint, "table", prefix .. ".buildings[].footprint must be a table")
-            assert(#building.footprint >= 3, prefix .. ".buildings[].footprint must contain at least three points")
+            assertType(
+                building.material,
+                "string",
+                prefix .. ".buildings[].material must be a string"
+            )
+            assertType(
+                building.footprint,
+                "table",
+                prefix .. ".buildings[].footprint must be a table"
+            )
+            assert(
+                #building.footprint >= 3,
+                prefix .. ".buildings[].footprint must contain at least three points"
+            )
             assertType(building.baseY, "number", prefix .. ".buildings[].baseY must be a number")
             assertType(building.height, "number", prefix .. ".buildings[].height must be a number")
             assertType(building.roof, "string", prefix .. ".buildings[].roof must be a string")
             if building.height_m ~= nil then
-                assertType(building.height_m, "number", prefix .. ".buildings[].height_m must be a number")
+                assertType(
+                    building.height_m,
+                    "number",
+                    prefix .. ".buildings[].height_m must be a number"
+                )
             end
             if building.levels ~= nil then
-                assertType(building.levels, "number", prefix .. ".buildings[].levels must be a number")
+                assertType(
+                    building.levels,
+                    "number",
+                    prefix .. ".buildings[].levels must be a number"
+                )
             end
             if building.roofLevels ~= nil then
-                assertType(building.roofLevels, "number", prefix .. ".buildings[].roofLevels must be a number")
+                assertType(
+                    building.roofLevels,
+                    "number",
+                    prefix .. ".buildings[].roofLevels must be a number"
+                )
             end
             if building.facadeStyle ~= nil then
-                assertType(building.facadeStyle, "string", prefix .. ".buildings[].facadeStyle must be a string")
+                assertType(
+                    building.facadeStyle,
+                    "string",
+                    prefix .. ".buildings[].facadeStyle must be a string"
+                )
             end
             if building.wallColor ~= nil then
-                assertType(building.wallColor, "table", prefix .. ".buildings[].wallColor must be a table")
+                assertType(
+                    building.wallColor,
+                    "table",
+                    prefix .. ".buildings[].wallColor must be a table"
+                )
             end
             if building.roofColor ~= nil then
-                assertType(building.roofColor, "table", prefix .. ".buildings[].roofColor must be a table")
+                assertType(
+                    building.roofColor,
+                    "table",
+                    prefix .. ".buildings[].roofColor must be a table"
+                )
             end
             if building.roofShape ~= nil then
-                assertType(building.roofShape, "string", prefix .. ".buildings[].roofShape must be a string")
+                assertType(
+                    building.roofShape,
+                    "string",
+                    prefix .. ".buildings[].roofShape must be a string"
+                )
             end
             if building.roofMaterial ~= nil then
-                assertType(building.roofMaterial, "string", prefix .. ".buildings[].roofMaterial must be a string")
+                assertType(
+                    building.roofMaterial,
+                    "string",
+                    prefix .. ".buildings[].roofMaterial must be a string"
+                )
             end
             if building.usage ~= nil then
-                assertType(building.usage, "string", prefix .. ".buildings[].usage must be a string")
+                assertType(
+                    building.usage,
+                    "string",
+                    prefix .. ".buildings[].usage must be a string"
+                )
             end
             if building.minHeight ~= nil then
-                assertType(building.minHeight, "number", prefix .. ".buildings[].minHeight must be a number")
+                assertType(
+                    building.minHeight,
+                    "number",
+                    prefix .. ".buildings[].minHeight must be a number"
+                )
             end
             if building.roofHeight ~= nil then
-                assertType(building.roofHeight, "number", prefix .. ".buildings[].roofHeight must be a number")
+                assertType(
+                    building.roofHeight,
+                    "number",
+                    prefix .. ".buildings[].roofHeight must be a number"
+                )
             end
             if building.name ~= nil then
                 assertType(building.name, "string", prefix .. ".buildings[].name must be a string")
@@ -213,7 +408,10 @@ function ChunkSchema.validateManifest(manifest)
                 assertType(room.id, "string", roomPrefix .. ".id must be a string")
                 assertType(room.name, "string", roomPrefix .. ".name must be a string")
                 assertType(room.footprint, "table", roomPrefix .. ".footprint must be a table")
-                assert(#room.footprint >= 3, roomPrefix .. ".footprint must contain at least three points")
+                assert(
+                    #room.footprint >= 3,
+                    roomPrefix .. ".footprint must contain at least three points"
+                )
                 assertType(room.floorY, "number", roomPrefix .. ".floorY must be a number")
                 assertType(room.height, "number", roomPrefix .. ".height must be a number")
 
@@ -234,19 +432,33 @@ function ChunkSchema.validateManifest(manifest)
                 assertType(water.width, "number", prefix .. ".water[].width must be a number")
             end
             if water.intermittent ~= nil then
-                assertType(water.intermittent, "boolean", prefix .. ".water[].intermittent must be a boolean")
+                assertType(
+                    water.intermittent,
+                    "boolean",
+                    prefix .. ".water[].intermittent must be a boolean"
+                )
             end
 
             if water.points then
-                assertType(water.widthStuds, "number", prefix .. ".water[].widthStuds must be a number")
+                assertType(
+                    water.widthStuds,
+                    "number",
+                    prefix .. ".water[].widthStuds must be a number"
+                )
                 assertType(water.points, "table", prefix .. ".water[].points must be a table")
-                assert(#water.points >= 2, prefix .. ".water[].points must contain at least two points")
+                assert(
+                    #water.points >= 2,
+                    prefix .. ".water[].points must contain at least two points"
+                )
                 for pointIndex, point in ipairs(water.points) do
                     validatePoint3(point, ("%s.water[].points[%d]"):format(prefix, pointIndex))
                 end
             elseif water.footprint then
                 assertType(water.footprint, "table", prefix .. ".water[].footprint must be a table")
-                assert(#water.footprint >= 3, prefix .. ".water[].footprint must contain at least three points")
+                assert(
+                    #water.footprint >= 3,
+                    prefix .. ".water[].footprint must contain at least three points"
+                )
                 for pointIndex, point in ipairs(water.footprint) do
                     validatePoint2(point, ("%s.water[].footprint[%d]"):format(prefix, pointIndex))
                 end
@@ -258,11 +470,20 @@ function ChunkSchema.validateManifest(manifest)
                             for pointIndex, point in ipairs(hole) do
                                 validatePoint2(
                                     point,
-                                    ("%s.water[].holes[%d][%d]"):format(prefix, holeIndex, pointIndex)
+                                    ("%s.water[].holes[%d][%d]"):format(
+                                        prefix,
+                                        holeIndex,
+                                        pointIndex
+                                    )
                                 )
                             end
                         else
-                            warn(prefix .. (".water[].holes[%d]: skipping malformed hole"):format(holeIndex))
+                            warn(
+                                prefix
+                                    .. (".water[].holes[%d]: skipping malformed hole"):format(
+                                        holeIndex
+                                    )
+                            )
                         end
                     end
                 end
@@ -287,7 +508,11 @@ function ChunkSchema.validateManifest(manifest)
                 assertType(prop.leafType, "string", prefix .. ".props[].leafType must be a string")
             end
             if prop.circumference ~= nil then
-                assertType(prop.circumference, "number", prefix .. ".props[].circumference must be a number")
+                assertType(
+                    prop.circumference,
+                    "number",
+                    prefix .. ".props[].circumference must be a number"
+                )
             end
         end
 

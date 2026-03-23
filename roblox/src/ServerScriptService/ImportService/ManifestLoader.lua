@@ -7,6 +7,7 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 local ManifestLoader = {}
 local SAMPLE_DATA_TIMEOUT_SECONDS = 5
 local normalizeChunkRefs
+local buildChunkRefsFromShards
 
 local function cloneArray(values)
     if type(values) ~= "table" then
@@ -69,18 +70,8 @@ local function buildChunkRefSeedMap(chunkRefs)
     return chunkRefsById
 end
 
-local function chunkRefsNeedShardRebuild(chunkRefs)
-    if type(chunkRefs) ~= "table" or #chunkRefs == 0 then
-        return true
-    end
-
-    for _, chunkRef in ipairs(chunkRefs) do
-        if type(chunkRef.shards) ~= "table" or #chunkRef.shards == 0 then
-            return true
-        end
-    end
-
-    return false
+local function hasChunkRefs(chunkRefs)
+    return type(chunkRefs) == "table" and #chunkRefs > 0
 end
 
 local function requireModule(module, freshRequire)
@@ -165,7 +156,8 @@ local function resolveSampleDataFolder(timeoutSeconds)
         return sampleData
     end
 
-    sampleData = ServerStorage:WaitForChild("SampleData", timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
+    sampleData =
+        ServerStorage:WaitForChild("SampleData", timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if sampleData then
         return sampleData
     end
@@ -199,10 +191,19 @@ local function loadShardedManifest(indexModule, timeoutSeconds)
     local shardFolder = sampleData:FindFirstChild(shardFolderName)
         or sampleData:WaitForChild(shardFolderName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if not shardFolder then
-        error(("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(shardFolderName))
+        error(
+            ("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(
+                shardFolderName
+            )
+        )
     end
 
-    local chunkRefs = normalizeChunkRefs(index, shardFolder, timeoutSeconds)
+    local chunkRefs = buildChunkRefsFromShards(
+        index,
+        shardFolder,
+        timeoutSeconds,
+        buildChunkRefSeedMap(index.chunkRefs)
+    )
     local chunksById = {}
     local chunkOrder = {}
 
@@ -227,7 +228,7 @@ local function loadShardedManifest(indexModule, timeoutSeconds)
     return finalizeManifest(index, chunksById, chunkOrder, chunkRefs)
 end
 
-local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seedChunkRefsById)
+function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seedChunkRefsById)
     local chunkRefsById = {}
     local chunkOrder = {}
 
@@ -235,7 +236,12 @@ local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seed
         local shardModule = shardFolder:FindFirstChild(shardName)
             or shardFolder:WaitForChild(shardName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
         if not shardModule then
-            error(("%s.%s was not provisioned into the live DataModel"):format(shardFolder:GetFullName(), shardName))
+            error(
+                ("%s.%s was not provisioned into the live DataModel"):format(
+                    shardFolder:GetFullName(),
+                    shardName
+                )
+            )
         end
 
         local shardData = require(shardModule)
@@ -245,9 +251,11 @@ local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seed
                 local seedChunkRef = seedChunkRefsById and seedChunkRefsById[chunk.id]
                 chunkRef = {
                     id = chunk.id,
-                    originStuds = chunk.originStuds or (seedChunkRef and seedChunkRef.originStuds and table.clone(
-                        seedChunkRef.originStuds
-                    )) or { x = 0, y = 0, z = 0 },
+                    originStuds = chunk.originStuds
+                        or (seedChunkRef and seedChunkRef.originStuds and table.clone(
+                            seedChunkRef.originStuds
+                        ))
+                        or { x = 0, y = 0, z = 0 },
                     shards = {},
                 }
                 if seedChunkRef then
@@ -279,12 +287,16 @@ local function buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, seed
 end
 
 function normalizeChunkRefs(index, shardFolder, timeoutSeconds)
-    local chunkRefs = index.chunkRefs
-    if chunkRefsNeedShardRebuild(chunkRefs) then
-        return buildChunkRefsFromShards(index, shardFolder, timeoutSeconds, buildChunkRefSeedMap(chunkRefs))
+    if hasChunkRefs(index.chunkRefs) then
+        return cloneChunkRefs(index.chunkRefs)
     end
 
-    return cloneChunkRefs(chunkRefs)
+    return buildChunkRefsFromShards(
+        index,
+        shardFolder,
+        timeoutSeconds,
+        buildChunkRefSeedMap(index.chunkRefs)
+    )
 end
 
 function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeoutSeconds, options)
@@ -301,43 +313,68 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     local chunkCache = {}
     local chunkFingerprintCache = {}
     local chunkRefs = normalizeChunkRefs(index, shardFolder, timeoutSeconds)
+    ChunkSchema.validateChunkRefs(chunkRefs)
+    local canonicalShardCacheByChunkId = {}
+    local chunkIdsByShardName = {}
 
     local chunkRefById = {}
     for _, chunkRef in ipairs(chunkRefs) do
         chunkRefById[chunkRef.id] = chunkRef
     end
+    local canonicalChunkRefs = nil
+    local handle
 
-    local function resolveShardModule(shardName)
+    local function resolveShardModule(shardName, required)
         local shardModule = shardFolder:FindFirstChild(shardName)
-            or shardFolder:WaitForChild(shardName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
-        if not shardModule then
-            error(("%s.%s was not provisioned into the live DataModel"):format(shardFolder:GetFullName(), shardName))
+        if shardModule == nil and required ~= false then
+            shardModule =
+                shardFolder:WaitForChild(shardName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
+        end
+        if shardModule == nil and required ~= false then
+            error(
+                ("%s.%s was not provisioned into the live DataModel"):format(
+                    shardFolder:GetFullName(),
+                    shardName
+                )
+            )
         end
         return shardModule
     end
 
-    local function loadShardData(shardName)
+    local function loadShardData(shardName, required)
         local cached = shardCache[shardName]
         if cached ~= nil then
             return cached
         end
 
-        local shardModule = resolveShardModule(shardName)
+        local shardModule = resolveShardModule(shardName, required)
+        if shardModule == nil then
+            return nil
+        end
 
         cached = requireModule(shardModule, freshRequire)
         shardCache[shardName] = cached
         return cached
     end
 
-    local handle = {
-        schemaVersion = index.schemaVersion,
-        meta = index.meta,
-        shardFolder = index.shardFolder,
-        chunkRefs = chunkRefs,
-    }
+    local function shardContainsChunk(shardName, chunkId, required)
+        local chunkIds = chunkIdsByShardName[shardName]
+        if chunkIds == nil then
+            chunkIds = {}
+            local shardData = loadShardData(shardName, required)
+            if shardData ~= nil then
+                for _, chunk in ipairs(shardData.chunks or {}) do
+                    chunkIds[chunk.id] = true
+                end
+            end
+            chunkIdsByShardName[shardName] = chunkIds
+        end
 
-    function handle:GetChunk(chunkId)
-        local cached = chunkCache[chunkId]
+        return chunkIds[chunkId] == true
+    end
+
+    local function resolveCanonicalShardsForChunk(chunkId)
+        local cached = canonicalShardCacheByChunkId[chunkId]
         if cached ~= nil then
             return cached
         end
@@ -347,9 +384,84 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
             error(("Unknown chunk id: %s"):format(tostring(chunkId)))
         end
 
+        local canonicalShards = {}
+        local seenShardNames = {}
+
+        for _, shardName in ipairs(chunkRef.shards or {}) do
+            if not seenShardNames[shardName] and shardContainsChunk(shardName, chunkId, false) then
+                seenShardNames[shardName] = true
+                table.insert(canonicalShards, shardName)
+            end
+        end
+
+        for _, shardName in ipairs(index.shards or {}) do
+            if not seenShardNames[shardName] and shardContainsChunk(shardName, chunkId, true) then
+                seenShardNames[shardName] = true
+                table.insert(canonicalShards, shardName)
+            end
+        end
+
+        if #canonicalShards == 0 then
+            error(("Failed to resolve canonical shards for chunk id: %s"):format(tostring(chunkId)))
+        end
+
+        chunkRef.shards = cloneArray(canonicalShards)
+        canonicalShardCacheByChunkId[chunkId] = chunkRef.shards
+        return chunkRef.shards
+    end
+
+    local function resolveCanonicalChunkRefs()
+        if canonicalChunkRefs ~= nil then
+            return canonicalChunkRefs
+        end
+
+        canonicalChunkRefs = buildChunkRefsFromShards(
+            index,
+            shardFolder,
+            timeoutSeconds,
+            buildChunkRefSeedMap(chunkRefs)
+        )
+        chunkRefs = canonicalChunkRefs
+        chunkRefById = {}
+        for _, chunkRef in ipairs(canonicalChunkRefs) do
+            chunkRefById[chunkRef.id] = chunkRef
+        end
+        handle.chunkRefs = canonicalChunkRefs
+        return canonicalChunkRefs
+    end
+
+    handle = {
+        schemaVersion = index.schemaVersion,
+        meta = index.meta,
+        shardFolder = index.shardFolder,
+        chunkRefs = chunkRefs,
+    }
+
+    function handle:ResolveChunkRef(chunkId)
+        if chunkRefById[chunkId] == nil then
+            resolveCanonicalChunkRefs()
+        end
+        resolveCanonicalShardsForChunk(chunkId)
+        return chunkRefById[chunkId]
+    end
+
+    function handle:GetChunk(chunkId)
+        local cached = chunkCache[chunkId]
+        if cached ~= nil then
+            return cached
+        end
+
+        local chunkRef = chunkRefById[chunkId]
+        if not chunkRef then
+            chunkRef = self:ResolveChunkRef(chunkId)
+        end
+        if not chunkRef then
+            error(("Unknown chunk id: %s"):format(tostring(chunkId)))
+        end
+
         local chunksById = {}
         local chunkOrder = {}
-        for _, shardName in ipairs(chunkRef.shards or {}) do
+        for _, shardName in ipairs(resolveCanonicalShardsForChunk(chunkId)) do
             local shardData = loadShardData(shardName)
             for _, chunk in ipairs(shardData.chunks or {}) do
                 if chunk.id == chunkId then
@@ -375,11 +487,14 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
 
         local chunkRef = chunkRefById[chunkId]
         if not chunkRef then
+            chunkRef = self:ResolveChunkRef(chunkId)
+        end
+        if not chunkRef then
             error(("Unknown chunk id: %s"):format(tostring(chunkId)))
         end
 
         local shardFingerprints = {}
-        for _, shardName in ipairs(chunkRef.shards or {}) do
+        for _, shardName in ipairs(resolveCanonicalShardsForChunk(chunkId)) do
             local shardModule = resolveShardModule(shardName)
             local shardFingerprint = shardModule:GetAttribute("VertigoSyncSha256")
             if type(shardFingerprint) ~= "string" or shardFingerprint == "" then
@@ -411,7 +526,7 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     function handle:GetChunkIdsWithinRadius(loadCenter, loadRadius)
         if not loadRadius then
             local chunkIds = {}
-            for _, chunkRef in ipairs(self.chunkRefs) do
+            for _, chunkRef in ipairs(resolveCanonicalChunkRefs()) do
                 table.insert(chunkIds, chunkRef.id)
             end
             return chunkIds
@@ -441,13 +556,15 @@ function ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeou
     end
 
     function handle:MaterializeManifest()
+        local resolvedChunkRefs = resolveCanonicalChunkRefs()
         local chunkIds = {}
-        for _, chunkRef in ipairs(self.chunkRefs) do
+        for _, chunkRef in ipairs(resolvedChunkRefs) do
             table.insert(chunkIds, chunkRef.id)
         end
 
-        local manifest = newManifest(index, self.chunkRefs)
-        manifest.chunks = self:LoadChunks(chunkIds)
+        local chunks = self:LoadChunks(chunkIds)
+        local manifest = newManifest(index, resolvedChunkRefs)
+        manifest.chunks = chunks
         return ChunkSchema.validateManifest(manifest)
     end
 
@@ -491,7 +608,11 @@ function ManifestLoader.LoadNamedShardedSampleHandle(indexName, timeoutSeconds, 
     local shardFolder = sampleData:FindFirstChild(shardFolderName)
         or sampleData:WaitForChild(shardFolderName, timeoutSeconds or SAMPLE_DATA_TIMEOUT_SECONDS)
     if not shardFolder then
-        error(("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(shardFolderName))
+        error(
+            ("ServerStorage.SampleData.%s was not provisioned into the live DataModel"):format(
+                shardFolderName
+            )
+        )
     end
 
     return ManifestLoader.LoadShardedModuleHandle(indexModule, shardFolder, timeoutSeconds, options)
@@ -509,10 +630,21 @@ function ManifestLoader.FreezeHandleForChunkIds(handle, chunkIds)
 
     local frozenChunkRefs = {}
     local frozenChunkRefById = {}
-    for _, chunkRef in ipairs(handle.chunkRefs or {}) do
-        if frozenChunkIdSet[chunkRef.id] then
-            local frozenRef = cloneChunkRef(chunkRef)
-            frozenChunkRefById[chunkRef.id] = frozenRef
+    for _, chunkId in ipairs(frozenChunkIds) do
+        local resolvedChunkRef = nil
+        if type(handle.ResolveChunkRef) == "function" then
+            resolvedChunkRef = handle:ResolveChunkRef(chunkId)
+        else
+            for _, chunkRef in ipairs(handle.chunkRefs or {}) do
+                if chunkRef.id == chunkId then
+                    resolvedChunkRef = chunkRef
+                    break
+                end
+            end
+        end
+        if resolvedChunkRef ~= nil then
+            local frozenRef = cloneChunkRef(resolvedChunkRef)
+            frozenChunkRefById[chunkId] = frozenRef
             table.insert(frozenChunkRefs, frozenRef)
         end
     end
