@@ -445,4 +445,3 @@ git diff --check
 - [ ] **Step 5: Record the first Austin baseline report**
 
 Save the first stable report artifacts and note any report-only metrics that still require end-to-end building-hole support.
-

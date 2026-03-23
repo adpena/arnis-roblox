@@ -183,7 +183,7 @@ Add specs asserting:
 
 - [ ] **Step 2: Run the focused Studio specs to verify they fail**
 
-Run: Studio test harness focused on the two new specs  
+Run: Studio test harness focused on the two new specs
 Expected: FAIL because subplans are not surfaced or scheduled yet.
 
 - [ ] **Step 3: Extend `ManifestLoader`**
@@ -207,7 +207,7 @@ Do not add learned persistence yet.
 
 - [ ] **Step 5: Re-run the Studio specs**
 
-Run: Studio test harness focused on the two new specs  
+Run: Studio test harness focused on the two new specs
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -246,7 +246,7 @@ Add specs asserting:
 
 - [ ] **Step 2: Run the focused Studio specs to verify they fail**
 
-Run: Studio test harness focused on the new subplan importer specs  
+Run: Studio test harness focused on the new subplan importer specs
 Expected: FAIL because the importer has no subplan API or DAG enforcement.
 
 - [ ] **Step 3: Add a subplan-aware importer API**
@@ -282,7 +282,7 @@ Add importer/runtime bookkeeping so:
 
 - [ ] **Step 5: Re-run the importer specs**
 
-Run: Studio test harness focused on the new subplan importer specs  
+Run: Studio test harness focused on the new subplan importer specs
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -310,7 +310,7 @@ Add a spec asserting:
 
 - [ ] **Step 2: Run the spec to verify it fails**
 
-Run: Studio test harness focused on `SubplanRolloutGate.spec.lua`  
+Run: Studio test harness focused on `SubplanRolloutGate.spec.lua`
 Expected: FAIL because rollout is not explicitly staged.
 
 - [ ] **Step 3: Implement staged enablement**
@@ -322,7 +322,7 @@ Add a rollout mechanism so preview/runtime can:
 
 - [ ] **Step 4: Re-run the rollout-gate spec**
 
-Run: Studio test harness focused on `SubplanRolloutGate.spec.lua`  
+Run: Studio test harness focused on `SubplanRolloutGate.spec.lua`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -351,7 +351,7 @@ Add a spec asserting:
 
 - [ ] **Step 2: Run the spec to verify it fails**
 
-Run: Studio test harness focused on `SubplanStreaming.spec.lua`  
+Run: Studio test harness focused on `SubplanStreaming.spec.lua`
 Expected: FAIL because preview/runtime still schedule whole chunks only.
 
 - [ ] **Step 3: Update preview scheduler**
@@ -385,7 +385,7 @@ Do not allow pressure handling to:
 
 - [ ] **Step 6: Re-run the scheduling spec**
 
-Run: Studio test harness focused on `SubplanStreaming.spec.lua`  
+Run: Studio test harness focused on `SubplanStreaming.spec.lua`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -419,7 +419,7 @@ Add a spec asserting:
 
 - [ ] **Step 2: Run the spec to verify it fails**
 
-Run: Studio test harness focused on `SubplanCostCache.spec.lua`  
+Run: Studio test harness focused on `SubplanCostCache.spec.lua`
 Expected: FAIL because persisted learned cache does not exist.
 
 - [ ] **Step 3: Implement a local learned-cost cache**
@@ -435,7 +435,7 @@ Wire preview/runtime to:
 
 - [ ] **Step 4: Re-run the cache spec**
 
-Run: Studio test harness focused on `SubplanCostCache.spec.lua`  
+Run: Studio test harness focused on `SubplanCostCache.spec.lua`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -614,7 +614,7 @@ Run:
 python3 -m unittest scripts.tests.test_scene_fidelity_audit scripts.tests.test_generated_austin_assets -v
 ```
 
-Run: Studio test harness focused on `SubplanMixedMode.spec.lua` and `SubplanCrashResume.spec.lua`  
+Run: Studio test harness focused on `SubplanMixedMode.spec.lua` and `SubplanCrashResume.spec.lua`
 Expected: FAIL because these resilience paths are not covered yet.
 
 - [ ] **Step 3: Implement the missing resilience behavior**
@@ -626,7 +626,7 @@ Add the necessary harness/importer/cache behavior so:
 
 - [ ] **Step 4: Re-run the resilience tests**
 
-Run the same Python and Studio commands  
+Run the same Python and Studio commands
 Expected: PASS.
 
 - [ ] **Step 5: Regenerate Austin artifacts**
