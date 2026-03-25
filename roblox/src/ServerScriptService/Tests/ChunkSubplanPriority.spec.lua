@@ -5,16 +5,8 @@ return function()
     local focusPoint = Vector3.new(0, 0, 0)
     local chunkSizeStuds = 100
 
-    Assert.equal(
-        type(ChunkPriority.GetFeatureCount),
-        "function",
-        "expected chunk-level GetFeatureCount API to exist"
-    )
-    Assert.equal(
-        type(ChunkPriority.GetStreamingCost),
-        "function",
-        "expected chunk-level GetStreamingCost API to exist"
-    )
+    Assert.equal(type(ChunkPriority.GetFeatureCount), "function", "expected chunk-level GetFeatureCount API to exist")
+    Assert.equal(type(ChunkPriority.GetStreamingCost), "function", "expected chunk-level GetStreamingCost API to exist")
     Assert.equal(
         type(ChunkPriority.SortChunkIdsByPriority),
         "function",
@@ -25,11 +17,7 @@ return function()
         "function",
         "expected chunk-level SortChunkEntriesByPriority API to exist"
     )
-    Assert.equal(
-        type(ChunkPriority.SortWorkItems),
-        "function",
-        "expected subplan SortWorkItems helper to exist"
-    )
+    Assert.equal(type(ChunkPriority.SortWorkItems), "function", "expected subplan SortWorkItems helper to exist")
 
     local directionalChunkRefById = {
         ahead = {
@@ -61,11 +49,7 @@ return function()
         Vector3.new(1, 0, 0),
         nil
     )
-    Assert.equal(
-        ids[1],
-        "ahead",
-        "expected nearer forward chunk first within the current live semantics"
-    )
+    Assert.equal(ids[1], "ahead", "expected nearer forward chunk first within the current live semantics")
     Assert.equal(ids[2], "behind", "expected same-band behind chunk after the forward chunk")
     Assert.equal(ids[3], "farther", "expected farther chunk after the closer distance band")
 
@@ -74,28 +58,14 @@ return function()
         { ref = directionalChunkRefById.behind },
         { ref = directionalChunkRefById.ahead },
     }
-    ChunkPriority.SortChunkEntriesByPriority(
-        chunkEntries,
-        focusPoint,
-        chunkSizeStuds,
-        Vector3.new(1, 0, 0),
-        nil
-    )
-    Assert.equal(
-        chunkEntries[1].ref.id,
-        "ahead",
-        "expected chunk entries to preserve live chunk-level sorting"
-    )
+    ChunkPriority.SortChunkEntriesByPriority(chunkEntries, focusPoint, chunkSizeStuds, Vector3.new(1, 0, 0), nil)
+    Assert.equal(chunkEntries[1].ref.id, "ahead", "expected chunk entries to preserve live chunk-level sorting")
     Assert.equal(
         chunkEntries[2].ref.id,
         "behind",
         "expected chunk entry sorting to preserve forward ordering inside the same distance band"
     )
-    Assert.equal(
-        chunkEntries[3].ref.id,
-        "farther",
-        "expected chunk entry sorting to preserve band ordering"
-    )
+    Assert.equal(chunkEntries[3].ref.id, "farther", "expected chunk entry sorting to preserve band ordering")
 
     local observedChunkRefById = {
         cool = {
@@ -112,17 +82,10 @@ return function()
         },
     }
     local observedIds = { "hot", "cool" }
-    ChunkPriority.SortChunkIdsByPriority(
-        observedIds,
-        observedChunkRefById,
-        focusPoint,
-        chunkSizeStuds,
-        nil,
-        {
-            hot = 900,
-            cool = 10,
-        }
-    )
+    ChunkPriority.SortChunkIdsByPriority(observedIds, observedChunkRefById, focusPoint, chunkSizeStuds, nil, {
+        hot = 900,
+        cool = 10,
+    })
     Assert.equal(
         table.concat(observedIds, ","),
         "cool,hot",
@@ -168,16 +131,8 @@ return function()
             },
         },
     }, Vector3.new(50, 0, 50), chunkSizeStuds, Vector3.new(1, 0, 0), nil, 1)
-    Assert.equal(
-        subplanHintKey.featureCount,
-        2,
-        "expected subplan featureCount hints to override chunk aggregates"
-    )
-    Assert.equal(
-        subplanHintKey.streamingCost,
-        3,
-        "expected subplan streamingCost hints to override chunk aggregates"
-    )
+    Assert.equal(subplanHintKey.featureCount, 2, "expected subplan featureCount hints to override chunk aggregates")
+    Assert.equal(subplanHintKey.streamingCost, 3, "expected subplan streamingCost hints to override chunk aggregates")
 
     local fallbackSubplanKey = ChunkPriority.BuildPriorityKey({
         chunkId = "0_0",
@@ -234,13 +189,7 @@ return function()
             },
         },
     }
-    ChunkPriority.SortWorkItems(
-        boundedWorkItems,
-        Vector3.new(50, 0, 50),
-        chunkSizeStuds,
-        Vector3.new(1, 0, 0),
-        nil
-    )
+    ChunkPriority.SortWorkItems(boundedWorkItems, Vector3.new(50, 0, 50), chunkSizeStuds, Vector3.new(1, 0, 0), nil)
     Assert.equal(
         boundedWorkItems[1].subplan.id,
         "roads:east",
@@ -310,13 +259,7 @@ return function()
             },
         },
     }
-    ChunkPriority.SortWorkItems(
-        sameChunkDagItems,
-        Vector3.new(50, 0, 50),
-        chunkSizeStuds,
-        Vector3.new(1, 0, 0),
-        nil
-    )
+    ChunkPriority.SortWorkItems(sameChunkDagItems, Vector3.new(50, 0, 50), chunkSizeStuds, Vector3.new(1, 0, 0), nil)
     Assert.equal(
         table.concat({ sameChunkDagItems[1].subplan.id, sameChunkDagItems[2].subplan.id }, ","),
         "terrain,landuse:east",
@@ -364,5 +307,54 @@ return function()
         table.concat({ costSiblingItems[1].subplan.id, costSiblingItems[2].subplan.id }, ","),
         "roads:cheap,roads:expensive",
         "expected subplan cost signals to outrank manifest/source order within the same layer"
+    )
+
+    local crossChunkBandItems = {
+        {
+            chunkId = "0_0",
+            originStuds = { x = -40, y = 0, z = 0 },
+            subplan = { id = "landuse", layer = "landuse", featureCount = 1, streamingCost = 8 },
+        },
+        {
+            chunkId = "0_0",
+            originStuds = { x = -40, y = 0, z = 0 },
+            subplan = { id = "roads", layer = "roads", featureCount = 1, streamingCost = 12 },
+        },
+        {
+            chunkId = "1_0",
+            originStuds = { x = 20, y = 0, z = 0 },
+            subplan = { id = "landuse", layer = "landuse", featureCount = 1, streamingCost = 8 },
+        },
+        {
+            chunkId = "1_0",
+            originStuds = { x = 20, y = 0, z = 0 },
+            subplan = { id = "roads", layer = "roads", featureCount = 1, streamingCost = 12 },
+        },
+        {
+            chunkId = "2_0",
+            originStuds = { x = 200, y = 0, z = 0 },
+        },
+    }
+    ChunkPriority.SortWorkItems(crossChunkBandItems, Vector3.new(0, 0, 0), chunkSizeStuds, Vector3.new(1, 0, 0), nil)
+    Assert.equal(
+        table.concat({
+            crossChunkBandItems[1].subplan
+                    and (crossChunkBandItems[1].chunkId .. ":" .. crossChunkBandItems[1].subplan.id)
+                or ("chunk:" .. crossChunkBandItems[1].chunkId),
+            crossChunkBandItems[2].subplan
+                    and (crossChunkBandItems[2].chunkId .. ":" .. crossChunkBandItems[2].subplan.id)
+                or ("chunk:" .. crossChunkBandItems[2].chunkId),
+            crossChunkBandItems[3].subplan
+                    and (crossChunkBandItems[3].chunkId .. ":" .. crossChunkBandItems[3].subplan.id)
+                or ("chunk:" .. crossChunkBandItems[3].chunkId),
+            crossChunkBandItems[4].subplan
+                    and (crossChunkBandItems[4].chunkId .. ":" .. crossChunkBandItems[4].subplan.id)
+                or ("chunk:" .. crossChunkBandItems[4].chunkId),
+            crossChunkBandItems[5].subplan
+                    and (crossChunkBandItems[5].chunkId .. ":" .. crossChunkBandItems[5].subplan.id)
+                or ("chunk:" .. crossChunkBandItems[5].chunkId),
+        }, ","),
+        "1_0:landuse,1_0:roads,0_0:landuse,0_0:roads,chunk:2_0",
+        "expected forward same-band subplans to outrank nearer same-band work before whole-chunk fallback"
     )
 end

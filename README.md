@@ -59,7 +59,26 @@ For a stable Austin export outside `roblox/out`, use:
 bash scripts/build_austin_max_fidelity_place.sh
 ```
 
-That runs the Austin export with `--yolo` (`terrain_cell_size=1`, satellite on), writes a timestamped local artifact under [`exports/`](/Users/adpena/Projects/arnis-roblox/exports), and refreshes the stable local copy at `exports/austin-max-fidelity-latest.rbxlx`.
+That runs the Austin export on the standard non-`--yolo` path (no satellite classification), writes a timestamped local artifact under [`exports/`](/Users/adpena/Projects/arnis-roblox/exports), and refreshes the stable local copy at `exports/austin-max-fidelity-latest.rbxlx`.
+
+Canonical Austin baseline inputs and commands:
+
+```bash
+# 1. Rebuild the Austin manifest and clean place artifact
+bash scripts/build_austin_max_fidelity_place.sh
+
+# Equivalent compile step inside the wrapper
+cd rust
+cargo run --bin arbx_cli -- compile \
+  --source data/austin_overpass.json \
+  --bbox 30.245,-97.765,30.305,-97.715 \
+  --out out/austin-manifest.json
+
+# Resulting stable local place artifact
+../exports/austin-max-fidelity-latest.rbxlx
+```
+
+Treat `exports/austin-max-fidelity-latest.rbxlx` as the baseline Austin fixture for local fidelity checks until a newer run intentionally replaces it.
 
 For an end-to-end Studio validation pass against that exported place, use:
 
@@ -218,12 +237,16 @@ EnableAtmosphere = true,           -- Bloom, SunRays, ColorCorrection
 EnableDayNightCycle = true,        -- animated time of day
 EnableMinimap = true,              -- live map overlay
 EnableAmbientLife = true,          -- parked cars + pedestrian NPCs
+StreamingProfile = "local_dev",    -- "local_dev" or "production_server"
 DateTime = "auto",                 -- "auto" or "2024-06-15T18:30"
 InstanceBudget = {
     MaxPerChunk = 8000,
     MaxWindowsPerChunk = 10000,
 },
 ```
+
+`StreamingProfile = "local_dev"` keeps Studio/runtime startup conservative for local testing. Switch to
+`"production_server"` when you want the wider server-oriented streaming radius and work budget.
 
 ## CLI Reference
 

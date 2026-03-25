@@ -30,6 +30,7 @@ AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME = "AustinPreviewManifestIndex"
 AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME = "AustinPreviewManifestChunks"
 AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR = "VertigoSyncTimeTravelEpoch"
 AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR = "VertigoSyncPreviewInvalidationEpoch"
+AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR = "VertigoSyncPreviewStateEpoch"
 
 local previewPerfState = {}
 local previewPerfLastFlushAt = 0
@@ -39,6 +40,7 @@ local observedChunkCostById = {}
 local semanticFingerprintCacheByHandle = setmetatable({}, { __mode = "k" })
 local getPreviewRoot
 local deferredPreviewInvalidationEpoch = nil
+local deferredPreviewStateEpoch = nil
 
 local function getPreviewSubplanRollout()
     return SubplanRollout.Describe(DefaultWorldConfig)
@@ -220,10 +222,7 @@ end
 
 local function shouldCancelBuild(buildToken)
     local worldRoot = getPreviewRoot()
-    if
-        not worldRoot
-        or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-    then
+    if not worldRoot or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
         return true
     end
     return false
@@ -243,13 +242,9 @@ local function loadManifestSource()
         end
 
         local fullOk, fullManifest = pcall(function()
-            return ManifestLoader.LoadNamedShardedSampleHandle(
-                AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME,
-                nil,
-                {
-                    freshRequire = timeTravelActive,
-                }
-            )
+            return ManifestLoader.LoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME, nil, {
+                freshRequire = timeTravelActive,
+            })
         end)
         if fullOk then
             if not timeTravelActive then
@@ -331,25 +326,19 @@ local function recordSlowChunkSample(phaseName, sample)
         SlowChunkRoadSurfaceRoads = tonumber(sample.roadSurfaceRoadCount) or 0,
         SlowChunkRoadSurfaceVertices = tonumber(sample.roadSurfaceVertexCount) or 0,
         SlowChunkRoadSurfaceTriangles = tonumber(sample.roadSurfaceTriangleCount) or 0,
-        SlowChunkRoadSurfaceMeshCreateMs = math.floor(
-            (tonumber(sample.roadSurfaceMeshCreateMs) or 0) + 0.5
-        ),
+        SlowChunkRoadSurfaceMeshCreateMs = math.floor((tonumber(sample.roadSurfaceMeshCreateMs) or 0) + 0.5),
         SlowChunkRoadImprintMs = math.floor((tonumber(sample.roadImprintMs) or 0) + 0.5),
         SlowChunkBuildingsMs = math.floor((tonumber(sample.buildingsMs) or 0) + 0.5),
         SlowChunkBuildingMeshes = tonumber(sample.buildingMeshPartCount) or 0,
         SlowChunkBuildingRoofMeshes = tonumber(sample.buildingRoofMeshPartCount) or 0,
         SlowChunkBuildingVertices = tonumber(sample.buildingMeshVertexCount) or 0,
         SlowChunkBuildingTriangles = tonumber(sample.buildingMeshTriangleCount) or 0,
-        SlowChunkBuildingMeshCreateMs = math.floor(
-            (tonumber(sample.buildingMeshCreateMs) or 0) + 0.5
-        ),
+        SlowChunkBuildingMeshCreateMs = math.floor((tonumber(sample.buildingMeshCreateMs) or 0) + 0.5),
         SlowChunkTerrainMs = math.floor((tonumber(sample.terrainMs) or 0) + 0.5),
         SlowChunkLanduseMs = math.floor((tonumber(sample.landuseMs) or 0) + 0.5),
         SlowChunkLandusePlanMs = math.floor((tonumber(sample.landusePlanMs) or 0) + 0.5),
         SlowChunkLanduseExecuteMs = math.floor((tonumber(sample.landuseExecuteMs) or 0) + 0.5),
-        SlowChunkLanduseTerrainFillMs = math.floor(
-            (tonumber(sample.landuseTerrainFillMs) or 0) + 0.5
-        ),
+        SlowChunkLanduseTerrainFillMs = math.floor((tonumber(sample.landuseTerrainFillMs) or 0) + 0.5),
         SlowChunkLanduseDetailMs = math.floor((tonumber(sample.landuseDetailMs) or 0) + 0.5),
         SlowChunkLanduseCells = tonumber(sample.landuseCellCount) or 0,
         SlowChunkLanduseRects = tonumber(sample.landuseRectCount) or 0,
@@ -430,8 +419,7 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR)
         return
     end
 
-    local currentTimeTravelEpoch =
-        Workspace:GetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR)
+    local currentTimeTravelEpoch = Workspace:GetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR)
     worldRoot:SetAttribute("VertigoPreviewDeferredTimeTravelEpoch", currentTimeTravelEpoch)
     if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
         logPreview("time-travel epoch deferred", {
@@ -441,26 +429,37 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR)
     end
 end)
 
-Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
-    :Connect(function()
-        local worldRoot = getPreviewRoot()
-        deferredPreviewInvalidationEpoch =
-            Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
-        if not worldRoot then
-            return
-        end
+Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR):Connect(function()
+    local worldRoot = getPreviewRoot()
+    deferredPreviewInvalidationEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
+    if not worldRoot then
+        return
+    end
 
-        worldRoot:SetAttribute(
-            "VertigoPreviewDeferredInvalidationEpoch",
-            deferredPreviewInvalidationEpoch
-        )
-        if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
-            logPreview("preview invalidation deferred", {
-                buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
-                deferredEpoch = deferredPreviewInvalidationEpoch,
-            })
-        end
-    end)
+    worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", deferredPreviewInvalidationEpoch)
+    if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
+        logPreview("preview invalidation deferred", {
+            buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
+            deferredEpoch = deferredPreviewInvalidationEpoch,
+        })
+    end
+end)
+
+Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR):Connect(function()
+    local worldRoot = getPreviewRoot()
+    deferredPreviewStateEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR)
+    if not worldRoot then
+        return
+    end
+
+    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
+    if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
+        logPreview("preview state deferred", {
+            buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
+            deferredEpoch = deferredPreviewStateEpoch,
+        })
+    end
+end)
 
 local function ensurePreviewRoot()
     local worldRoot = getPreviewRoot()
@@ -469,10 +468,8 @@ local function ensurePreviewRoot()
         worldRoot.Name = AustinPreviewBuilder.WORLD_ROOT_NAME
         worldRoot.Parent = Workspace
     end
-    worldRoot:SetAttribute(
-        "VertigoPreviewDeferredInvalidationEpoch",
-        deferredPreviewInvalidationEpoch
-    )
+    worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", deferredPreviewInvalidationEpoch)
+    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
 
     return worldRoot
 end
@@ -585,8 +582,7 @@ local function getPreviewBounds(manifestSource, chunkIds)
 end
 
 local function addPreviewBeacon(parent, manifestSource, chunkIds, focusPoint)
-    focusPoint = focusPoint
-        or AustinSpawn.resolveAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS).focusPoint
+    focusPoint = focusPoint or AustinSpawn.resolveAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS).focusPoint
     local bounds = getPreviewBounds(manifestSource, chunkIds)
     local groundY = bounds and bounds.minY or focusPoint.Y
     local planeInset = 48
@@ -719,12 +715,7 @@ local function appendPreviewWorkItems(workItems, chunkRef, chunk, expectedFinger
     return true
 end
 
-local function reconcilePreviewChunkState(
-    chunkId,
-    existingChunkFolder,
-    existingFingerprint,
-    expectedFingerprint
-)
+local function reconcilePreviewChunkState(chunkId, existingChunkFolder, existingFingerprint, expectedFingerprint)
     if type(chunkId) ~= "string" or chunkId == "" then
         return
     end
@@ -780,9 +771,7 @@ local function syncChunkBatch(
                 buildToken = buildToken,
                 currentToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
                 buildEpoch = buildEpoch,
-                currentEpoch = Workspace:GetAttribute(
-                    AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR
-                ),
+                currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR),
             })
             updatePreviewPerf({
                 SyncActive = false,
@@ -797,14 +786,8 @@ local function syncChunkBatch(
         local existingFingerprint = existingChunkFolder
             and existingChunkFolder:GetAttribute(AustinPreviewBuilder.CHUNK_FINGERPRINT_ATTR)
         local chunkRef = if type(chunkRefById) == "table" then chunkRefById[chunkId] else nil
-        local forceAllSubplans = existingChunkFolder == nil
-            or existingFingerprint ~= expectedFingerprint
-        reconcilePreviewChunkState(
-            chunkId,
-            existingChunkFolder,
-            existingFingerprint,
-            expectedFingerprint
-        )
+        local forceAllSubplans = existingChunkFolder == nil or existingFingerprint ~= expectedFingerprint
+        reconcilePreviewChunkState(chunkId, existingChunkFolder, existingFingerprint, expectedFingerprint)
         local pendingSubplans = if chunkRef
             then getPendingPreviewSubplans(chunkRef, {
                 forceAll = forceAllSubplans,
@@ -834,18 +817,13 @@ local function syncChunkBatch(
             }, false)
             task.wait()
             worldRoot = getPreviewRoot()
-            if
-                not worldRoot
-                or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-            then
+            if not worldRoot or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
                 logPreview("sync cancelled", {
                     reason = "yield-state-changed",
                     phase = phaseName,
                     buildToken = buildToken,
                     buildEpoch = buildEpoch,
-                    currentEpoch = Workspace:GetAttribute(
-                        AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR
-                    ),
+                    currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR),
                 })
                 updatePreviewPerf({
                     SyncActive = false,
@@ -864,13 +842,7 @@ local function syncChunkBatch(
                 and typeof(focusPoint) == "Vector3"
             then lookTarget - focusPoint
             else nil
-        ChunkPriority.SortWorkItems(
-            workItems,
-            focusPoint,
-            chunkSize,
-            forwardVector,
-            observedChunkCostById
-        )
+        ChunkPriority.SortWorkItems(workItems, focusPoint, chunkSize, forwardVector, observedChunkCostById)
     end
 
     for _, workItem in ipairs(workItems) do
@@ -912,9 +884,7 @@ local function syncChunkBatch(
                 chunkId = workItem.chunkId,
                 buildToken = buildToken,
                 buildEpoch = buildEpoch,
-                currentEpoch = Workspace:GetAttribute(
-                    AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR
-                ),
+                currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR),
             })
             updatePreviewPerf({
                 SyncActive = false,
@@ -932,14 +902,9 @@ local function syncChunkBatch(
             observedChunkCostById[workItem.chunkId] = previous * 0.7 + elapsedMs * 0.3
         end
 
-        remainingWorkItemsByChunkId[workItem.chunkId] = (
-            remainingWorkItemsByChunkId[workItem.chunkId] or 1
-        ) - 1
+        remainingWorkItemsByChunkId[workItem.chunkId] = (remainingWorkItemsByChunkId[workItem.chunkId] or 1) - 1
         if remainingWorkItemsByChunkId[workItem.chunkId] <= 0 then
-            chunkFolder:SetAttribute(
-                AustinPreviewBuilder.CHUNK_FINGERPRINT_ATTR,
-                workItem.expectedFingerprint
-            )
+            chunkFolder:SetAttribute(AustinPreviewBuilder.CHUNK_FINGERPRINT_ATTR, workItem.expectedFingerprint)
             counters.imported += 1
         end
 
@@ -954,19 +919,14 @@ local function syncChunkBatch(
         }, false)
         task.wait()
         worldRoot = getPreviewRoot()
-        if
-            not worldRoot
-            or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-        then
+        if not worldRoot or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
             logPreview("sync cancelled", {
                 reason = "post-import-state-changed",
                 phase = phaseName,
                 chunkId = workItem.chunkId,
                 buildToken = buildToken,
                 buildEpoch = buildEpoch,
-                currentEpoch = Workspace:GetAttribute(
-                    AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR
-                ),
+                currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR),
             })
             updatePreviewPerf({
                 SyncActive = false,
@@ -981,23 +941,13 @@ local function syncChunkBatch(
     return true
 end
 
-local function syncPreviewChunks(
-    manifestSource,
-    focusPoint,
-    buildToken,
-    timings,
-    desiredChunkIds,
-    lookTarget
-)
+local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings, desiredChunkIds, lookTarget)
     timings = timings or {}
     local syncStartedAt = os.clock()
     local previewSubplanRollout = getPreviewSubplanRollout()
     if not desiredChunkIds then
         desiredChunkIds = measureMs(timings, "radiusMs", function()
-            return manifestSource:GetChunkIdsWithinRadius(
-                focusPoint,
-                AustinPreviewBuilder.LOAD_RADIUS
-            )
+            return manifestSource:GetChunkIdsWithinRadius(focusPoint, AustinPreviewBuilder.LOAD_RADIUS)
         end)
     end
     local distanceByChunkId = measureMs(timings, "distanceMs", function()
@@ -1006,9 +956,7 @@ local function syncPreviewChunks(
     local chunkRefById = buildChunkRefById(manifestSource)
     measureMs(timings, "sortMs", function()
         local chunkSize = manifestSource.meta and manifestSource.meta.chunkSizeStuds or 256
-        local forwardVector = if typeof(lookTarget) == "Vector3"
-            then lookTarget - focusPoint
-            else nil
+        local forwardVector = if typeof(lookTarget) == "Vector3" then lookTarget - focusPoint else nil
         ChunkPriority.SortChunkIdsByPriority(
             desiredChunkIds,
             chunkRefById,
@@ -1019,14 +967,10 @@ local function syncPreviewChunks(
         )
     end)
     local splitStartedAt = os.clock()
-    local foregroundChunkIds, backgroundChunkIds = splitChunkIdsByRadius(
-        desiredChunkIds,
-        distanceByChunkId,
-        AustinPreviewBuilder.FOREGROUND_LOAD_RADIUS
-    )
+    local foregroundChunkIds, backgroundChunkIds =
+        splitChunkIdsByRadius(desiredChunkIds, distanceByChunkId, AustinPreviewBuilder.FOREGROUND_LOAD_RADIUS)
     timings.splitMs = (os.clock() - splitStartedAt) * 1000
-    local startupChunkIds =
-        table.create(math.min(#foregroundChunkIds, AustinPreviewBuilder.STARTUP_CHUNK_COUNT))
+    local startupChunkIds = table.create(math.min(#foregroundChunkIds, AustinPreviewBuilder.STARTUP_CHUNK_COUNT))
     local deferredForegroundChunkIds =
         table.create(math.max(#foregroundChunkIds - AustinPreviewBuilder.STARTUP_CHUNK_COUNT, 0))
     local desiredChunkSet = {}
@@ -1079,10 +1023,7 @@ local function syncPreviewChunks(
 
     local worldRoot = getPreviewRoot()
     local buildEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
-    if
-        not worldRoot
-        or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-    then
+    if not worldRoot or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
         updatePreviewPerf({
             SyncActive = false,
             SyncState = "cancelled",
@@ -1145,10 +1086,7 @@ local function syncPreviewChunks(
             counters.yields += 1
             task.wait()
             worldRoot = getPreviewRoot()
-            if
-                not worldRoot
-                or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-            then
+            if not worldRoot or worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
                 timings.pruneMs = (os.clock() - pruneStartedAt) * 1000
                 updatePreviewPerf({
                     SyncActive = false,
@@ -1207,8 +1145,7 @@ local function syncPreviewChunks(
     end
 
     local syncElapsedMs = (os.clock() - syncStartedAt) * 1000
-    local currentInvalidationEpoch =
-        Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
+    local currentInvalidationEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
     local avgMs = Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "AvgMs") or 0
     local maxMs = Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "MaxMs") or 0
     local samples = Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "Samples") or 0
@@ -1275,6 +1212,7 @@ function AustinPreviewBuilder.Clear()
     cachedFullManifestHandle = nil
     cachedFullManifestHash = nil
     deferredPreviewInvalidationEpoch = nil
+    deferredPreviewStateEpoch = nil
     table.clear(observedChunkCostById)
     table.clear(semanticFingerprintCacheByHandle)
     ImportService.ResetSubplanState()
@@ -1298,6 +1236,7 @@ function AustinPreviewBuilder.Build()
     worldRoot:SetAttribute("VertigoPreviewBuildEpoch", buildEpoch)
     worldRoot:SetAttribute("VertigoPreviewHardPause", hardPause)
     worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", nil)
+    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
     worldRoot:SetAttribute("VertigoPreviewDeferredTimeTravelEpoch", nil)
     if deferredPreviewInvalidationEpoch == buildEpoch then
         deferredPreviewInvalidationEpoch = nil
@@ -1327,10 +1266,7 @@ function AustinPreviewBuilder.Build()
 
     task.spawn(function()
         local liveWorldRoot = getPreviewRoot()
-        if
-            not liveWorldRoot
-            or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-        then
+        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
             return
         end
 
@@ -1339,10 +1275,7 @@ function AustinPreviewBuilder.Build()
             return loadManifestSource()
         end)
         liveWorldRoot = getPreviewRoot()
-        if
-            not liveWorldRoot
-            or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-        then
+        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
             return
         end
 
@@ -1361,36 +1294,22 @@ function AustinPreviewBuilder.Build()
             spawnZ = math.round(spawnPoint.Z),
         })
         local previewChunkIds = measureMs(buildTimings, "radiusMs", function()
-            return manifestSource:GetChunkIdsWithinRadius(
-                focusPoint,
-                AustinPreviewBuilder.LOAD_RADIUS
-            )
+            return manifestSource:GetChunkIdsWithinRadius(focusPoint, AustinPreviewBuilder.LOAD_RADIUS)
         end)
         if hardPause then
             manifestSource = ManifestLoader.FreezeHandleForChunkIds(manifestSource, previewChunkIds)
         end
 
         liveWorldRoot = getPreviewRoot()
-        if
-            not liveWorldRoot
-            or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken
-        then
+        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
             return
         end
 
         addPreviewBeacon(liveWorldRoot, manifestSource, previewChunkIds, focusPoint)
-        syncPreviewChunks(
-            manifestSource,
-            focusPoint,
-            buildToken,
-            buildTimings,
-            previewChunkIds,
-            anchor.lookTarget
-        )
+        syncPreviewChunks(manifestSource, focusPoint, buildToken, buildTimings, previewChunkIds, anchor.lookTarget)
 
         local latestRoot = getPreviewRoot()
-        local currentEpoch =
-            Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
+        local currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
         if
             latestRoot
             and latestRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) == buildToken

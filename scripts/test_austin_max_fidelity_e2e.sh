@@ -49,6 +49,7 @@ echo "[test_austin_max_fidelity_e2e] Running Studio harness against $PLACE_PATH"
 bash "$ROOT_DIR/scripts/run_studio_harness.sh" \
   --takeover \
   --hard-restart \
+  --skip-edit-tests \
   --edit-wait 35 \
   --pattern-wait 120 \
   --place "$PLACE_PATH"

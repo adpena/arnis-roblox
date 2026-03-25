@@ -436,6 +436,35 @@ def _build_source_usage_diagnostics(
     return diagnostics, top_mismatch_types[:HOTSPOT_LIMIT]
 
 
+def _manifest_water_signal(kind: Any) -> str:
+    normalized_kind = str(kind or "").strip()
+    if normalized_kind in {"pool", "swimming_pool"}:
+        return "leisure:swimming_pool"
+    if normalized_kind == "fountain":
+        return "amenity:fountain"
+    if normalized_kind in {"river", "stream", "canal", "ditch", "drain"}:
+        return f"waterway:{normalized_kind}"
+    if normalized_kind in {"lake", "pond", "reservoir", "basin", "water"}:
+        return "natural:water"
+    return "unknown"
+
+
+def _manifest_water_geometry_type(water: dict[str, Any]) -> str:
+    if isinstance(water.get("footprint"), list) and len(water.get("footprint") or []) >= 3:
+        return "polygon"
+    if isinstance(water.get("points"), list) and len(water.get("points") or []) >= 2:
+        return "ribbon"
+    return "unknown"
+
+
+def _water_geometry_type_for_signal(signal: str) -> str:
+    if signal in {"waterway:river", "waterway:stream", "waterway:canal", "waterway:ditch", "waterway:drain"}:
+        return "ribbon"
+    if signal in {"amenity:fountain", "leisure:swimming_pool", "natural:water"}:
+        return "polygon"
+    return "unknown"
+
+
 def _top_hotspots(items: list[dict[str, Any]], key: str, limit: int = HOTSPOT_LIMIT) -> list[dict[str, Any]]:
     ranked = sorted(
         items,
@@ -1922,6 +1951,8 @@ def build_report(
     water_kind_distribution: Counter[str | None] = Counter()
     water_kind_distribution_by_type: dict[str, Counter[str]] = {}
     water_kind_distribution_by_source_type: dict[str, Counter[str]] = {}
+    manifest_water_signal_distribution: Counter[str] = Counter()
+    manifest_water_geometry_type_distribution: Counter[str] = Counter()
 
     building_count = 0
     manifest_osm_building_count = 0
@@ -1943,6 +1974,7 @@ def build_report(
     suspicious_material_assignments: list[dict[str, Any]] = []
     suspicious_material_assignment_by_signal: Counter[str] = Counter()
     glass_material_by_usage: Counter[str | None] = Counter()
+    manifest_water_records: list[dict[str, Any]] = []
     manifest_building_records: list[dict[str, Any]] = []
     global_manifest_record_ids: set[str] = set()
     chunk_rows: list[dict[str, Any]] = []
@@ -2158,6 +2190,10 @@ def build_report(
             chunk_water_count += 1
             water_kind = str(water.get("kind"))
             water_kind_distribution[water_kind] += 1
+            manifest_water_signal = _manifest_water_signal(water.get("kind"))
+            manifest_water_geometry_type = _manifest_water_geometry_type(water)
+            manifest_water_signal_distribution[manifest_water_signal] += 1
+            manifest_water_geometry_type_distribution[manifest_water_geometry_type] += 1
             _increment_nested_distribution(
                 water_kind_distribution_by_type,
                 water.get("type") or "ribbon",
@@ -2170,6 +2206,15 @@ def build_report(
             elif water_id.startswith("ov_"):
                 source_type = "overture"
             _increment_nested_distribution(water_kind_distribution_by_source_type, source_type, water_kind)
+            manifest_water_records.append(
+                {
+                    "id": water_id,
+                    "kind": water_kind,
+                    "geometry_type": manifest_water_geometry_type,
+                    "source_signal": manifest_water_signal,
+                    "chunk_id": chunk_id,
+                }
+            )
 
         chunk_rows.append(
             {
@@ -2476,6 +2521,47 @@ def build_report(
         for record in source_identity_transform_records
         for reason in (record.get("identity_reasons") or [])
     )
+    source_water_signal_distribution = Counter(
+        (source_summary.get("osm") or {}).get("source_water_signal_distribution") or {}
+    )
+    source_water_geometry_type_distribution: Counter[str] = Counter()
+    for source_signal, count in source_water_signal_distribution.items():
+        source_water_geometry_type_distribution[_water_geometry_type_for_signal(str(source_signal))] += int(count)
+    water_signal_mismatches: list[dict[str, Any]] = []
+    water_signal_mismatch_count = 0
+    for source_signal in sorted(
+        set(source_water_signal_distribution) | set(manifest_water_signal_distribution),
+        key=lambda signal: (
+            -abs(int(source_water_signal_distribution.get(signal, 0)) - int(manifest_water_signal_distribution.get(signal, 0))),
+            signal,
+        ),
+    ):
+        source_count = int(source_water_signal_distribution.get(source_signal, 0))
+        manifest_count = int(manifest_water_signal_distribution.get(source_signal, 0))
+        if source_count == manifest_count:
+            continue
+        water_signal_mismatches.append(
+            {
+                "source_water_signal": source_signal,
+                "source_count": source_count,
+                "manifest_count": manifest_count,
+            }
+        )
+        water_signal_mismatch_count += abs(source_count - manifest_count)
+    water_geometry_mismatch_records: list[dict[str, Any]] = []
+    for water_record in manifest_water_records:
+        source_signal = str(water_record.get("source_signal") or "unknown")
+        expected_geometry_type = _water_geometry_type_for_signal(source_signal)
+        if expected_geometry_type == "unknown":
+            continue
+        if str(water_record.get("geometry_type") or "unknown") == expected_geometry_type:
+            continue
+        water_geometry_mismatch_records.append(
+            {
+                **water_record,
+                "expected_geometry_type": expected_geometry_type,
+            }
+        )
     source_usage_diagnostics, source_usage_diagnostics_top_mismatch_types = _build_source_usage_diagnostics(
         canonical_source_buildings,
         source_usage_mismatches,
@@ -2659,9 +2745,24 @@ def build_report(
             key: dict(counter.most_common(20))
             for key, counter in sorted(water_kind_distribution_by_source_type.items())
         },
-        "source_water_signal_distribution": dict(
-            Counter((source_summary.get("osm") or {}).get("source_water_signal_distribution") or {}).most_common(20)
+        "manifest_water_signal_distribution": dict(manifest_water_signal_distribution.most_common(20)),
+        "manifest_water_geometry_type_distribution": dict(
+            manifest_water_geometry_type_distribution.most_common(20)
         ),
+        "source_water_signal_distribution": dict(
+            source_water_signal_distribution.most_common(20)
+        ),
+        "source_water_geometry_type_distribution": dict(
+            source_water_geometry_type_distribution.most_common(20)
+        ),
+        "water_signal_mismatch_count": water_signal_mismatch_count,
+        "water_signal_mismatches": water_signal_mismatches[:HOTSPOT_LIMIT],
+        "water_geometry_mismatch_count": len(water_geometry_mismatch_records),
+        "water_geometry_mismatch_records": water_geometry_mismatch_records[:HOTSPOT_LIMIT],
+        "water_signal_mismatch_rows": water_signal_mismatches[:HOTSPOT_LIMIT],
+        "water_geometry_mismatch_rows": water_geometry_mismatch_records[:HOTSPOT_LIMIT],
+        "water_signal_drift_count": water_signal_mismatch_count,
+        "water_geometry_drift_count": len(water_geometry_mismatch_records),
         "source_highway_signal_distribution": dict(
             Counter((source_summary.get("osm") or {}).get("source_highway_signal_distribution") or {}).most_common(20)
         ),
@@ -2880,6 +2981,26 @@ def build_report(
             value=len(source_material_mismatches),
             threshold="== 0",
         )
+    if water_signal_mismatches:
+        _add_finding(
+            findings,
+            severity="warning",
+            code="source_to_manifest_water_signal_drift",
+            message="Manifest water signals diverged from the source water signal mix; check fountain, pool, river, and stream classification.",
+            metric="water_signal_mismatch_count",
+            value=water_signal_mismatch_count,
+            threshold="== 0",
+        )
+    if water_geometry_mismatch_records:
+        _add_finding(
+            findings,
+            severity="warning",
+            code="source_to_manifest_water_geometry_drift",
+            message="Manifest water geometry does not match the expected source-aligned shape for one or more water features.",
+            metric="water_geometry_mismatch_count",
+            value=len(water_geometry_mismatch_records),
+            threshold="== 0",
+        )
     if source_identity_loss_records:
         _add_finding(
             findings,
@@ -3045,6 +3166,14 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
     initial_distribution_items.extend(
         render_distribution_item("manifest water", str(key), value)
         for key, value in list((summary.get("water_kind_distribution") or {}).items())[:8]
+    )
+    initial_distribution_items.extend(
+        render_distribution_item("manifest water signal", str(key), value)
+        for key, value in list((summary.get("manifest_water_signal_distribution") or {}).items())[:8]
+    )
+    initial_distribution_items.extend(
+        render_distribution_item("manifest water geometry", str(key), value)
+        for key, value in list((summary.get("manifest_water_geometry_type_distribution") or {}).items())[:8]
     )
     initial_distribution_items.extend(
         render_distribution_item("source water", str(key), value)
@@ -3429,9 +3558,12 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
       const usage = Object.entries(report.summary.usage_distribution || {{}}).slice(0, 5);
       const material = Object.entries(report.summary.building_material_distribution || {{}}).slice(0, 5);
       const waterKinds = Object.entries(report.summary.water_kind_distribution || {{}}).slice(0, 8);
+      const manifestWaterSignals = Object.entries(report.summary.manifest_water_signal_distribution || {{}}).slice(0, 8);
+      const manifestWaterGeometry = Object.entries(report.summary.manifest_water_geometry_type_distribution || {{}}).slice(0, 8);
       const waterByType = Object.entries(report.summary.water_kind_distribution_by_type || {{}}).slice(0, 4);
       const waterBySource = Object.entries(report.summary.water_kind_distribution_by_source_type || {{}}).slice(0, 4);
       const sourceWaterSignals = Object.entries(report.summary.source_water_signal_distribution || {{}}).slice(0, 8);
+      const sourceWaterGeometry = Object.entries(report.summary.source_water_geometry_type_distribution || {{}}).slice(0, 8);
       const sourceHighwaySignals = Object.entries(report.summary.source_highway_signal_distribution || {{}}).slice(0, 8);
       const sourcePedestrianSignals = Object.entries(report.summary.source_pedestrian_signal_distribution || {{}}).slice(0, 8);
       const sourceVegetationSignals = Object.entries(report.summary.source_vegetation_signal_distribution || {{}}).slice(0, 8);
@@ -3465,9 +3597,12 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
         ...usage.map(([key, value]) => `<li><span>usage · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...material.map(([key, value]) => `<li><span>material · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...waterKinds.map(([key, value]) => `<li><span>manifest water · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
+        ...manifestWaterSignals.map(([key, value]) => `<li><span>manifest water signal · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
+        ...manifestWaterGeometry.map(([key, value]) => `<li><span>manifest water geometry · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...waterByType.flatMap(([key, value]) => Object.entries(value || {{}}).slice(0, 2).map(([waterKey, count]) => `<li><span>water by type · <code>${{key}} / ${{waterKey}}</code></span><span>${{fmtInt.format(count)}}</span></li>`)),
         ...waterBySource.flatMap(([key, value]) => Object.entries(value || {{}}).slice(0, 2).map(([waterKey, count]) => `<li><span>water by source · <code>${{key}} / ${{waterKey}}</code></span><span>${{fmtInt.format(count)}}</span></li>`)),
         ...sourceWaterSignals.map(([key, value]) => `<li><span>source water · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
+        ...sourceWaterGeometry.map(([key, value]) => `<li><span>source water geometry · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
       ];
       document.getElementById("distribution-list").innerHTML = lines.join("");
       document.getElementById("pedestrian-diagnostics-list").innerHTML = [

@@ -71,6 +71,7 @@ local WorldConfig = {
     -- ═══════════════════════════════════════════════════════════════
     -- STREAMING & LOD
     -- ═══════════════════════════════════════════════════════════════
+    StreamingProfile = "local_dev", -- "local_dev" | "production_server"
     StreamingEnabled = false,
     StreamingTargetRadius = 4096,
     HighDetailRadius = 2048,
@@ -81,6 +82,31 @@ local WorldConfig = {
         Enabled = true,
         AllowedLayers = {},
         AllowedChunkIds = {},
+    },
+    StreamingProfiles = {
+        local_dev = {
+            StreamingEnabled = true,
+            StreamingTargetRadius = 2048,
+            HighDetailRadius = 1024,
+            StreamingMaxWorkItemsPerUpdate = 2,
+            SubplanRollout = {
+                Enabled = true,
+                AllowedLayers = { "landuse", "roads" },
+                AllowedChunkIds = {},
+            },
+        },
+        production_server = {
+            StreamingEnabled = true,
+            StreamingTargetRadius = 6144,
+            HighDetailRadius = 3072,
+            StreamingMaxWorkItemsPerUpdate = 8,
+            StreamingImportFrameBudgetSeconds = 1 / 120,
+            SubplanRollout = {
+                Enabled = true,
+                AllowedLayers = {},
+                AllowedChunkIds = {},
+            },
+        },
     },
 
     -- ═══════════════════════════════════════════════════════════════

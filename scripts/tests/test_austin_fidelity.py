@@ -18,6 +18,8 @@ class AustinFidelityScriptTests(unittest.TestCase):
         self.assertIn('LATEST_PLACE="$EXPORT_DIR/austin-max-fidelity-latest.rbxlx"', text)
         self.assertIn('cp "$OUTPUT_PLACE" "$LATEST_PLACE"', text)
         self.assertIn('echo "[build_austin_max_fidelity_place] Refreshed stable latest copy at $LATEST_PLACE"', text)
+        self.assertIn("standard fidelity", text)
+        self.assertNotIn("--yolo", text)
 
     def test_e2e_script_accepts_report_dir_and_defaults_to_stable_latest_place(self) -> None:
         text = E2E_SCRIPT.read_text(encoding="utf-8")
@@ -29,6 +31,7 @@ class AustinFidelityScriptTests(unittest.TestCase):
         self.assertIn("PLACE_PATH_CUSTOM=1", text)
         self.assertIn('if [[ $PLACE_PATH_CUSTOM -eq 0 && ! -f "$PLACE_PATH" ]]; then', text)
         self.assertIn('export ARNIS_SCENE_AUDIT_DIR="$REPORT_DIR"', text)
+        self.assertIn('--skip-edit-tests', text)
         self.assertNotIn("--no-play", text)
         self.assertNotIn('ls -1t "$ROOT_DIR"/exports/austin-max-fidelity-*.rbxlx | head -n 1', text)
 

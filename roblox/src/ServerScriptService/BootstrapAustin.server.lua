@@ -22,6 +22,7 @@ local RunAustin = require(script.Parent.ImportService.RunAustin)
 local StreamingService = require(script.Parent.ImportService.StreamingService)
 local SubplanRollout = require(script.Parent.ImportService.SubplanRollout)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
+local StreamingRuntimeConfig = require(game:GetService("ReplicatedStorage").Shared.StreamingRuntimeConfig)
 
 if not RunService:IsStudio() then
     warn("[BootstrapAustin] Refusing to auto-import Austin outside Studio.")
@@ -116,8 +117,7 @@ local function findGroundYNear(worldRoot, point, loadingPad, spawn)
 end
 
 local function moveCharacterToSpawn(character)
-    local root = character:FindFirstChild("HumanoidRootPart")
-        or character:WaitForChild("HumanoidRootPart", 10)
+    local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
     if root and spawnCFrame then
         character:PivotTo(spawnCFrame)
     end
@@ -173,6 +173,8 @@ holdingPad.Transparency = 1
 holdingPad.Size = Vector3.new(64, 1, 64)
 holdingPad.CFrame = CFrame.new(0, 300, 0)
 holdingPad.Parent = Workspace
+
+local runtimeWorldConfig = StreamingRuntimeConfig.Resolve(WorldConfig)
 
 local result = RunAustin.run()
 if result == nil then
@@ -233,10 +235,11 @@ for _, player in ipairs(Players:GetPlayers()) do
     end
 end
 
-if WorldConfig.StreamingEnabled then
-    local rolloutDescription = SubplanRollout.Describe(WorldConfig)
+if runtimeWorldConfig.StreamingEnabled then
+    local rolloutDescription = SubplanRollout.Describe(runtimeWorldConfig)
     print(
-        ("[BootstrapAustin] Subplan rollout enabled=%s mode=%s layers=%d chunks=%d"):format(
+        ("[BootstrapAustin] Streaming profile=%s rollout enabled=%s mode=%s layers=%d chunks=%d"):format(
+            tostring(runtimeWorldConfig.StreamingProfile),
             tostring(rolloutDescription.enabled),
             tostring(rolloutDescription.mode),
             rolloutDescription.allowedLayerCount,
@@ -245,9 +248,9 @@ if WorldConfig.StreamingEnabled then
     )
     StreamingService.Start(manifestSource, {
         worldRootName = "GeneratedWorld_Austin",
-        config = WorldConfig,
+        config = runtimeWorldConfig,
         nonBlocking = true,
-        frameBudgetSeconds = WorldConfig.StreamingImportFrameBudgetSeconds,
+        frameBudgetSeconds = runtimeWorldConfig.StreamingImportFrameBudgetSeconds,
         preferredLookVector = lookTarget - Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z),
     })
     StreamingService.Update(spawnPoint)

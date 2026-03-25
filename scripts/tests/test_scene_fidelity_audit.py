@@ -410,7 +410,7 @@ class SceneFidelityAuditTests(unittest.TestCase):
             self.assertIn("vegetation_instance_count", html)
             self.assertIn("chunks_with_water_geometry", html)
             self.assertIn("Roof Coverage By Usage", html)
-            self.assertIn("Roof Coverage By Shape", html)
+            self.assertIn("Scene Roof Coverage By Shape", html)
             self.assertIn("Manifest Roof Expectations By Usage", html)
             self.assertIn("Manifest Roof Expectations By Shape", html)
             self.assertIn("Effective Building Wall Materials", html)
@@ -578,7 +578,7 @@ class SceneFidelityAuditTests(unittest.TestCase):
             self.assertIn("vegetation_instance_count", html)
             self.assertIn("chunks_with_water_geometry", html)
             self.assertIn("Roof Coverage By Usage", html)
-            self.assertIn("Roof Coverage By Shape", html)
+            self.assertIn("Scene Roof Coverage By Shape", html)
             self.assertIn("Manifest Roof Expectations By Usage", html)
             self.assertIn("Manifest Roof Expectations By Shape", html)
             self.assertIn("Water Surface Breakdown", html)
@@ -1071,6 +1071,78 @@ class SceneFidelityAuditTests(unittest.TestCase):
             codes = {finding["code"] for finding in report["findings"]}
 
             self.assertIn("shaped_roof_closure_gap", codes)
+
+    def test_roof_shape_gap_traces_direct_geometry_not_merged_only_evidence(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "manifest.json"
+            log_path = root / "studio.log"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "SceneAuditTown",
+                    "metersPerStud": 0.3,
+                    "chunkSizeStuds": 256,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "roads": [],
+                        "buildings": [{"id": "b1", "roof": "gabled"}],
+                        "water": [],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            payload = {
+                "phase": "edit",
+                "focus": {"x": 32.0, "z": 32.0},
+                "radius": 256.0,
+                "rootName": "GeneratedWorld_AustinPreview",
+                "scene": {
+                    "chunkCount": 1,
+                    "buildingModelCount": 1,
+                    "buildingModelsWithRoof": 1,
+                    "buildingModelsWithoutRoof": 0,
+                    "buildingModelsWithDirectRoof": 0,
+                    "buildingModelsWithMergedRoofOnly": 1,
+                    "buildingModelsWithNoRoofEvidence": 0,
+                    "chunksWithBuildingModels": 1,
+                    "buildingRoofCoverageByShape": {
+                        "gabled": {
+                            "buildingModelCount": 1,
+                            "withRoofCount": 1,
+                            "withoutRoofCount": 0,
+                            "directRoofCount": 0,
+                            "mergedRoofOnlyCount": 1,
+                            "noRoofEvidenceCount": 0,
+                        }
+                    },
+                },
+            }
+            log_path.write_text(
+                "ARNIS_SCENE_EDIT " + json.dumps(payload, separators=(",", ":")),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, log_path, marker="ARNIS_SCENE_EDIT")
+            roof_shape_findings = [finding for finding in report["findings"] if finding["code"] == "roof_shape_scene_gap"]
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("merged_roof_only_coverage", codes)
+            self.assertIn("roof_shape_scene_gap", codes)
+            self.assertNotIn("missing_roof_evidence", codes)
+            self.assertEqual(len(roof_shape_findings), 1)
+            self.assertIn("direct roof geometries", roof_shape_findings[0]["message"])
 
     def test_road_gap_uses_unique_source_ids_when_available(self) -> None:
         audit = load_module()

@@ -798,6 +798,159 @@ class ManifestQualityAuditTests(unittest.TestCase):
             self.assertIn("swimming_pool", html)
             self.assertIn("amenity:fountain", html)
 
+    def test_report_surfaces_water_signal_and_geometry_drift(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "fixture-manifest.json"
+            source_path = root / "fixture-overpass.json"
+            html_path = root / "report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "WaterDriftTown",
+                    "generator": "test",
+                    "source": "pipeline-export",
+                    "metersPerStud": 1.0,
+                    "chunkSizeStuds": 256,
+                    "bbox": {
+                        "minLat": 30.0,
+                        "minLon": -97.0,
+                        "maxLat": 30.01,
+                        "maxLon": -96.99,
+                    },
+                    "totalFeatures": 4,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "terrain": {
+                            "cellSizeStuds": 4,
+                            "width": 2,
+                            "depth": 2,
+                            "heights": [0, 0, 0, 0],
+                            "materials": ["Grass"] * 4,
+                            "material": "Grass",
+                        },
+                        "roads": [],
+                        "buildings": [],
+                        "water": [
+                            {
+                                "id": "river_1",
+                                "kind": "river",
+                                "type": "ribbon",
+                                "material": "Water",
+                                "points": [{"x": 0, "y": 0, "z": 0}, {"x": 16, "y": 0, "z": 0}],
+                            },
+                            {
+                                "id": "fountain_1",
+                                "kind": "fountain",
+                                "type": "ribbon",
+                                "material": "Water",
+                                "points": [{"x": 24, "y": 0, "z": 0}, {"x": 28, "y": 0, "z": 2}],
+                            },
+                            {
+                                "id": "pool_1",
+                                "kind": "swimming_pool",
+                                "type": "polygon",
+                                "material": "Water",
+                                "footprint": [
+                                    {"x": 40, "z": 0},
+                                    {"x": 50, "z": 0},
+                                    {"x": 50, "z": 8},
+                                    {"x": 40, "z": 8},
+                                ],
+                            },
+                            {
+                                "id": "pond_1",
+                                "kind": "pond",
+                                "type": "polygon",
+                                "material": "Water",
+                                "footprint": [
+                                    {"x": 60, "z": 0},
+                                    {"x": 72, "z": 0},
+                                    {"x": 72, "z": 10},
+                                    {"x": 60, "z": 10},
+                                ],
+                            },
+                        ],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            source_path.write_text(
+                json.dumps(
+                    {
+                        "generator": "Overpass API",
+                        "osm3s": {"timestamp_osm_base": "2026-03-20T02:00:19Z"},
+                        "elements": [
+                            {
+                                "type": "way",
+                                "id": 1,
+                                "nodes": [101, 102],
+                                "tags": {"waterway": "stream"},
+                            },
+                            {
+                                "type": "node",
+                                "id": 2,
+                                "lat": 30.004,
+                                "lon": -96.996,
+                                "tags": {"amenity": "fountain"},
+                            },
+                            {
+                                "type": "way",
+                                "id": 3,
+                                "nodes": [201, 202, 203, 201],
+                                "tags": {"leisure": "swimming_pool"},
+                            },
+                            {
+                                "type": "way",
+                                "id": 4,
+                                "nodes": [301, 302, 303, 301],
+                                "tags": {"natural": "water"},
+                            },
+                            {"type": "node", "id": 101, "lat": 30.001, "lon": -96.999},
+                            {"type": "node", "id": 102, "lat": 30.001, "lon": -96.998},
+                            {"type": "node", "id": 201, "lat": 30.003, "lon": -96.999},
+                            {"type": "node", "id": 202, "lat": 30.003, "lon": -96.998},
+                            {"type": "node", "id": 203, "lat": 30.004, "lon": -96.998},
+                            {"type": "node", "id": 301, "lat": 30.006, "lon": -96.999},
+                            {"type": "node", "id": 302, "lat": 30.007, "lon": -96.998},
+                            {"type": "node", "id": 303, "lat": 30.006, "lon": -96.997},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, [source_path])
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("source_to_manifest_water_signal_drift", codes)
+            self.assertIn("source_to_manifest_water_geometry_drift", codes)
+            self.assertEqual(report["summary"]["water_signal_mismatch_count"], 2)
+            self.assertEqual(report["summary"]["water_geometry_mismatch_count"], 1)
+            self.assertCountEqual(
+                [row["source_water_signal"] for row in report["summary"]["water_signal_mismatches"]],
+                ["waterway:river", "waterway:stream"],
+            )
+            self.assertEqual(report["summary"]["water_geometry_mismatch_records"][0]["kind"], "fountain")
+            self.assertEqual(report["summary"]["water_geometry_mismatch_records"][0]["expected_geometry_type"], "polygon")
+
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("source_to_manifest_water_signal_drift", html)
+            self.assertIn("source_to_manifest_water_geometry_drift", html)
+            self.assertIn("waterway:stream", html)
+            self.assertIn("fountain", html)
+
     def test_report_flags_broad_suspicious_material_usage_combinations(self) -> None:
         audit = load_module()
 

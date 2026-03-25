@@ -85,6 +85,12 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn("ensure_vsync_plugin_installed()", self.text)
         self.assertNotIn("ensure_vsync_plugin_installed || true", self.text)
 
+    def test_harness_supports_skipping_edit_mode_runall_for_acceptance_runs(self) -> None:
+        self.assertIn("--skip-edit-tests", self.text)
+        self.assertIn("RUNALL_EDIT_ENABLED=1", self.text)
+        self.assertIn("RUNALL_EDIT_ENABLED=0", self.text)
+        self.assertIn("set_runall_entry_modes \"$edit_enabled\" \"$play_enabled\"", self.text)
+
     def test_emit_scene_markers_split_large_roof_coverage_payloads(self) -> None:
         self.assertIn('print(marker .. "_SCALAR " .. HttpService:JSONEncode({', self.text)
         self.assertIn('print(marker .. "_ROOF_USAGE_BUCKET " .. HttpService:JSONEncode({', self.text)
@@ -142,6 +148,15 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('if reason == "project_bootstrap":', self.text)
         self.assertIn('if bootstrap_count > 1:', self.text)
         self.assertIn("unexpected preview rebuild reasons", self.text)
+
+    def test_preview_rebuild_validation_distinguishes_geometry_reasons(self) -> None:
+        self.assertIn("is_geometry_affecting_preview_rebuild_reason", self.text)
+        self.assertIn('reason == "project_bootstrap"', self.text)
+        self.assertIn('reason == "workspace_attribute"', self.text)
+        self.assertIn('reason.startswith("source_changed:")', self.text)
+        self.assertIn('reason.startswith("descendant_added:")', self.text)
+        self.assertIn('reason.startswith("descendant_removed:")', self.text)
+        self.assertIn("unexpected_reasons.append(reason)", self.text)
 
     def test_scene_fidelity_audits_support_configurable_output_dir(self) -> None:
         self.assertIn('local scene_audit_dir="${ARNIS_SCENE_AUDIT_DIR:-/tmp}"', self.text)

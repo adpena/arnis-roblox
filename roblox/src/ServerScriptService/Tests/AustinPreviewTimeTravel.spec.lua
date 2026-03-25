@@ -18,6 +18,7 @@ return function()
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
         Workspace:SetAttribute("VertigoSyncTimeTravelEpoch", nil)
         Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, nil)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR, nil)
         Workspace:SetAttribute("VertigoPreviewSyncState", nil)
         Workspace:SetAttribute("VertigoPreviewManifestSource", nil)
     end
@@ -91,6 +92,7 @@ return function()
         local importCalls = {}
         local cancelOnFirstImport = false
         local bumpStateOnlyEpochOnFirstImport = false
+        local bumpPreviewStateOnlyEpochOnFirstImport = false
         local manifestTag = "live"
 
         ManifestLoader.LoadNamedShardedSampleHandle = function(indexName, timeoutSeconds, options)
@@ -124,10 +126,7 @@ return function()
                 cancelOnFirstImport = false
                 Workspace:SetAttribute(
                     AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR,
-                    (
-                        Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
-                        or 0
-                    ) + 1
+                    (Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR) or 0) + 1
                 )
             end
 
@@ -136,6 +135,14 @@ return function()
                 Workspace:SetAttribute(
                     AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR,
                     (Workspace:GetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR) or 0) + 1
+                )
+            end
+
+            if bumpPreviewStateOnlyEpochOnFirstImport then
+                bumpPreviewStateOnlyEpochOnFirstImport = false
+                Workspace:SetAttribute(
+                    AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR,
+                    (Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR) or 0) + 1
                 )
             end
 
@@ -172,15 +179,8 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(
-            #loadCalls,
-            1,
-            "expected live preview to reuse cached full Austin manifest handle"
-        )
-        Assert.truthy(
-            loadCalls[1].options.freshRequire ~= true,
-            "expected live preview to avoid fresh require"
-        )
+        Assert.equal(#loadCalls, 1, "expected live preview to reuse cached full Austin manifest handle")
+        Assert.truthy(loadCalls[1].options.freshRequire ~= true, "expected live preview to avoid fresh require")
         Assert.equal(#freezeCalls, 0, "expected live preview not to freeze manifest handles")
         Assert.equal(
             loadCalls[1].handle.radiusCallCount,
@@ -203,11 +203,7 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(
-            #importCalls,
-            2,
-            "expected initial semantic preview build to import both chunks"
-        )
+        Assert.equal(#importCalls, 2, "expected initial semantic preview build to import both chunks")
 
         manifestTag = "live-b"
         Workspace:SetAttribute("VertigoSyncHash", "semantic-b")
@@ -232,11 +228,7 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(
-            #loadCalls,
-            1,
-            "expected Clear to invalidate cached full Austin manifest handle"
-        )
+        Assert.equal(#loadCalls, 1, "expected Clear to invalidate cached full Austin manifest handle")
 
         -- Hard pause should force a fresh manifest load and freeze the selected chunk set.
         clearPreviewState()
@@ -253,20 +245,9 @@ return function()
         waitForTasks(4)
 
         Assert.equal(#loadCalls, 1, "expected hard pause to reload the Austin manifest handle")
-        Assert.truthy(
-            loadCalls[1].options.freshRequire == true,
-            "expected hard pause to use fresh require"
-        )
-        Assert.equal(
-            #freezeCalls,
-            1,
-            "expected hard pause to freeze the selected Austin preview chunk set"
-        )
-        Assert.equal(
-            #freezeCalls[1].chunkIds,
-            2,
-            "expected hard pause to freeze the visible chunk ids"
-        )
+        Assert.truthy(loadCalls[1].options.freshRequire == true, "expected hard pause to use fresh require")
+        Assert.equal(#freezeCalls, 1, "expected hard pause to freeze the selected Austin preview chunk set")
+        Assert.equal(#freezeCalls[1].chunkIds, 2, "expected hard pause to freeze the visible chunk ids")
         Assert.truthy(#importCalls >= 1, "expected preview build to import frozen chunks")
         Assert.equal(
             loadCalls[1].handle.radiusCallCount,
@@ -305,11 +286,7 @@ return function()
                 end
             end
         end
-        Assert.equal(
-            liveChunkCount,
-            2,
-            "expected deferred preview invalidation to preserve imported preview chunks"
-        )
+        Assert.equal(liveChunkCount, 2, "expected deferred preview invalidation to preserve imported preview chunks")
 
         -- State-only time-travel epoch changes should not cancel the preview when the geometry invalidation epoch is stable.
         clearPreviewState()
@@ -340,11 +317,7 @@ return function()
                 end
             end
         end
-        Assert.equal(
-            liveChunkCount,
-            2,
-            "expected state-only epoch changes to preserve imported preview chunks"
-        )
+        Assert.equal(liveChunkCount, 2, "expected state-only epoch changes to preserve imported preview chunks")
 
         -- Hard-pause time-travel epoch changes should also defer cleanly instead of cancelling the visible preview.
         clearPreviewState()
@@ -381,10 +354,34 @@ return function()
             "expected hard-pause state-only epoch changes to preserve imported preview chunks"
         )
 
+        -- State-only preview epoch changes should be tracked separately so they do not bounce the
+        -- geometry rebuild path.
+        clearPreviewState()
+        loadCalls = {}
+        freezeCalls = {}
+        importCalls = {}
+        bumpPreviewStateOnlyEpochOnFirstImport = true
+
+        Workspace:SetAttribute("VertigoSyncHash", "state-epoch-hash")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 50)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 50)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR, 50)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", false)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
+        AustinPreviewBuilder.Build()
+        waitForTasks(6)
+
+        Assert.equal(#loadCalls, 1, "expected state-only preview epoch changes not to trigger a second manifest load")
+        Assert.equal(#importCalls, 2, "expected state-only preview epoch changes not to duplicate chunk imports")
+        Assert.equal(
+            Workspace:GetAttribute("VertigoPreviewDeferredStateEpoch"),
+            51,
+            "expected state-only preview epoch changes to be deferred separately from geometry invalidation"
+        )
+
         -- Integration smoke: the real full Austin handle should remain provisioned and chunked.
         clearPreviewState()
-        local realHandle =
-            originalLoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME)
+        local realHandle = originalLoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME)
         Assert.truthy(realHandle ~= nil, "expected full Austin manifest handle to load")
         Assert.truthy(
             type(realHandle.GetChunkIdsWithinRadius) == "function",

@@ -25,6 +25,7 @@ SCREENSHOT_PATH="/tmp/arnis-studio-harness.png"
 DO_RESTART=1
 DO_PLAY=1
 KEEP_RUNALL_ENABLED=0
+RUNALL_EDIT_ENABLED=1
 RUNALL_PLAY_ENABLED=0
 CLOSE_ON_EXIT=1
 ALLOW_TAKEOVER=0
@@ -332,6 +333,7 @@ Options:
   --no-restart         Reuse an already-running Studio session instead of relaunching it.
   --no-play            Do not enter Play mode after edit-mode harness completes.
   --keep-enabled       Leave RunAllEntry.server.lua enabled after the script exits.
+  --skip-edit-tests    Skip edit-mode RunAll execution and only validate preview/import behavior.
   --play-tests         Also enable RunAllEntry.server.lua during Play mode.
   --keep-open          Leave Roblox Studio open when the harness exits.
   --takeover           Allow the harness to take control of an already-running Studio session. By default this now means quit/relaunch for a clean harness-owned session.
@@ -341,7 +343,7 @@ Options:
   --help               Show this message.
 
 This script:
-  1. Temporarily enables ServerScriptService.Tests.RunAllEntry.server.lua for edit mode
+  1. Temporarily enables ServerScriptService.Tests.RunAllEntry.server.lua for edit mode unless --skip-edit-tests is set
   2. Opens Roblox Studio in a harness-owned session when takeover is allowed
   3. Opens an auto-built clean Arnis place when available, otherwise falls back to File > New
   4. Streams the latest Studio log to stdout
@@ -529,6 +531,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-enabled)
       KEEP_RUNALL_ENABLED=1
+      shift
+      ;;
+    --skip-edit-tests)
+      RUNALL_EDIT_ENABLED=0
       shift
       ;;
     --play-tests)
@@ -764,13 +770,17 @@ trap 'cleanup "$?"' EXIT
 trap 'exit 130' INT TERM
 
 enable_runall_entry() {
+  local edit_enabled="true"
   local play_enabled="false"
+  if [[ $RUNALL_EDIT_ENABLED -eq 0 ]]; then
+    edit_enabled="false"
+  fi
   if [[ $RUNALL_PLAY_ENABLED -eq 1 ]]; then
     play_enabled="true"
   fi
   RUNALL_BACKUP="$(mktemp)"
   cp "$RUNALL_ENTRY" "$RUNALL_BACKUP"
-  set_runall_entry_modes true "$play_enabled"
+  set_runall_entry_modes "$edit_enabled" "$play_enabled"
 }
 
 quit_studio() {
@@ -1485,6 +1495,19 @@ marker = "Preview rebuilt ("
 bootstrap_count = 0
 unexpected_reasons = []
 
+def is_geometry_affecting_preview_rebuild_reason(reason: str) -> bool:
+    if reason == "project_bootstrap" or reason == "workspace_attribute":
+        return True
+    if reason.startswith("queued:"):
+        return is_geometry_affecting_preview_rebuild_reason(reason.split(":", 1)[1])
+    if reason.startswith("auto_retry_"):
+        return True
+    return (
+        reason.startswith("source_changed:")
+        or reason.startswith("descendant_added:")
+        or reason.startswith("descendant_removed:")
+    )
+
 with log_path.open("r", encoding="utf-8", errors="replace") as handle:
     for raw_line in handle:
         if marker not in raw_line:
@@ -1494,7 +1517,8 @@ with log_path.open("r", encoding="utf-8", errors="replace") as handle:
         if reason == "project_bootstrap":
             bootstrap_count += 1
             continue
-        unexpected_reasons.append(reason)
+        if not is_geometry_affecting_preview_rebuild_reason(reason):
+            unexpected_reasons.append(reason)
 
 if unexpected_reasons:
     print(
@@ -1777,6 +1801,7 @@ run_edit_actions_via_mcp() {
     MCP_WALL_TIMEOUT="$mcp_wall_timeout" \
     MCP_PREFLIGHT_SESSION_STATUS="$preflight_status_for_mcp" \
     MCP_LOG_INDICATES_PLAY="$log_indicates_play_for_mcp" \
+    RUNALL_EDIT_ENABLED="$RUNALL_EDIT_ENABLED" \
     python3 - <<'PY'
 import json
 import os
@@ -1796,6 +1821,7 @@ wall_clock_timeout = max(int(os.environ.get("MCP_WALL_TIMEOUT", "120")), edit_wa
 preflight_session_status = os.environ.get("MCP_PREFLIGHT_SESSION_STATUS", "unknown")
 log_indicates_play = os.environ.get("MCP_LOG_INDICATES_PLAY", "false").strip().lower() in {"1", "true", "yes", "on"}
 scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
+run_edit_tests = os.environ.get("RUNALL_EDIT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 def on_alarm(_signum, _frame):
     raise TimeoutError(f"run_edit_actions_via_mcp timed out after {wall_clock_timeout}s")
@@ -1836,6 +1862,7 @@ local payload = {
     preview = nil,
     errors = {},
 }
+local runEditTests = """ + ("true" if run_edit_tests else "false") + """
 
 local function waitForPreviewSyncCompletion(timeoutSeconds)
     local deadline = os.clock() + timeoutSeconds
@@ -1856,23 +1883,25 @@ local function waitForPreviewSyncCompletion(timeoutSeconds)
     )
 end
 
-local testsFolder = ServerScriptService:FindFirstChild("Tests")
-if testsFolder then
-    local runAllModule = testsFolder:FindFirstChild("RunAll")
-    if runAllModule then
-        local ok, runAllResult = pcall(function()
-            return require(runAllModule).run()
-        end)
-        if ok then
-            payload.runAll = runAllResult
+if runEditTests then
+    local testsFolder = ServerScriptService:FindFirstChild("Tests")
+    if testsFolder then
+        local runAllModule = testsFolder:FindFirstChild("RunAll")
+        if runAllModule then
+            local ok, runAllResult = pcall(function()
+                return require(runAllModule).run()
+            end)
+            if ok then
+                payload.runAll = runAllResult
+            else
+                table.insert(payload.errors, "RunAll: " .. tostring(runAllResult))
+            end
         else
-            table.insert(payload.errors, "RunAll: " .. tostring(runAllResult))
+            table.insert(payload.errors, "RunAll module missing")
         end
     else
-        table.insert(payload.errors, "RunAll module missing")
+        table.insert(payload.errors, "Tests folder missing")
     end
-else
-    table.insert(payload.errors, "Tests folder missing")
 end
 
 local previewFolder = ServerScriptService:FindFirstChild("StudioPreview")

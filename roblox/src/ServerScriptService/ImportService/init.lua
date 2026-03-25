@@ -356,11 +356,7 @@ local function getFeaturePoint2(feature)
     end
 
     local position = feature.position
-    if
-        type(position) == "table"
-        and type(position.x) == "number"
-        and type(position.z) == "number"
-    then
+    if type(position) == "table" and type(position.x) == "number" and type(position.z) == "number" then
         return position.x, position.z
     end
 
@@ -378,12 +374,7 @@ local function getFeaturePoint2(feature)
                 maxZ = math.max(maxZ, z)
             end
         end
-        if
-            minX ~= math.huge
-            and minZ ~= math.huge
-            and maxX ~= -math.huge
-            and maxZ ~= -math.huge
-        then
+        if minX ~= math.huge and minZ ~= math.huge and maxX ~= -math.huge and maxZ ~= -math.huge then
             return (minX + maxX) * 0.5, (minZ + maxZ) * 0.5
         end
     end
@@ -402,12 +393,7 @@ local function getFeaturePoint2(feature)
                 maxZ = math.max(maxZ, z)
             end
         end
-        if
-            minX ~= math.huge
-            and minZ ~= math.huge
-            and maxX ~= -math.huge
-            and maxZ ~= -math.huge
-        then
+        if minX ~= math.huge and minZ ~= math.huge and maxX ~= -math.huge and maxZ ~= -math.huge then
             return (minX + maxX) * 0.5, (minZ + maxZ) * 0.5
         end
     end
@@ -429,12 +415,7 @@ local function getSubplanBounds(subplan)
     local minY = bounds.minY
     local maxX = bounds.maxX
     local maxY = bounds.maxY
-    if
-        type(minX) ~= "number"
-        or type(minY) ~= "number"
-        or type(maxX) ~= "number"
-        or type(maxY) ~= "number"
-    then
+    if type(minX) ~= "number" or type(minY) ~= "number" or type(maxX) ~= "number" or type(maxY) ~= "number" then
         return nil
     end
 
@@ -451,10 +432,7 @@ local function featureBelongsToSubplanBounds(feature, subplanBounds)
         return true
     end
 
-    return x >= subplanBounds.minX
-        and x < subplanBounds.maxX
-        and z >= subplanBounds.minY
-        and z < subplanBounds.maxY
+    return x >= subplanBounds.minX and x < subplanBounds.maxX and z >= subplanBounds.minY and z < subplanBounds.maxY
 end
 
 local function filterFeatureListForSubplan(features, subplanBounds)
@@ -508,11 +486,7 @@ local function getFeatureBounds2(feature)
     end
 
     local position = feature.position
-    if
-        type(position) == "table"
-        and type(position.x) == "number"
-        and type(position.z) == "number"
-    then
+    if type(position) == "table" and type(position.x) == "number" and type(position.z) == "number" then
         return position.x, position.z, position.x, position.z
     end
 
@@ -578,6 +552,36 @@ local function buildChunkForSubplan(chunk, subplan)
     return filteredChunk
 end
 
+local function finishSubplanImportProfile(profile, chunkId, subplan, workId, layer, status, artifactCount)
+    if profile == nil then
+        return
+    end
+
+    local metadata = {
+        chunkId = chunkId,
+        subplanId = subplan and subplan.id or layer,
+        subplanLayer = layer,
+        workId = workId,
+        status = status,
+    }
+    if artifactCount ~= nil then
+        metadata.artifactCount = artifactCount
+    end
+
+    if status == "cancelled" then
+        metadata.cancelled = true
+        metadata.cancelledWorkId = workId
+    elseif status == "failed" then
+        metadata.failed = true
+        metadata.failedWorkId = workId
+    elseif status == "completed" then
+        metadata.completed = true
+        metadata.completedWorkId = workId
+    end
+
+    Profiler.finish(profile, metadata)
+end
+
 local function getChunkActionSet(chunk, config)
     local fullPlan = ImportPlanCache.GetOrCreatePlan(chunk, {
         config = config,
@@ -590,12 +594,7 @@ local function layerHasCompleteSubplans(chunk, state, layer)
     for _, candidate in ipairs(chunk.subplans or {}) do
         if getSubplanLayer(candidate) == layer then
             foundSubplan = true
-            if
-                not (
-                    state.completedWorkItems
-                    and state.completedWorkItems[getSubplanWorkId(chunk.id, candidate)]
-                )
-            then
+            if not (state.completedWorkItems and state.completedWorkItems[getSubplanWorkId(chunk.id, candidate)]) then
                 return false
             end
         end
@@ -653,9 +652,7 @@ end
 function ImportService.ImportChunk(chunk, options)
     options = options or {}
     local config = options.config or DefaultWorldConfig
-    local registrationChunk = if type(options.registrationChunk) == "table"
-        then options.registrationChunk
-        else chunk
+    local registrationChunk = if type(options.registrationChunk) == "table" then options.registrationChunk else chunk
     local layers = options.layers
     local subplan = if type(options.subplan) == "table" then options.subplan else nil
     local plan = ImportPlanCache.GetOrCreatePlan(chunk, {
@@ -667,12 +664,8 @@ function ImportService.ImportChunk(chunk, options)
     local prepared = plan.prepared or {}
     local selectiveLayers = plan.selectiveLayers
     local _nonBlocking, maybeYield = makePacingController(options)
-    local shouldCancel = if type(options.shouldCancel) == "function"
-        then options.shouldCancel
-        else nil
-    local onChunkProfile = if type(options.onChunkProfile) == "function"
-        then options.onChunkProfile
-        else nil
+    local shouldCancel = if type(options.shouldCancel) == "function" then options.shouldCancel else nil
+    local onChunkProfile = if type(options.onChunkProfile) == "function" then options.onChunkProfile else nil
     local chunkProfile = {
         chunkId = chunk.id,
         worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME,
@@ -727,10 +720,7 @@ function ImportService.ImportChunk(chunk, options)
             local ok, err = pcall(onChunkProfile, report)
             if not ok then
                 warn(
-                    ("[ImportService] onChunkProfile failed for chunk %s: %s"):format(
-                        tostring(chunk.id),
-                        tostring(err)
-                    )
+                    ("[ImportService] onChunkProfile failed for chunk %s: %s"):format(tostring(chunk.id), tostring(err))
                 )
             end
         end
@@ -827,10 +817,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local terrainFolder = nil
     if plan.folderSpecs.terrain then
-        terrainFolder = prepareLayerFolder(
-            plan.folderSpecs.terrain.name,
-            plan.folderSpecs.terrain.clearChildren
-        )
+        terrainFolder = prepareLayerFolder(plan.folderSpecs.terrain.name, plan.folderSpecs.terrain.clearChildren)
     end
     if terrainFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -844,8 +831,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local roadsFolder = nil
     if plan.folderSpecs.roads then
-        roadsFolder =
-            prepareLayerFolder(plan.folderSpecs.roads.name, plan.folderSpecs.roads.clearChildren)
+        roadsFolder = prepareLayerFolder(plan.folderSpecs.roads.name, plan.folderSpecs.roads.clearChildren)
     end
     if roadsFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -859,8 +845,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local railsFolder = nil
     if plan.folderSpecs.rails then
-        railsFolder =
-            prepareLayerFolder(plan.folderSpecs.rails.name, plan.folderSpecs.rails.clearChildren)
+        railsFolder = prepareLayerFolder(plan.folderSpecs.rails.name, plan.folderSpecs.rails.clearChildren)
     end
     if railsFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -874,10 +859,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local buildingsFolder = nil
     if plan.folderSpecs.buildings then
-        buildingsFolder = prepareLayerFolder(
-            plan.folderSpecs.buildings.name,
-            plan.folderSpecs.buildings.clearChildren
-        )
+        buildingsFolder = prepareLayerFolder(plan.folderSpecs.buildings.name, plan.folderSpecs.buildings.clearChildren)
     end
     if buildingsFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -891,8 +873,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local waterFolder = nil
     if plan.folderSpecs.water then
-        waterFolder =
-            prepareLayerFolder(plan.folderSpecs.water.name, plan.folderSpecs.water.clearChildren)
+        waterFolder = prepareLayerFolder(plan.folderSpecs.water.name, plan.folderSpecs.water.clearChildren)
     end
     if waterFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -906,8 +887,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local propsFolder = nil
     if plan.folderSpecs.props then
-        propsFolder =
-            prepareLayerFolder(plan.folderSpecs.props.name, plan.folderSpecs.props.clearChildren)
+        propsFolder = prepareLayerFolder(plan.folderSpecs.props.name, plan.folderSpecs.props.clearChildren)
     end
     if propsFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -921,10 +901,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local landuseFolder = nil
     if plan.folderSpecs.landuse then
-        landuseFolder = prepareLayerFolder(
-            plan.folderSpecs.landuse.name,
-            plan.folderSpecs.landuse.clearChildren
-        )
+        landuseFolder = prepareLayerFolder(plan.folderSpecs.landuse.name, plan.folderSpecs.landuse.clearChildren)
     end
     if landuseFolder and checkpoint() then
         chunkProfile.cancelled = true
@@ -938,10 +915,7 @@ function ImportService.ImportChunk(chunk, options)
 
     local barriersFolder = nil
     if plan.folderSpecs.barriers then
-        barriersFolder = prepareLayerFolder(
-            plan.folderSpecs.barriers.name,
-            plan.folderSpecs.barriers.clearChildren
-        )
+        barriersFolder = prepareLayerFolder(plan.folderSpecs.barriers.name, plan.folderSpecs.barriers.clearChildren)
     end
     maybeYield()
 
@@ -967,13 +941,8 @@ function ImportService.ImportChunk(chunk, options)
     -- Landuse fills go BEFORE roads so roads paint over them
     if plan.actionSet.landuse then
         local pLanduse = Profiler.begin("BuildLanduse")
-        local landuseStats = LanduseBuilder.BuildAll(
-            chunk.landuse,
-            chunk.originStuds,
-            landuseFolder,
-            chunk,
-            prepared.landuse
-        )
+        local landuseStats =
+            LanduseBuilder.BuildAll(chunk.landuse, chunk.originStuds, landuseFolder, chunk, prepared.landuse)
         chunkProfile.landuseMs = Profiler.finish(pLanduse).elapsedMs
         chunkProfile.landusePlanMs = tonumber(landuseStats.planMs) or 0
         chunkProfile.landuseExecuteMs = tonumber(landuseStats.executeMs) or 0
@@ -1013,43 +982,26 @@ function ImportService.ImportChunk(chunk, options)
             )
             chunkProfile.roadsSurfaceMs = Profiler.finish(pRoadSurfaces).elapsedMs
             if roadSurfaceStats then
-                chunkProfile.roadSurfaceAccumulatorCount = tonumber(
-                    roadSurfaceStats.accumulatorCount
-                ) or 0
-                chunkProfile.roadSurfaceMeshPartCount = tonumber(roadSurfaceStats.meshPartCount)
-                    or 0
+                chunkProfile.roadSurfaceAccumulatorCount = tonumber(roadSurfaceStats.accumulatorCount) or 0
+                chunkProfile.roadSurfaceMeshPartCount = tonumber(roadSurfaceStats.meshPartCount) or 0
                 chunkProfile.roadSurfaceSegmentCount = tonumber(roadSurfaceStats.segmentCount) or 0
                 chunkProfile.roadSurfaceRoadCount = tonumber(roadSurfaceStats.roadCount) or 0
                 chunkProfile.roadSurfaceVertexCount = tonumber(roadSurfaceStats.vertexCount) or 0
-                chunkProfile.roadSurfaceTriangleCount = tonumber(roadSurfaceStats.triangleCount)
-                    or 0
+                chunkProfile.roadSurfaceTriangleCount = tonumber(roadSurfaceStats.triangleCount) or 0
                 chunkProfile.roadSurfaceMeshCreateMs = tonumber(roadSurfaceStats.meshCreateMs) or 0
             end
             maybeYield(false)
             -- Decorations (centerlines, arrows, lights, crosswalks, steps, tunnels)
             -- cannot be merged into the surface mesh; render them as separate Parts.
             local pRoadDecorations = Profiler.begin("BuildRoadDecorations")
-            RoadBuilder.MeshBuildDecorations(
-                roadsFolder,
-                chunk.roads,
-                chunk.originStuds,
-                chunk,
-                roadChunkPlan
-            )
+            RoadBuilder.MeshBuildDecorations(roadsFolder, chunk.roads, chunk.originStuds, chunk, roadChunkPlan)
             chunkProfile.roadsDecorationMs = Profiler.finish(pRoadDecorations).elapsedMs
             maybeYield(false)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.Build(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
         else
-            RoadBuilder.BuildAll(
-                roadsFolder,
-                chunk.roads,
-                chunk.originStuds,
-                chunk,
-                maybeYield,
-                roadChunkPlan
-            )
+            RoadBuilder.BuildAll(roadsFolder, chunk.roads, chunk.originStuds, chunk, maybeYield, roadChunkPlan)
             forEachWithPacing(chunk.rails, function(rail)
                 RailBuilder.FallbackBuild(railsFolder, rail, chunk.originStuds)
             end, maybeYield)
@@ -1127,34 +1079,16 @@ function ImportService.ImportChunk(chunk, options)
             chunkProfile.buildingMeshVertexCount = tonumber(buildingMeshStats.vertexCount) or 0
             chunkProfile.buildingMeshTriangleCount = tonumber(buildingMeshStats.triangleCount) or 0
             chunkProfile.buildingMeshCreateMs = tonumber(buildingMeshStats.meshCreateMs) or 0
-            chunkProfile.buildingRoofMeshPartCount = tonumber(buildingMeshStats.roofMeshPartCount)
-                or 0
+            chunkProfile.buildingRoofMeshPartCount = tonumber(buildingMeshStats.roofMeshPartCount) or 0
             -- Build interiors (merged by material across chunk)
-            RoomBuilder.BuildAll(
-                buildingsFolder,
-                chunk.buildings,
-                chunk.originStuds,
-                builtModelsById
-            )
+            RoomBuilder.BuildAll(buildingsFolder, chunk.buildings, chunk.originStuds, builtModelsById)
         elseif config.BuildingMode == "shellParts" then
             forEachWithPacing(chunk.buildings, function(building)
-                BuildingBuilder.PartBuild(
-                    buildingsFolder,
-                    building,
-                    chunk.originStuds,
-                    chunk,
-                    windowBudget
-                )
+                BuildingBuilder.PartBuild(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
             end, maybeYield)
         else
             forEachWithPacing(chunk.buildings, function(building)
-                BuildingBuilder.FallbackBuild(
-                    buildingsFolder,
-                    building,
-                    chunk.originStuds,
-                    chunk,
-                    windowBudget
-                )
+                BuildingBuilder.FallbackBuild(buildingsFolder, building, chunk.originStuds, chunk, windowBudget)
             end, maybeYield)
         end
 
@@ -1172,22 +1106,14 @@ function ImportService.ImportChunk(chunk, options)
 
     if plan.actionSet.water then
         local pWater = Profiler.begin("BuildWater")
-        local waterSampler = if chunk.terrain
-            then GroundSampler.createRenderedSurfaceSampler(chunk)
-            else nil
+        local waterSampler = if chunk.terrain then GroundSampler.createRenderedSurfaceSampler(chunk) else nil
         if config.WaterMode == "mesh" then
             forEachWithPacing(chunk.water, function(water)
                 WaterBuilder.Build(waterFolder, water, chunk.originStuds, chunk, waterSampler)
             end, maybeYield)
         else
             forEachWithPacing(chunk.water, function(water)
-                WaterBuilder.FallbackBuild(
-                    waterFolder,
-                    water,
-                    chunk.originStuds,
-                    chunk,
-                    waterSampler
-                )
+                WaterBuilder.FallbackBuild(waterFolder, water, chunk.originStuds, chunk, waterSampler)
             end, maybeYield)
         end
         chunkProfile.waterMs = Profiler.finish(pWater).elapsedMs
@@ -1206,9 +1132,7 @@ function ImportService.ImportChunk(chunk, options)
         local pProps = Profiler.begin("BuildProps")
         local propStatsByKind = {}
         forEachWithPacing(chunk.props, function(prop)
-            local propKind = if type(prop.kind) == "string" and prop.kind ~= ""
-                then prop.kind
-                else "unknown"
+            local propKind = if type(prop.kind) == "string" and prop.kind ~= "" then prop.kind else "unknown"
             local propStats = propStatsByKind[propKind]
             if propStats == nil then
                 propStats = {
@@ -1246,9 +1170,7 @@ function ImportService.ImportChunk(chunk, options)
         for index, summary in ipairs(topKinds) do
             chunkProfile[("propTopKind%d"):format(index)] = summary and summary.kind or nil
             chunkProfile[("propTopKind%dCount"):format(index)] = summary and summary.count or 0
-            chunkProfile[("propTopKind%dMs"):format(index)] = summary
-                    and math.floor(summary.elapsedMs + 0.5)
-                or 0
+            chunkProfile[("propTopKind%dMs"):format(index)] = summary and math.floor(summary.elapsedMs + 0.5) or 0
         end
         if checkpoint() then
             chunkProfile.cancelled = true
@@ -1310,12 +1232,15 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
     local subplan = resolveSubplan(chunk, subplanOrId)
     local layer = getSubplanLayer(subplan)
     local workId = getSubplanWorkId(chunk.id, subplan)
-    local registrationChunk = if type(options.registrationChunk) == "table"
-        then options.registrationChunk
-        else chunk
+    local registrationChunk = if type(options.registrationChunk) == "table" then options.registrationChunk else chunk
+    local profile = Profiler.begin("ImportChunkSubplan", true)
     local previousState = cloneSubplanState(getSubplanState(chunk.id))
 
-    validateSubplanPrerequisites(registrationChunk, subplan, config)
+    local prerequisitesOk, prerequisitesErr = pcall(validateSubplanPrerequisites, registrationChunk, subplan, config)
+    if not prerequisitesOk then
+        finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "failed")
+        error(prerequisitesErr, 0)
+    end
 
     local subplanOptions = table.clone(options)
     local filteredChunk = buildChunkForSubplan(chunk, subplan)
@@ -1339,7 +1264,14 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
             message = tostring(chunkFolder),
         }
         setSubplanState(chunk.id, failedState)
+        finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "failed")
         error(chunkFolder, 0)
+    end
+
+    if chunkFolder == nil then
+        setSubplanState(chunk.id, previousState)
+        finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "cancelled")
+        return nil
     end
 
     local mergedState = cloneSubplanState(previousState)
@@ -1349,6 +1281,7 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
     end
     mergedState.failedWorkItems[workId] = nil
     setSubplanState(chunk.id, mergedState)
+    finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "completed", artifactCount)
 
     return chunkFolder, artifactCount
 end

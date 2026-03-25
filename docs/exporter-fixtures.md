@@ -47,6 +47,8 @@ For quick end-to-end tests with real OSM data, you can use the helper scripts un
   - Each shard currently contains one chunk so no generated `ModuleScript` exceeds Roblox's `Source` size cap during sync.
 - `scripts/build_austin_max_fidelity_place.sh`:
   - Builds a clean Austin `.rbxlx` for local Studio testing.
+  - Canonical source compile command inside the wrapper:
+    - `cd rust && cargo run --bin arbx_cli -- compile --source data/austin_overpass.json --bbox 30.245,-97.765,30.305,-97.715 --out out/austin-manifest.json`
   - Output:
     - `exports/austin-max-fidelity-<UTCSTAMP>.rbxlx` - timestamped local snapshot
     - `exports/austin-max-fidelity-latest.rbxlx` - stable local latest copy

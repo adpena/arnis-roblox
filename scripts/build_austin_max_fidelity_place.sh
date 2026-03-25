@@ -9,8 +9,8 @@ LATEST_PLACE="$EXPORT_DIR/austin-max-fidelity-latest.rbxlx"
 
 mkdir -p "$EXPORT_DIR"
 
-echo "[build_austin_max_fidelity_place] Exporting Austin manifest/shards with YOLO fidelity..."
-bash "$ROOT_DIR/scripts/export_austin_to_lua.sh" --yolo
+echo "[build_austin_max_fidelity_place] Exporting Austin manifest/shards with standard fidelity..."
+bash "$ROOT_DIR/scripts/export_austin_to_lua.sh"
 
 echo "[build_austin_max_fidelity_place] Building clean place to $OUTPUT_PLACE"
 python3 "$ROOT_DIR/scripts/bootstrap_arnis_studio.py" --output "$OUTPUT_PLACE"

@@ -985,14 +985,14 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
     scene_roof_shapes = scene.get("buildingRoofCoverageByShape") or {}
     for roof_shape, expected_count in _sorted_manifest_count_rows(manifest_roof_shapes):
         scene_row = scene_roof_shapes.get(roof_shape) if isinstance(scene_roof_shapes, dict) else None
-        scene_count = int(scene_row.get("withRoofCount") or 0) if isinstance(scene_row, dict) else 0
+        scene_count = int(scene_row.get("directRoofCount") or 0) if isinstance(scene_row, dict) else 0
         if expected_count > 0 and scene_count < expected_count:
             findings.append(
                 {
                     "severity": "medium",
                     "code": "roof_shape_scene_gap",
                     "message": (
-                        f"roof shape bucket {roof_shape} has {scene_count} buildings with roof coverage but manifest expected {expected_count}"
+                        f"roof shape bucket {roof_shape} has {scene_count} direct roof geometries but manifest expected {expected_count}"
                     ),
                 }
             )
@@ -1576,7 +1576,7 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
 
     {'<h2>Roof Coverage By Usage</h2><table><thead><tr><th>Usage</th><th>Buildings</th><th>Direct Roof</th><th>Merged Only</th><th>No Roof Evidence</th></tr></thead><tbody>' + roof_usage_rows + '</tbody></table>' if roof_usage_rows else ''}
 
-    {'<h2>Roof Coverage By Shape</h2><table><thead><tr><th>Roof Shape</th><th>Buildings</th><th>Direct Roof</th><th>Merged Only</th><th>No Roof Evidence</th></tr></thead><tbody>' + roof_shape_rows + '</tbody></table>' if roof_shape_rows else ''}
+    {'<h2>Scene Roof Coverage By Shape</h2><table><thead><tr><th>Roof Shape</th><th>Buildings</th><th>Direct Roof</th><th>Merged Only</th><th>No Roof Evidence</th></tr></thead><tbody>' + roof_shape_rows + '</tbody></table>' if roof_shape_rows else ''}
 
     {'<h2>Manifest Roof Expectations By Usage</h2><table><thead><tr><th>Usage</th><th>Manifest Buildings</th></tr></thead><tbody>' + manifest_roof_usage_rows + '</tbody></table>' if manifest_roof_usage_rows else ''}
 

@@ -166,14 +166,12 @@ local function makeMetrics(
 )
     local resolvedDistanceCenterX, resolvedDistanceCenterZ = distanceCenterX, distanceCenterZ
     if resolvedDistanceCenterX == nil or resolvedDistanceCenterZ == nil then
-        resolvedDistanceCenterX, resolvedDistanceCenterZ =
-            getChunkCenterXZ(chunkLike, chunkSizeStuds)
+        resolvedDistanceCenterX, resolvedDistanceCenterZ = getChunkCenterXZ(chunkLike, chunkSizeStuds)
     end
 
     local resolvedDirectionCenterX, resolvedDirectionCenterZ = directionCenterX, directionCenterZ
     if resolvedDirectionCenterX == nil or resolvedDirectionCenterZ == nil then
-        resolvedDirectionCenterX, resolvedDirectionCenterZ =
-            resolvedDistanceCenterX, resolvedDistanceCenterZ
+        resolvedDirectionCenterX, resolvedDirectionCenterZ = resolvedDistanceCenterX, resolvedDistanceCenterZ
     end
 
     local dx = resolvedDirectionCenterX - focusPoint.X
@@ -188,12 +186,8 @@ local function makeMetrics(
         dz = dz,
         distSq = distSq,
         distanceBand = distanceBand,
-        streamingCost = if streamingCost ~= nil
-            then streamingCost
-            else ChunkPriority.GetStreamingCost(chunkLike),
-        featureCount = if featureCount ~= nil
-            then featureCount
-            else ChunkPriority.GetFeatureCount(chunkLike),
+        streamingCost = if streamingCost ~= nil then streamingCost else ChunkPriority.GetStreamingCost(chunkLike),
+        featureCount = if featureCount ~= nil then featureCount else ChunkPriority.GetFeatureCount(chunkLike),
     }
 end
 
@@ -276,10 +270,8 @@ local function compareMetrics(aId, aMetrics, bId, bMetrics, forwardVector, obser
             return aForward > bForward
         end
 
-        local aLateral =
-            math.abs(aMetrics.dx * normalizedForward.Z - aMetrics.dz * normalizedForward.X)
-        local bLateral =
-            math.abs(bMetrics.dx * normalizedForward.Z - bMetrics.dz * normalizedForward.X)
+        local aLateral = math.abs(aMetrics.dx * normalizedForward.Z - aMetrics.dz * normalizedForward.X)
+        local bLateral = math.abs(bMetrics.dx * normalizedForward.Z - bMetrics.dz * normalizedForward.X)
         if aLateral ~= bLateral then
             return aLateral < bLateral
         end
@@ -306,15 +298,8 @@ function ChunkPriority.BuildChunkPriorityKey(
     local chunkId = getChunkId(chunkLikeOrEntry)
     local anchorX, anchorZ = getChunkPriorityAnchorXZ(chunkLikeOrEntry)
     local centerX, centerZ = getChunkCenterXZ(chunkLikeOrEntry, chunkSizeStuds)
-    local metrics = makeMetrics(
-        getChunkLike(chunkLikeOrEntry),
-        focusPoint,
-        chunkSizeStuds,
-        centerX,
-        centerZ,
-        anchorX,
-        anchorZ
-    )
+    local metrics =
+        makeMetrics(getChunkLike(chunkLikeOrEntry), focusPoint, chunkSizeStuds, centerX, centerZ, anchorX, anchorZ)
 
     return {
         chunkId = chunkId,
@@ -329,29 +314,12 @@ function ChunkPriority.BuildChunkPriorityKey(
     }
 end
 
-function ChunkPriority.CompareChunkEntries(
-    left,
-    right,
-    focusPoint,
-    chunkSizeStuds,
-    forwardVector,
-    observedCostById
-)
+function ChunkPriority.CompareChunkEntries(left, right, focusPoint, chunkSizeStuds, forwardVector, observedCostById)
     return compareMetrics(
         getChunkId(left),
-        makeMetrics(
-            getChunkLike(left),
-            focusPoint,
-            chunkSizeStuds,
-            getChunkEntryCenterXZ(left, chunkSizeStuds)
-        ),
+        makeMetrics(getChunkLike(left), focusPoint, chunkSizeStuds, getChunkEntryCenterXZ(left, chunkSizeStuds)),
         getChunkId(right),
-        makeMetrics(
-            getChunkLike(right),
-            focusPoint,
-            chunkSizeStuds,
-            getChunkEntryCenterXZ(right, chunkSizeStuds)
-        ),
+        makeMetrics(getChunkLike(right), focusPoint, chunkSizeStuds, getChunkEntryCenterXZ(right, chunkSizeStuds)),
         forwardVector,
         observedCostById
     )
@@ -371,15 +339,8 @@ function ChunkPriority.SortChunkIdsByPriority(
         if chunkLike then
             local anchorX, anchorZ = getChunkPriorityAnchorXZ(chunkLike)
             local centerX, centerZ = getChunkCenterXZ(chunkLike, chunkSizeStuds)
-            metricsById[chunkId] = makeMetrics(
-                chunkLike,
-                focusPoint,
-                chunkSizeStuds,
-                centerX,
-                centerZ,
-                anchorX,
-                anchorZ
-            )
+            metricsById[chunkId] =
+                makeMetrics(chunkLike, focusPoint, chunkSizeStuds, centerX, centerZ, anchorX, anchorZ)
         end
     end
 
@@ -405,12 +366,8 @@ function ChunkPriority.SortChunkEntriesByPriority(
         local chunkLike = chunkEntry and chunkEntry.ref
         local chunkId = chunkLike and chunkLike.id
         if type(chunkId) == "string" then
-            metricsById[chunkId] = makeMetrics(
-                chunkLike,
-                focusPoint,
-                chunkSizeStuds,
-                getChunkEntryCenterXZ(chunkEntry, chunkSizeStuds)
-            )
+            metricsById[chunkId] =
+                makeMetrics(chunkLike, focusPoint, chunkSizeStuds, getChunkEntryCenterXZ(chunkEntry, chunkSizeStuds))
         end
     end
 
@@ -449,12 +406,10 @@ local function getSubplanMetrics(workItem, focusPoint, chunkSizeStuds)
         centerZ = (origin.z or 0) + (((bounds.minY or 0) + (bounds.maxY or 0)) * 0.5)
     end
 
-    local streamingCost = if type(subplan) == "table"
-            and isNonNegativeNumber(subplan.streamingCost)
+    local streamingCost = if type(subplan) == "table" and isNonNegativeNumber(subplan.streamingCost)
         then subplan.streamingCost
         else nil
-    local featureCount = if type(subplan) == "table"
-            and isNonNegativeNumber(subplan.featureCount)
+    local featureCount = if type(subplan) == "table" and isNonNegativeNumber(subplan.featureCount)
         then subplan.featureCount
         else nil
 
@@ -495,11 +450,7 @@ function ChunkPriority.BuildPriorityKey(
         distanceBand = metrics.distanceBand,
         streamingCost = metrics.streamingCost,
         featureCount = metrics.featureCount,
-        observedCost = getObservedCost(
-            observedCostById,
-            chunkId,
-            type(subplan) == "table" and subplan.id or nil
-        ),
+        observedCost = getObservedCost(observedCostById, chunkId, type(subplan) == "table" and subplan.id or nil),
         layerRank = ChunkPriority.GetCanonicalLayerRank(workItem),
         sourceOrder = sourceOrder,
         subplanId = type(subplan) == "table" and subplan.id or "",
@@ -525,6 +476,9 @@ local function compareWorkItemKeys(leftKey, rightKey)
         if leftForwardBucket ~= rightForwardBucket then
             return leftForwardBucket < rightForwardBucket
         end
+        if leftForward ~= rightForward then
+            return leftForward > rightForward
+        end
     end
 
     if leftKey.distSq ~= rightKey.distSq then
@@ -540,16 +494,8 @@ local function compareWorkItemKeys(leftKey, rightKey)
     end
 
     if normalizedForward then
-        local leftForward = leftKey.dx * normalizedForward.X + leftKey.dz * normalizedForward.Z
-        local rightForward = rightKey.dx * normalizedForward.X + rightKey.dz * normalizedForward.Z
-        if leftForward ~= rightForward then
-            return leftForward > rightForward
-        end
-
-        local leftLateral =
-            math.abs(leftKey.dx * normalizedForward.Z - leftKey.dz * normalizedForward.X)
-        local rightLateral =
-            math.abs(rightKey.dx * normalizedForward.Z - rightKey.dz * normalizedForward.X)
+        local leftLateral = math.abs(leftKey.dx * normalizedForward.Z - leftKey.dz * normalizedForward.X)
+        local rightLateral = math.abs(rightKey.dx * normalizedForward.Z - rightKey.dz * normalizedForward.X)
         if leftLateral ~= rightLateral then
             return leftLateral < rightLateral
         end
@@ -574,41 +520,14 @@ local function compareWorkItemKeys(leftKey, rightKey)
     return leftKey.subplanId < rightKey.subplanId
 end
 
-function ChunkPriority.CompareWorkItems(
-    left,
-    right,
-    focusPoint,
-    chunkSizeStuds,
-    forwardVector,
-    observedCostById
-)
+function ChunkPriority.CompareWorkItems(left, right, focusPoint, chunkSizeStuds, forwardVector, observedCostById)
     return compareWorkItemKeys(
-        ChunkPriority.BuildPriorityKey(
-            left,
-            focusPoint,
-            chunkSizeStuds,
-            forwardVector,
-            observedCostById,
-            0
-        ),
-        ChunkPriority.BuildPriorityKey(
-            right,
-            focusPoint,
-            chunkSizeStuds,
-            forwardVector,
-            observedCostById,
-            0
-        )
+        ChunkPriority.BuildPriorityKey(left, focusPoint, chunkSizeStuds, forwardVector, observedCostById, 0),
+        ChunkPriority.BuildPriorityKey(right, focusPoint, chunkSizeStuds, forwardVector, observedCostById, 0)
     )
 end
 
-function ChunkPriority.SortWorkItems(
-    workItems,
-    focusPoint,
-    chunkSizeStuds,
-    forwardVector,
-    observedCostById
-)
+function ChunkPriority.SortWorkItems(workItems, focusPoint, chunkSizeStuds, forwardVector, observedCostById)
     local decorated = table.create(#(workItems or {}))
     for index, workItem in ipairs(workItems or {}) do
         decorated[index] = {
