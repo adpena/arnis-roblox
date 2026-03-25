@@ -78,6 +78,18 @@ local WorldConfig = {
     StreamingUpdateIntervalSeconds = 0.25,
     StreamingMaxWorkItemsPerUpdate = 4,
     StreamingImportFrameBudgetSeconds = 1 / 240,
+    MemoryGuardrails = {
+        Enabled = true,
+        EstimatedBudgetBytes = 4 * 1024 * 1024 * 1024,
+        ResumeBudgetRatio = 0.85,
+        CountResidentChunkCost = true,
+        CountInFlightCost = true,
+        HostProbe = {
+            Enabled = false,
+            CriticalAvailableBytes = nil,
+            CriticalPressureLevel = nil,
+        },
+    },
     SubplanRollout = {
         Enabled = true,
         AllowedLayers = {},
@@ -89,6 +101,14 @@ local WorldConfig = {
             StreamingTargetRadius = 2048,
             HighDetailRadius = 1024,
             StreamingMaxWorkItemsPerUpdate = 2,
+            MemoryGuardrails = {
+                Enabled = true,
+                EstimatedBudgetBytes = 4 * 1024 * 1024 * 1024,
+                ResumeBudgetRatio = 0.85,
+                HostProbe = {
+                    Enabled = true,
+                },
+            },
             SubplanRollout = {
                 Enabled = true,
                 AllowedLayers = { "landuse", "roads" },
@@ -101,6 +121,14 @@ local WorldConfig = {
             HighDetailRadius = 3072,
             StreamingMaxWorkItemsPerUpdate = 8,
             StreamingImportFrameBudgetSeconds = 1 / 120,
+            MemoryGuardrails = {
+                Enabled = true,
+                EstimatedBudgetBytes = 8 * 1024 * 1024 * 1024,
+                ResumeBudgetRatio = 0.9,
+                HostProbe = {
+                    Enabled = false,
+                },
+            },
             SubplanRollout = {
                 Enabled = true,
                 AllowedLayers = {},
