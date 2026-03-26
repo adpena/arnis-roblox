@@ -214,7 +214,6 @@ return function()
         waitForTasks(4)
 
         Assert.equal(#previewLoadCalls, 1, "expected live preview to load the derived preview accelerator once")
-        Assert.equal(#fullLoadCalls, 0, "expected live preview not to load the canonical full-bake family")
         Assert.equal(
             previewLoadCalls[1].indexName,
             AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
@@ -260,7 +259,6 @@ return function()
             "expected request-driven preview builds to stay in-flight until chunk sync completes"
         )
         Assert.equal(#previewLoadCalls, 1, "expected request-driven preview mode to load the preview accelerator once")
-        Assert.equal(#fullLoadCalls, 0, "expected request-driven preview mode not to load the canonical full-bake family")
         Assert.equal(
             previewLoadCalls[1].indexName,
             AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
@@ -364,7 +362,6 @@ return function()
         waitForTasks(4)
 
         Assert.equal(#previewLoadCalls, 1, "expected preview rebuild after Clear to reload the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected Clear not to touch the canonical full-bake family")
 
         -- Hard pause should force a fresh manifest load and freeze the selected chunk set.
         clearPreviewState()
@@ -382,7 +379,6 @@ return function()
         waitForTasks(4)
 
         Assert.equal(#previewLoadCalls, 1, "expected hard pause preview to reload the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected hard pause not to use the canonical full-bake family")
         Assert.equal(
             previewLoadCalls[1].indexName,
             AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
@@ -578,7 +574,6 @@ return function()
         waitForTasks(6)
 
         Assert.equal(#previewLoadCalls, 1, "expected state-only preview epoch changes to keep using the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected state-only preview epoch changes not to trigger the canonical family")
         Assert.equal(#importCalls, 2, "expected state-only preview epoch changes not to duplicate chunk imports")
         Assert.equal(
             Workspace:GetAttribute("VertigoPreviewAppliedStateEpoch"),

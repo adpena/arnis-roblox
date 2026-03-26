@@ -18,7 +18,6 @@ return function()
         "AustinPreviewManifestIndex",
         "expected edit preview to keep using the derived accelerator family"
     )
-
     local sharedRadius = 500
     local previewHandle = ManifestLoader.LoadShardedModuleHandle(
         previewFolder:WaitForChild(previewFamily),
@@ -26,52 +25,69 @@ return function()
     )
 
     local previewEnvelope = CanonicalWorldContract.resolveBoundedEnvelope(previewHandle, sharedRadius)
-    local playHandle = {
-        schemaVersion = previewHandle.schemaVersion,
-        meta = {
-            worldName = "ExportedWorld",
-            chunkSizeStuds = 256,
-            canonicalAnchor = {
-                positionStuds = {
-                    x = previewEnvelope.focusPoint.X,
-                    y = previewEnvelope.focusPoint.Y,
-                    z = previewEnvelope.focusPoint.Z,
-                },
-                lookDirectionStuds = {
-                    x = 0,
-                    y = 0,
-                    z = 1,
-                },
-            },
-        },
-        chunks = previewEnvelope.selectedChunks,
-    }
-    local playEnvelope = CanonicalWorldContract.resolveBoundedEnvelope(playHandle, sharedRadius)
-
-    Assert.near(previewEnvelope.focusPoint.X, playEnvelope.focusPoint.X, 0.001, "expected preview and play to resolve the same canonical focus X for the shared envelope")
-    Assert.near(previewEnvelope.focusPoint.Z, playEnvelope.focusPoint.Z, 0.001, "expected preview and play to resolve the same canonical focus Z for the shared envelope")
-    Assert.near(previewEnvelope.spawnPoint.X, playEnvelope.spawnPoint.X, 0.001, "expected preview and play to resolve the same canonical spawn X for the shared envelope")
-    Assert.near(previewEnvelope.spawnPoint.Z, playEnvelope.spawnPoint.Z, 0.001, "expected preview and play to resolve the same canonical spawn Z for the shared envelope")
-    Assert.equal(
-        #previewEnvelope.chunkIds,
-        #playEnvelope.chunkIds,
-        "expected preview and play to select the same chunk slice from the shared envelope"
-    )
-    for index, chunkId in ipairs(previewEnvelope.chunkIds) do
-        Assert.equal(
-            chunkId,
-            playEnvelope.chunkIds[index],
-            "expected preview and play to keep chunk selection order stable"
-        )
-    end
     Assert.equal(
         previewEnvelope.manifestFamily,
         canonicalFamily,
         "expected preview envelopes to report the canonical Austin family as world truth"
     )
     Assert.equal(
-        playEnvelope.manifestFamily,
-        canonicalFamily,
-        "expected play to keep the canonical Austin family explicit"
+        type(previewHandle.meta.canonicalAnchor),
+        "table",
+        "expected the derived preview accelerator to carry explicit canonical anchor metadata"
     )
+    Assert.equal(
+        previewHandle.meta.notes[1],
+        "studio preview subset derived from rust/out/austin-manifest.json",
+        "expected the derived preview accelerator to document its canonical source"
+    )
+    Assert.near(
+        previewEnvelope.focusPoint.X,
+        previewHandle.meta.canonicalAnchor.positionStuds.x,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical focus X"
+    )
+    Assert.near(
+        previewEnvelope.focusPoint.Z,
+        previewHandle.meta.canonicalAnchor.positionStuds.z,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical focus Z"
+    )
+    Assert.near(
+        previewEnvelope.spawnPoint.X,
+        previewHandle.meta.canonicalAnchor.positionStuds.x,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical spawn X"
+    )
+    Assert.near(
+        previewEnvelope.spawnPoint.Z,
+        previewHandle.meta.canonicalAnchor.positionStuds.z,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical spawn Z"
+    )
+    Assert.near(
+        previewEnvelope.lookTarget.X,
+        previewEnvelope.spawnPoint.X + previewHandle.meta.canonicalAnchor.lookDirectionStuds.x,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical look target X"
+    )
+    Assert.near(
+        previewEnvelope.lookTarget.Z,
+        previewEnvelope.spawnPoint.Z + previewHandle.meta.canonicalAnchor.lookDirectionStuds.z,
+        0.001,
+        "expected the derived preview accelerator to preserve the canonical look target Z"
+    )
+    Assert.truthy(
+        type(previewEnvelope.chunkIds) == "table" and #previewEnvelope.chunkIds > 0,
+        "expected the derived preview accelerator to retain a non-empty chunk slice"
+    )
+    local previewChunkIds = {}
+    for _, chunkRef in ipairs(previewHandle.chunkRefs or {}) do
+        previewChunkIds[chunkRef.id] = true
+    end
+    for _, chunkId in ipairs(previewEnvelope.chunkIds) do
+        Assert.truthy(
+            previewChunkIds[chunkId] == true,
+            "expected derived preview chunk ids to come from the preview accelerator source"
+        )
+    end
 end
