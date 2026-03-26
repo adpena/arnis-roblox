@@ -1,10 +1,7 @@
 local ImportService = require(script.Parent)
-local AustinSpawn = require(script.Parent.AustinSpawn)
+local CanonicalWorldContract = require(script.Parent.CanonicalWorldContract)
 local ManifestLoader = require(script.Parent.ManifestLoader)
 local Profiler = require(script.Parent.Profiler)
-local RunService = game:GetService("RunService")
-local ServerScriptService = game:GetService("ServerScriptService")
-local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local RunAustin = {}
@@ -12,13 +9,16 @@ RunAustin.LOAD_RADIUS = 1500
 RunAustin.FRAME_BUDGET_SECONDS = 1 / 240
 RunAustin.STARTUP_CHUNK_COUNT = 2
 RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS = 30
-RunAustin.STUDIO_MANIFEST_INDEX_NAME = "AustinPreviewManifestIndex"
-RunAustin.STUDIO_MANIFEST_CHUNKS_NAME = "AustinPreviewManifestChunks"
-RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME = "AustinHDManifestIndex"
-RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME = "AustinManifestIndex"
+RunAustin.CANONICAL_MANIFEST_INDEX_NAME = CanonicalWorldContract.resolveCanonicalManifestFamily()
 
-local function isStudioEditMode()
-    return RunService:IsStudio() and not RunService:IsRunning()
+local function reportPhase(options, phase)
+    if type(options) ~= "table" then
+        return
+    end
+    local reporter = options.phaseReporter
+    if type(reporter) == "function" then
+        reporter(phase)
+    end
 end
 
 local function setPerfAttribute(name, value)
@@ -62,97 +62,27 @@ local function emitRunProfile(stats, phaseSummary, manifestSource, focusPoint)
 end
 
 function RunAustin.getManifestName()
-    if isStudioEditMode() then
-        return RunAustin.STUDIO_MANIFEST_INDEX_NAME
-    end
-
-    return RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME
+    return RunAustin.CANONICAL_MANIFEST_INDEX_NAME
 end
 
 function RunAustin.getRuntimeManifestCandidates()
     return {
-        RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME,
-        RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME,
+        RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
     }
 end
 
 function RunAustin.loadManifestSource()
-    if isStudioEditMode() then
-        print("[RunAustin] Loading preview manifest source")
-        local previewFolder = ServerScriptService:WaitForChild(
-            "StudioPreview",
-            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        )
-        if not previewFolder then
-            error("ServerScriptService.StudioPreview was not provisioned into the live DataModel")
-        end
-        local previewIndex = previewFolder:WaitForChild(
-            RunAustin.STUDIO_MANIFEST_INDEX_NAME,
-            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        )
-        if not previewIndex then
-            error(
-                "ServerScriptService.StudioPreview.AustinPreviewManifestIndex was not provisioned into the live DataModel"
-            )
-        end
-        local previewChunks = previewFolder:WaitForChild(
-            RunAustin.STUDIO_MANIFEST_CHUNKS_NAME,
-            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        )
-        if not previewChunks then
-            error(
-                "ServerScriptService.StudioPreview.AustinPreviewManifestChunks was not provisioned into the live DataModel"
-            )
-        end
-        return ManifestLoader.LoadShardedModuleHandle(
-            previewIndex,
-            previewChunks,
-            RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-        ),
-            RunAustin.STUDIO_MANIFEST_INDEX_NAME
-    end
-
-    local sampleData = ServerStorage:WaitForChild("SampleData", 5)
-    if not sampleData then
-        error("ServerStorage.SampleData was not provisioned into the live DataModel")
-    end
-
-    local loadErrors = {}
-    for index, manifestName in ipairs(RunAustin.getRuntimeManifestCandidates()) do
-        local manifestModule = sampleData:FindFirstChild(manifestName)
-        if manifestModule then
-            print(("[RunAustin] Loading runtime manifest source %s"):format(manifestName))
-            local success, manifestOrErr = pcall(function()
-                return ManifestLoader.LoadNamedShardedSampleHandle(
-                    manifestName,
-                    RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-                )
-            end)
-            if success then
-                if index > 1 then
-                    warn(
-                        ("[RunAustin] Falling back to runtime manifest %s because canonical %s is unavailable in the live DataModel"):format(
-                            manifestName,
-                            RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME
-                        )
-                    )
-                end
-                return manifestOrErr, manifestName
-            end
-            table.insert(loadErrors, ("%s: %s"):format(manifestName, tostring(manifestOrErr)))
-        else
-            table.insert(
-                loadErrors,
-                ("%s: module missing from ServerStorage.SampleData"):format(manifestName)
-            )
-        end
-    end
-
-    error(table.concat(loadErrors, "; "))
+    print(("[RunAustin] Loading canonical manifest source %s"):format(RunAustin.CANONICAL_MANIFEST_INDEX_NAME))
+    return ManifestLoader.LoadNamedShardedSampleHandle(
+        RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
+        RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
+    ), RunAustin.CANONICAL_MANIFEST_INDEX_NAME
 end
 
-function RunAustin.run()
+function RunAustin.run(options)
+    options = options or {}
     setPerfAttribute("Status", "loading")
+    reportPhase(options, "loading_manifest")
     print(("[RunAustin] Starting run for manifest %s"):format(RunAustin.getManifestName()))
     local success, manifestOrErr, resolvedManifestName = pcall(function()
         return RunAustin.loadManifestSource()
@@ -166,17 +96,15 @@ function RunAustin.run()
 
     local manifestSource = manifestOrErr
     setPerfAttribute("ManifestName", resolvedManifestName or RunAustin.getManifestName())
-    print(
-        ("[RunAustin] Manifest source loaded from %s"):format(
-            resolvedManifestName or RunAustin.getManifestName()
-        )
-    )
+    print(("[RunAustin] Manifest source loaded from %s"):format(resolvedManifestName or RunAustin.getManifestName()))
     print("[RunAustin] Manifest source loaded")
-    local anchor = AustinSpawn.resolveAnchor(manifestSource, RunAustin.LOAD_RADIUS)
+    reportPhase(options, "importing_startup")
+    local boundedEnvelope = CanonicalWorldContract.resolveBoundedEnvelope(manifestSource, RunAustin.LOAD_RADIUS)
+    local anchor = boundedEnvelope.anchor
     -- Use the exact runtime spawn anchor as the import/load center so edit preview,
     -- play-mode chunk coverage, and the eventual player spawn stay locked together.
-    local spawnPoint = anchor.spawnPoint
-    local loadCenter = anchor.focusPoint
+    local spawnPoint = boundedEnvelope.spawnPoint
+    local loadCenter = boundedEnvelope.focusPoint
     setPerfAttribute("FocusX", math.round(loadCenter.X))
     setPerfAttribute("FocusY", math.round(loadCenter.Y))
     setPerfAttribute("FocusZ", math.round(loadCenter.Z))
@@ -194,9 +122,16 @@ function RunAustin.run()
             spawnPoint.Z
         )
     )
-    local initialChunks = anchor.selectedChunks
+    local initialChunks = boundedEnvelope.selectedChunks
     if type(initialChunks) ~= "table" or #initialChunks == 0 then
         initialChunks = manifestSource:LoadChunksWithinRadius(loadCenter, RunAustin.LOAD_RADIUS)
+    end
+    local startupChunkRefsById = {}
+    for _, chunk in ipairs(initialChunks) do
+        local chunkId = chunk and chunk.id
+        if type(chunkId) == "string" and chunkId ~= "" then
+            startupChunkRefsById[chunkId] = manifestSource:ResolveChunkRef(chunkId)
+        end
     end
     local initialManifest = {
         schemaVersion = manifestSource.schemaVersion,
@@ -213,7 +148,19 @@ function RunAustin.run()
         nonBlocking = true,
         frameBudgetSeconds = RunAustin.FRAME_BUDGET_SECONDS,
         startupChunkCount = RunAustin.STARTUP_CHUNK_COUNT,
+        registrationChunksById = startupChunkRefsById,
     })
+    local worldRoot = Workspace:FindFirstChild("GeneratedWorld_Austin")
+    setPerfAttribute("WorldRootName", "GeneratedWorld_Austin")
+    if worldRoot then
+        setPerfAttribute("WorldRootExists", 1)
+        setPerfAttribute("WorldRootChildCount", #worldRoot:GetChildren())
+        setPerfAttribute("WorldRootDescendantCount", #worldRoot:GetDescendants())
+    else
+        setPerfAttribute("WorldRootExists", 0)
+        setPerfAttribute("WorldRootChildCount", 0)
+        setPerfAttribute("WorldRootDescendantCount", 0)
+    end
     local phaseSummary = Profiler.generateSummary()
     emitRunProfile(stats, phaseSummary, manifestSource, loadCenter)
     setPerfAttribute("Status", "ready")
@@ -234,7 +181,7 @@ function RunAustin.run()
         phaseSummary = phaseSummary,
         focusPoint = loadCenter,
         spawnPoint = spawnPoint,
-        lookTarget = anchor.lookTarget,
+        lookTarget = boundedEnvelope.lookTarget,
     }
 end
 

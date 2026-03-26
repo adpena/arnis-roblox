@@ -1,28 +1,24 @@
 return function()
+    local CanonicalWorldContract = require(script.Parent.Parent.ImportService.CanonicalWorldContract)
     local RunAustin = require(script.Parent.Parent.ImportService.RunAustin)
     local Assert = require(script.Parent.Assert)
 
     Assert.equal(
-        RunAustin.RUNTIME_PRIMARY_MANIFEST_INDEX_NAME,
-        "AustinHDManifestIndex",
-        "expected play mode to default to the HD Austin runtime manifest"
+        RunAustin.getManifestName(),
+        CanonicalWorldContract.resolveCanonicalManifestFamily("play"),
+        "expected play mode to use the canonical full-bake Austin manifest family"
     )
     Assert.equal(
-        RunAustin.RUNTIME_SECONDARY_MANIFEST_INDEX_NAME,
+        RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
         "AustinManifestIndex",
-        "expected the standard Austin manifest to remain an explicit runtime fallback"
+        "expected the runtime canonical manifest constant to stay locked to the full-bake Austin family"
     )
 
     local candidates = RunAustin.getRuntimeManifestCandidates()
-    Assert.equal(#candidates, 2, "expected exactly two runtime manifest candidates")
+    Assert.equal(#candidates, 1, "expected exactly one runtime manifest candidate")
     Assert.equal(
         candidates[1],
-        "AustinHDManifestIndex",
-        "expected the HD Austin manifest to be tried before the standard fallback"
-    )
-    Assert.equal(
-        candidates[2],
         "AustinManifestIndex",
-        "expected the standard Austin manifest to remain available as a fallback"
+        "expected runtime candidates to stay on the canonical Austin family"
     )
 end

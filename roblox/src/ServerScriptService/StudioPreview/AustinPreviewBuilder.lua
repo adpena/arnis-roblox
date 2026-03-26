@@ -4,11 +4,14 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ImportService = require(script.Parent.Parent.ImportService)
-local AustinSpawn = require(script.Parent.Parent.ImportService.AustinSpawn)
+local CanonicalWorldContract = require(script.Parent.Parent.ImportService.CanonicalWorldContract)
 local ChunkLoader = require(script.Parent.Parent.ImportService.ChunkLoader)
 local ChunkPriority = require(script.Parent.Parent.ImportService.ChunkPriority)
 local ManifestLoader = require(script.Parent.Parent.ImportService.ManifestLoader)
 local SubplanRollout = require(script.Parent.Parent.ImportService.SubplanRollout)
+local AustinPreviewFolder = script.Parent
+local AustinPreviewRequest = require(AustinPreviewFolder:WaitForChild("AustinPreviewRequest"))
+local AustinPreviewTelemetry = require(AustinPreviewFolder:WaitForChild("AustinPreviewTelemetry"))
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 
@@ -36,11 +39,28 @@ local previewPerfState = {}
 local previewPerfLastFlushAt = 0
 local cachedFullManifestHandle = nil
 local cachedFullManifestHash = nil
+local cachedPreviewManifestHandle = nil
+local cachedPreviewManifestHash = nil
+local activeManifestHandle = nil
+local activeManifestMode = AustinPreviewRequest.MODE_PREVIEW
 local observedChunkCostById = {}
 local semanticFingerprintCacheByHandle = setmetatable({}, { __mode = "k" })
 local getPreviewRoot
+local applyPreviewWorldState
 local deferredPreviewInvalidationEpoch = nil
 local deferredPreviewStateEpoch = nil
+local previewTelemetryState = AustinPreviewTelemetry.newState()
+local previewProjectFacts = {
+    preview = {
+        build_active = false,
+        state_apply_pending = false,
+        sync_state = "idle",
+    },
+    full_bake = {
+        active = false,
+        last_result = nil,
+    },
+}
 
 local function getPreviewSubplanRollout()
     return SubplanRollout.Describe(DefaultWorldConfig)
@@ -208,6 +228,18 @@ local function updatePreviewPerf(snapshot, force)
     end
 end
 
+local function recordPreviewTelemetry(eventName, fields)
+    AustinPreviewTelemetry.record(previewTelemetryState, eventName, fields)
+    AustinPreviewTelemetry.setProjectFacts(previewTelemetryState, previewProjectFacts)
+    AustinPreviewTelemetry.flushToWorkspace(previewTelemetryState, Workspace)
+end
+
+local function updatePreviewProjectFacts(mutator)
+    mutator(previewProjectFacts)
+    AustinPreviewTelemetry.setProjectFacts(previewTelemetryState, previewProjectFacts)
+    AustinPreviewTelemetry.flushToWorkspace(previewTelemetryState, Workspace)
+end
+
 local function isTimeTravelHardPauseActive()
     return Workspace:GetAttribute("VertigoSyncTimeTravelHardPause") == true
 end
@@ -228,43 +260,137 @@ local function shouldCancelBuild(buildToken)
     return false
 end
 
-local function loadManifestSource()
-    local timeTravelActive = isTimeTravelHardPauseActive()
-    if RunService:IsStudio() then
-        if not timeTravelActive then
-            local currentHash = getCurrentSyncHash()
-            if cachedFullManifestHandle ~= nil and cachedFullManifestHash == currentHash then
-                updatePreviewPerf({
-                    ManifestSource = "full-cached",
-                }, true)
-                return cachedFullManifestHandle
-            end
-        end
-
-        local fullOk, fullManifest = pcall(function()
-            return ManifestLoader.LoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME, nil, {
-                freshRequire = timeTravelActive,
-            })
-        end)
-        if fullOk then
-            if not timeTravelActive then
-                cachedFullManifestHandle = fullManifest
-                cachedFullManifestHash = getCurrentSyncHash()
-            end
+local function loadPreviewManifestSource(timeTravelActive)
+    if RunService:IsStudio() and not timeTravelActive then
+        local currentHash = getCurrentSyncHash()
+        if cachedPreviewManifestHandle ~= nil and cachedPreviewManifestHash == currentHash then
             updatePreviewPerf({
-                ManifestSource = if timeTravelActive then "full-frozen" else "full",
+                ManifestSource = "preview-derived-cached",
             }, true)
-            return fullManifest
+            return cachedPreviewManifestHandle
         end
     end
 
-    updatePreviewPerf({
-        ManifestSource = "preview",
-    }, true)
-    return ManifestLoader.LoadShardedModuleHandle(
+    local previewManifest = ManifestLoader.LoadShardedModuleHandle(
         script.Parent[AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME],
         script.Parent[AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME]
     )
+
+    if RunService:IsStudio() and not timeTravelActive then
+        cachedPreviewManifestHandle = previewManifest
+        cachedPreviewManifestHash = getCurrentSyncHash()
+    end
+
+    updatePreviewPerf({
+        ManifestSource = if timeTravelActive then "preview-derived-frozen" else "preview-derived",
+    }, true)
+    return previewManifest
+end
+
+local function loadFullManifestSource(timeTravelActive)
+    if not RunService:IsStudio() then
+        return nil
+    end
+
+    if not timeTravelActive then
+        local currentHash = getCurrentSyncHash()
+        if cachedFullManifestHandle ~= nil and cachedFullManifestHash == currentHash then
+            updatePreviewPerf({
+                ManifestSource = "canonical-full-cached",
+            }, true)
+            return cachedFullManifestHandle
+        end
+    end
+
+    local fullOk, fullManifest = pcall(function()
+        return ManifestLoader.LoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME, nil, {
+            freshRequire = timeTravelActive,
+        })
+    end)
+    if not fullOk then
+        return nil
+    end
+
+    if not timeTravelActive then
+        cachedFullManifestHandle = fullManifest
+        cachedFullManifestHash = getCurrentSyncHash()
+    end
+
+    updatePreviewPerf({
+        ManifestSource = if timeTravelActive then "full-frozen" else "full",
+    }, true)
+    return fullManifest
+end
+
+local function loadManifestSource(request)
+    local normalizedRequest = AustinPreviewRequest.Normalize(request)
+    local timeTravelActive = isTimeTravelHardPauseActive()
+    if normalizedRequest.mode == AustinPreviewRequest.MODE_FULL_BAKE then
+        local fullManifest = loadFullManifestSource(timeTravelActive)
+        if fullManifest ~= nil then
+            return fullManifest
+        end
+        error("[AustinPreviewBuilder] Full-bake mode requires the full Austin manifest handle")
+    end
+
+    return loadPreviewManifestSource(timeTravelActive)
+end
+
+function applyPreviewWorldState(manifestSource, stateEpoch)
+    local worldRoot = getPreviewRoot()
+    if not worldRoot then
+        return false
+    end
+
+    local resolvedManifestSource = manifestSource
+    if resolvedManifestSource == nil then
+        resolvedManifestSource = activeManifestHandle
+            or loadManifestSource({
+                mode = activeManifestMode,
+            })
+    end
+
+    local ok, err = pcall(function()
+        local worldStateApplier = require(script.Parent.Parent.ImportService.WorldStateApplier)
+        worldStateApplier.Apply(resolvedManifestSource, DefaultWorldConfig, {
+            startMinimap = false,
+            hideLoadingScreen = false,
+        })
+    end)
+    if not ok then
+        warn(("[AustinPreviewBuilder] Failed to apply preview world state: %s"):format(tostring(err)))
+        updatePreviewProjectFacts(function(projectFacts)
+            projectFacts.preview.state_apply_pending = false
+            projectFacts.preview.build_active = false
+            if projectFacts.full_bake.active then
+                projectFacts.full_bake.active = false
+                projectFacts.full_bake.last_result = "failed"
+            end
+        end)
+        recordPreviewTelemetry("state_apply_failed", {
+            error = tostring(err),
+            stateEpoch = stateEpoch,
+        })
+        return false
+    end
+
+    deferredPreviewStateEpoch = nil
+    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", nil)
+    if type(stateEpoch) == "number" then
+        Workspace:SetAttribute("VertigoPreviewAppliedStateEpoch", stateEpoch)
+    end
+    updatePreviewProjectFacts(function(projectFacts)
+        projectFacts.preview.state_apply_pending = false
+        projectFacts.preview.build_active = false
+        if projectFacts.full_bake.active then
+            projectFacts.full_bake.active = false
+            projectFacts.full_bake.last_result = "success"
+        end
+    end)
+    recordPreviewTelemetry("state_apply_succeeded", {
+        stateEpoch = stateEpoch,
+    })
+    return true
 end
 
 local function logPreview(message, fields)
@@ -443,6 +569,9 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_INVALIDATION_EP
             deferredEpoch = deferredPreviewInvalidationEpoch,
         })
     end
+    recordPreviewTelemetry("preview_invalidation_deferred", {
+        deferredEpoch = deferredPreviewInvalidationEpoch,
+    })
 end)
 
 Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR):Connect(function()
@@ -458,7 +587,13 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATT
             buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
             deferredEpoch = deferredPreviewStateEpoch,
         })
+        recordPreviewTelemetry("preview_state_deferred", {
+            deferredEpoch = deferredPreviewStateEpoch,
+        })
+        return
     end
+
+    applyPreviewWorldState(nil, deferredPreviewStateEpoch)
 end)
 
 local function ensurePreviewRoot()
@@ -582,7 +717,9 @@ local function getPreviewBounds(manifestSource, chunkIds)
 end
 
 local function addPreviewBeacon(parent, manifestSource, chunkIds, focusPoint)
-    focusPoint = focusPoint or AustinSpawn.resolveAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS).focusPoint
+    focusPoint =
+        focusPoint
+        or CanonicalWorldContract.resolveCanonicalAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS).focusPoint
     local bounds = getPreviewBounds(manifestSource, chunkIds)
     local groundY = bounds and bounds.minY or focusPoint.Y
     local planeInset = 48
@@ -742,6 +879,15 @@ local function splitChunkIdsByRadius(chunkIds, distanceByChunkId, radius)
     return foreground, background
 end
 
+local function getPreviewMeshCollisionPolicy(request)
+    local normalizedRequest = AustinPreviewRequest.Normalize(request)
+    if normalizedRequest.mode == AustinPreviewRequest.MODE_FULL_BAKE then
+        return nil
+    end
+
+    return "visual_only"
+end
+
 local function syncChunkBatch(
     manifestSource,
     worldRoot,
@@ -751,7 +897,8 @@ local function syncChunkBatch(
     phaseName,
     chunkRefById,
     focusPoint,
-    lookTarget
+    lookTarget,
+    meshCollisionPolicy
 )
     local sliceStart = os.clock()
     local buildEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
@@ -778,6 +925,19 @@ local function syncChunkBatch(
                 SyncState = "cancelled",
                 SyncPhase = phaseName,
             }, true)
+            updatePreviewProjectFacts(function(projectFacts)
+                projectFacts.preview.sync_state = "cancelled"
+                projectFacts.preview.build_active = false
+                projectFacts.preview.state_apply_pending = false
+                if projectFacts.full_bake.active then
+                    projectFacts.full_bake.active = false
+                    projectFacts.full_bake.last_result = "cancelled"
+                end
+            end)
+            recordPreviewTelemetry("sync_cancelled", {
+                reason = "build-token-changed",
+                phase = phaseName,
+            })
             return false
         end
 
@@ -830,6 +990,19 @@ local function syncChunkBatch(
                     SyncState = "cancelled",
                     SyncPhase = phaseName,
                 }, true)
+                updatePreviewProjectFacts(function(projectFacts)
+                    projectFacts.preview.sync_state = "cancelled"
+                    projectFacts.preview.build_active = false
+                    projectFacts.preview.state_apply_pending = false
+                    if projectFacts.full_bake.active then
+                        projectFacts.full_bake.active = false
+                        projectFacts.full_bake.last_result = "cancelled"
+                    end
+                end)
+                recordPreviewTelemetry("sync_cancelled", {
+                    reason = "yield-state-changed",
+                    phase = phaseName,
+                })
                 return false
             end
             sliceStart = os.clock()
@@ -852,7 +1025,7 @@ local function syncChunkBatch(
             chunkFolder = ImportService.ImportChunkSubplan(workItem.chunk, workItem.subplan, {
                 worldRootName = AustinPreviewBuilder.WORLD_ROOT_NAME,
                 registrationChunk = workItem.chunkRef or workItem.chunk,
-                meshCollisionPolicy = "visual_only",
+                meshCollisionPolicy = meshCollisionPolicy,
                 nonBlocking = true,
                 frameBudgetSeconds = AustinPreviewBuilder.FRAME_BUDGET_SECONDS,
                 shouldCancel = function()
@@ -865,7 +1038,7 @@ local function syncChunkBatch(
         else
             chunkFolder = ImportService.ImportChunk(workItem.chunk, {
                 worldRootName = AustinPreviewBuilder.WORLD_ROOT_NAME,
-                meshCollisionPolicy = "visual_only",
+                meshCollisionPolicy = meshCollisionPolicy,
                 nonBlocking = true,
                 frameBudgetSeconds = AustinPreviewBuilder.FRAME_BUDGET_SECONDS,
                 shouldCancel = function()
@@ -891,6 +1064,20 @@ local function syncChunkBatch(
                 SyncState = "cancelled",
                 SyncPhase = phaseName,
             }, true)
+            updatePreviewProjectFacts(function(projectFacts)
+                projectFacts.preview.sync_state = "cancelled"
+                projectFacts.preview.build_active = false
+                projectFacts.preview.state_apply_pending = false
+                if projectFacts.full_bake.active then
+                    projectFacts.full_bake.active = false
+                    projectFacts.full_bake.last_result = "cancelled"
+                end
+            end)
+            recordPreviewTelemetry("sync_cancelled", {
+                reason = "chunk-import-cancelled",
+                phase = phaseName,
+                chunkId = workItem.chunkId,
+            })
             return false
         end
 
@@ -933,6 +1120,20 @@ local function syncChunkBatch(
                 SyncState = "cancelled",
                 SyncPhase = phaseName,
             }, true)
+            updatePreviewProjectFacts(function(projectFacts)
+                projectFacts.preview.sync_state = "cancelled"
+                projectFacts.preview.build_active = false
+                projectFacts.preview.state_apply_pending = false
+                if projectFacts.full_bake.active then
+                    projectFacts.full_bake.active = false
+                    projectFacts.full_bake.last_result = "cancelled"
+                end
+            end)
+            recordPreviewTelemetry("sync_cancelled", {
+                reason = "post-import-state-changed",
+                phase = phaseName,
+                chunkId = workItem.chunkId,
+            })
             return false
         end
         sliceStart = os.clock()
@@ -941,7 +1142,15 @@ local function syncChunkBatch(
     return true
 end
 
-local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings, desiredChunkIds, lookTarget)
+local function syncPreviewChunks(
+    manifestSource,
+    focusPoint,
+    buildToken,
+    timings,
+    desiredChunkIds,
+    lookTarget,
+    meshCollisionPolicy
+)
     timings = timings or {}
     local syncStartedAt = os.clock()
     local previewSubplanRollout = getPreviewSubplanRollout()
@@ -1001,6 +1210,14 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
         SyncUnloadedChunks = 0,
         SyncYieldCount = 0,
     }, true)
+    updatePreviewProjectFacts(function(projectFacts)
+        projectFacts.preview.sync_state = "running"
+    end)
+    recordPreviewTelemetry("sync_started", {
+        targetChunks = #desiredChunkIds,
+        foregroundTargetChunks = #foregroundChunkIds,
+        backgroundTargetChunks = #backgroundChunkIds,
+    })
 
     for _, chunkId in ipairs(desiredChunkIds) do
         desiredChunkSet[chunkId] = true
@@ -1028,6 +1245,19 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
             SyncActive = false,
             SyncState = "cancelled",
         }, true)
+        updatePreviewProjectFacts(function(projectFacts)
+            projectFacts.preview.sync_state = "cancelled"
+            projectFacts.preview.build_active = false
+            projectFacts.preview.state_apply_pending = false
+            if projectFacts.full_bake.active then
+                projectFacts.full_bake.active = false
+                projectFacts.full_bake.last_result = "cancelled"
+            end
+        end)
+        recordPreviewTelemetry("sync_cancelled", {
+            reason = "missing-preview-root",
+            phase = "startup",
+        })
         return {}
     end
 
@@ -1039,6 +1269,19 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
                 SyncActive = false,
                 SyncState = "cancelled",
             }, true)
+            updatePreviewProjectFacts(function(projectFacts)
+                projectFacts.preview.sync_state = "cancelled"
+                projectFacts.preview.build_active = false
+                projectFacts.preview.state_apply_pending = false
+                if projectFacts.full_bake.active then
+                    projectFacts.full_bake.active = false
+                    projectFacts.full_bake.last_result = "cancelled"
+                end
+            end)
+            recordPreviewTelemetry("sync_cancelled", {
+                reason = "unload-sweep-build-token-changed",
+                phase = "startup",
+            })
             return desiredChunkIds
         end
         if not desiredChunkSet[loadedChunkId] then
@@ -1057,7 +1300,8 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
             "startup",
             chunkRefById,
             focusPoint,
-            lookTarget
+            lookTarget,
+            meshCollisionPolicy
         )
     end)
     if not startupOk then
@@ -1073,6 +1317,10 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
                     SyncActive = false,
                     SyncState = "cancelled",
                 }, true)
+                recordPreviewTelemetry("sync_cancelled", {
+                    reason = "prune-build-token-changed",
+                    phase = "prune",
+                })
                 return desiredChunkIds
             end
 
@@ -1092,6 +1340,15 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
                     SyncActive = false,
                     SyncState = "cancelled",
                 }, true)
+                updatePreviewProjectFacts(function(projectFacts)
+                    projectFacts.preview.sync_state = "cancelled"
+                    projectFacts.preview.build_active = false
+                    projectFacts.preview.state_apply_pending = false
+                    if projectFacts.full_bake.active then
+                        projectFacts.full_bake.active = false
+                        projectFacts.full_bake.last_result = "cancelled"
+                    end
+                end)
                 return desiredChunkIds
             end
         end
@@ -1113,7 +1370,8 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
                 "foreground",
                 chunkRefById,
                 focusPoint,
-                lookTarget
+                lookTarget,
+                meshCollisionPolicy
             )
         end)
         if not foregroundOk then
@@ -1137,7 +1395,8 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
             "background",
             chunkRefById,
             focusPoint,
-            lookTarget
+            lookTarget,
+            meshCollisionPolicy
         )
     end)
     if not backgroundOk then
@@ -1173,6 +1432,9 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
         MaxMs = maxMs,
         Samples = samples,
     }, true)
+    updatePreviewProjectFacts(function(projectFacts)
+        projectFacts.preview.sync_state = "idle"
+    end)
 
     logPreview("sync timing", {
         backgroundMs = math.floor((timings.backgroundMs or 0) + 0.5),
@@ -1204,15 +1466,40 @@ local function syncPreviewChunks(manifestSource, focusPoint, buildToken, timings
         targetChunks = #desiredChunkIds,
         elapsedMs = math.floor(syncElapsedMs + 0.5),
     })
+    recordPreviewTelemetry("sync_complete", {
+        imported = counters.imported,
+        skipped = counters.skipped,
+        unloaded = counters.unloaded,
+        targetChunks = #desiredChunkIds,
+        elapsedMs = math.floor(syncElapsedMs + 0.5),
+    })
 
     return desiredChunkIds
 end
 
 function AustinPreviewBuilder.Clear()
+    previewTelemetryState = AustinPreviewTelemetry.newState()
+    previewProjectFacts = {
+        preview = {
+            build_active = false,
+            state_apply_pending = false,
+            sync_state = "idle",
+        },
+        full_bake = {
+            active = false,
+            last_result = nil,
+        },
+    }
+    AustinPreviewTelemetry.resetWorkspace(Workspace)
     cachedFullManifestHandle = nil
     cachedFullManifestHash = nil
+    cachedPreviewManifestHandle = nil
+    cachedPreviewManifestHash = nil
+    activeManifestHandle = nil
+    activeManifestMode = AustinPreviewRequest.MODE_PREVIEW
     deferredPreviewInvalidationEpoch = nil
     deferredPreviewStateEpoch = nil
+    Workspace:SetAttribute("VertigoPreviewAppliedStateEpoch", nil)
     table.clear(observedChunkCostById)
     table.clear(semanticFingerprintCacheByHandle)
     ImportService.ResetSubplanState()
@@ -1226,8 +1513,12 @@ function AustinPreviewBuilder.Clear()
     end
 end
 
-function AustinPreviewBuilder.Build()
+function AustinPreviewBuilder.Build(request)
     local hardPause = isTimeTravelHardPauseActive()
+    local normalizedRequest = AustinPreviewRequest.Normalize(request)
+    local selectionLoadRadius =
+        AustinPreviewRequest.ResolveLoadRadius(normalizedRequest, AustinPreviewBuilder.LOAD_RADIUS)
+    local meshCollisionPolicy = getPreviewMeshCollisionPolicy(normalizedRequest)
 
     local worldRoot = ensurePreviewRoot()
     local buildToken = HttpService:GenerateGUID(false)
@@ -1246,7 +1537,24 @@ function AustinPreviewBuilder.Build()
         buildEpoch = buildEpoch,
         hardPause = hardPause,
         manifestSource = "pending",
+        requestMode = normalizedRequest.mode,
         syncHash = Workspace:GetAttribute("VertigoSyncHash"),
+    })
+    updatePreviewProjectFacts(function(projectFacts)
+        projectFacts.preview.build_active = true
+        projectFacts.preview.state_apply_pending = false
+        projectFacts.preview.sync_state = "scheduled"
+        if normalizedRequest.mode == AustinPreviewRequest.MODE_FULL_BAKE then
+            projectFacts.full_bake.active = true
+        else
+            projectFacts.full_bake.active = false
+        end
+    end)
+    recordPreviewTelemetry("build_scheduled", {
+        buildToken = buildToken,
+        buildEpoch = buildEpoch,
+        requestMode = normalizedRequest.mode,
+        hardPause = hardPause,
     })
     updatePreviewPerf({
         SyncActive = true,
@@ -1264,66 +1572,125 @@ function AustinPreviewBuilder.Build()
         SyncYieldCount = 0,
     }, true)
 
-    task.spawn(function()
-        local liveWorldRoot = getPreviewRoot()
-        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
-            return
-        end
-
-        local buildTimings = {}
-        local manifestSource = measureMs(buildTimings, "manifestLoadMs", function()
-            return loadManifestSource()
+    local liveWorldRoot = getPreviewRoot()
+    if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
+        updatePreviewProjectFacts(function(projectFacts)
+            projectFacts.preview.build_active = false
+            projectFacts.preview.state_apply_pending = false
+            projectFacts.preview.sync_state = "cancelled"
+            if projectFacts.full_bake.active then
+                projectFacts.full_bake.active = false
+                projectFacts.full_bake.last_result = "cancelled"
+            end
         end)
-        liveWorldRoot = getPreviewRoot()
-        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
-            return
-        end
+        return { worldRoot }
+    end
 
-        local anchor = measureMs(buildTimings, "anchorMs", function()
-            return AustinSpawn.resolveAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS)
-        end)
-        local focusPoint = anchor.focusPoint
-        local spawnPoint = anchor.spawnPoint
-        setAustinAnchorAttributes(focusPoint, spawnPoint)
-        logPreview("anchor resolved", {
-            focusX = math.round(focusPoint.X),
-            focusY = math.round(focusPoint.Y),
-            focusZ = math.round(focusPoint.Z),
-            spawnX = math.round(spawnPoint.X),
-            spawnY = math.round(spawnPoint.Y),
-            spawnZ = math.round(spawnPoint.Z),
-        })
-        local previewChunkIds = measureMs(buildTimings, "radiusMs", function()
-            return manifestSource:GetChunkIdsWithinRadius(focusPoint, AustinPreviewBuilder.LOAD_RADIUS)
-        end)
-        if hardPause then
-            manifestSource = ManifestLoader.FreezeHandleForChunkIds(manifestSource, previewChunkIds)
-        end
-
-        liveWorldRoot = getPreviewRoot()
-        if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
-            return
-        end
-
-        addPreviewBeacon(liveWorldRoot, manifestSource, previewChunkIds, focusPoint)
-        syncPreviewChunks(manifestSource, focusPoint, buildToken, buildTimings, previewChunkIds, anchor.lookTarget)
-
-        local latestRoot = getPreviewRoot()
-        local currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
-        if
-            latestRoot
-            and latestRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) == buildToken
-            and currentEpoch ~= buildEpoch
-        then
-            latestRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", currentEpoch)
-            logPreview("rebuild deferred preview invalidation", {
-                buildToken = buildToken,
-                buildEpoch = buildEpoch,
-                currentEpoch = currentEpoch,
-            })
-            task.defer(AustinPreviewBuilder.Build)
-        end
+    local buildTimings = {}
+    local manifestSource = measureMs(buildTimings, "manifestLoadMs", function()
+        return loadManifestSource(normalizedRequest)
     end)
+    liveWorldRoot = getPreviewRoot()
+    if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
+        updatePreviewProjectFacts(function(projectFacts)
+            projectFacts.preview.build_active = false
+            projectFacts.preview.state_apply_pending = false
+            projectFacts.preview.sync_state = "cancelled"
+            if projectFacts.full_bake.active then
+                projectFacts.full_bake.active = false
+                projectFacts.full_bake.last_result = "cancelled"
+            end
+        end)
+        return { worldRoot }
+    end
+
+    local boundedEnvelope = measureMs(buildTimings, "anchorMs", function()
+        return CanonicalWorldContract.resolveBoundedEnvelope(manifestSource, selectionLoadRadius)
+    end)
+    local focusPoint = boundedEnvelope.focusPoint
+    local spawnPoint = boundedEnvelope.spawnPoint
+    setAustinAnchorAttributes(focusPoint, spawnPoint)
+    logPreview("anchor resolved", {
+        focusX = math.round(focusPoint.X),
+        focusY = math.round(focusPoint.Y),
+        focusZ = math.round(focusPoint.Z),
+        spawnX = math.round(spawnPoint.X),
+        spawnY = math.round(spawnPoint.Y),
+        spawnZ = math.round(spawnPoint.Z),
+    })
+    local radiusStartedAt = os.clock()
+    local previewChunkIds = boundedEnvelope.chunkIds
+    buildTimings.radiusMs = (os.clock() - radiusStartedAt) * 1000
+    if hardPause then
+        manifestSource = ManifestLoader.FreezeHandleForChunkIds(manifestSource, previewChunkIds)
+    end
+    activeManifestHandle = manifestSource
+    activeManifestMode = normalizedRequest.mode
+
+    liveWorldRoot = getPreviewRoot()
+    if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
+        updatePreviewProjectFacts(function(projectFacts)
+            projectFacts.preview.build_active = false
+            projectFacts.preview.state_apply_pending = false
+            projectFacts.preview.sync_state = "cancelled"
+            if projectFacts.full_bake.active then
+                projectFacts.full_bake.active = false
+                projectFacts.full_bake.last_result = "cancelled"
+            end
+        end)
+        return { worldRoot }
+    end
+
+    if normalizedRequest.debugHelpers then
+        addPreviewBeacon(liveWorldRoot, manifestSource, previewChunkIds, focusPoint)
+    else
+        local existingPreviewFocus = liveWorldRoot:FindFirstChild("PreviewFocus")
+        if existingPreviewFocus then
+            existingPreviewFocus:Destroy()
+        end
+    end
+    syncPreviewChunks(
+        manifestSource,
+        focusPoint,
+        buildToken,
+        buildTimings,
+        previewChunkIds,
+        boundedEnvelope.lookTarget,
+        meshCollisionPolicy
+    )
+
+    liveWorldRoot = getPreviewRoot()
+    if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
+        return { worldRoot }
+    end
+
+    local currentStateEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR)
+    updatePreviewProjectFacts(function(projectFacts)
+        projectFacts.preview.state_apply_pending = true
+    end)
+    applyPreviewWorldState(manifestSource, currentStateEpoch)
+
+    local latestRoot = getPreviewRoot()
+    local currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
+    if
+        latestRoot
+        and latestRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) == buildToken
+        and currentEpoch ~= buildEpoch
+    then
+        latestRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", currentEpoch)
+        logPreview("rebuild deferred preview invalidation", {
+            buildToken = buildToken,
+            buildEpoch = buildEpoch,
+            currentEpoch = currentEpoch,
+        })
+        recordPreviewTelemetry("rebuild_deferred_preview_invalidation", {
+            buildEpoch = buildEpoch,
+            currentEpoch = currentEpoch,
+        })
+        task.defer(function()
+            AustinPreviewBuilder.Build(request)
+        end)
+    end
 
     return { worldRoot }
 end
