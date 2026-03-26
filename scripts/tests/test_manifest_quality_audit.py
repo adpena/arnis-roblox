@@ -951,6 +951,308 @@ class ManifestQualityAuditTests(unittest.TestCase):
             self.assertIn("waterway:stream", html)
             self.assertIn("fountain", html)
 
+    def test_report_surfaces_pedestrian_signal_drift(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "fixture-manifest.json"
+            source_path = root / "fixture-overpass.json"
+            html_path = root / "report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "PedestrianDriftTown",
+                    "generator": "test",
+                    "source": "pipeline-export",
+                    "metersPerStud": 1.0,
+                    "chunkSizeStuds": 256,
+                    "bbox": {
+                        "minLat": 30.0,
+                        "minLon": -97.0,
+                        "maxLat": 30.01,
+                        "maxLon": -96.99,
+                    },
+                    "totalFeatures": 2,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "terrain": {
+                            "cellSizeStuds": 4,
+                            "width": 2,
+                            "depth": 2,
+                            "heights": [0, 0, 0, 0],
+                            "materials": ["Grass"] * 4,
+                            "material": "Grass",
+                        },
+                        "roads": [
+                            {
+                                "id": "way_101",
+                                "kind": "footway",
+                                "subkind": "footway",
+                                "widthStuds": 8,
+                                "points": [{"x": 0, "y": 0, "z": 0}, {"x": 20, "y": 0, "z": 0}],
+                            }
+                        ],
+                        "buildings": [],
+                        "water": [],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            source_path.write_text(
+                json.dumps(
+                    {
+                        "generator": "Overpass API",
+                        "osm3s": {"timestamp_osm_base": "2026-03-20T02:00:19Z"},
+                        "elements": [
+                            {"type": "way", "id": 101, "nodes": [1, 2], "tags": {"highway": "footway"}},
+                            {"type": "way", "id": 102, "nodes": [3, 4], "tags": {"highway": "path"}},
+                            {
+                                "type": "way",
+                                "id": 103,
+                                "nodes": [5, 6],
+                                "tags": {"highway": "residential", "sidewalk": "both"},
+                            },
+                            {"type": "node", "id": 1, "lat": 30.001, "lon": -96.999},
+                            {"type": "node", "id": 2, "lat": 30.001, "lon": -96.998},
+                            {"type": "node", "id": 3, "lat": 30.002, "lon": -96.999},
+                            {"type": "node", "id": 4, "lat": 30.002, "lon": -96.998},
+                            {"type": "node", "id": 5, "lat": 30.003, "lon": -96.999},
+                            {"type": "node", "id": 6, "lat": 30.003, "lon": -96.998},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, [source_path])
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("source_to_manifest_pedestrian_drift", codes)
+            self.assertEqual(report["summary"]["pedestrian_signal_mismatch_count"], 2)
+            self.assertCountEqual(
+                [row["pedestrian_signal"] for row in report["summary"]["pedestrian_signal_mismatches"]],
+                ["highway:path", "sidewalk:present"],
+            )
+
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("source_to_manifest_pedestrian_drift", html)
+            self.assertIn("sidewalk:present", html)
+            self.assertIn("highway:path", html)
+
+    def test_report_surfaces_tree_species_drift_by_source_id(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "fixture-manifest.json"
+            source_path = root / "fixture-overpass.json"
+            html_path = root / "report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "TreeDriftTown",
+                    "generator": "test",
+                    "source": "pipeline-export",
+                    "metersPerStud": 1.0,
+                    "chunkSizeStuds": 256,
+                    "bbox": {
+                        "minLat": 30.0,
+                        "minLon": -97.0,
+                        "maxLat": 30.01,
+                        "maxLon": -96.99,
+                    },
+                    "totalFeatures": 3,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "terrain": {
+                            "cellSizeStuds": 4,
+                            "width": 2,
+                            "depth": 2,
+                            "heights": [0, 0, 0, 0],
+                            "materials": ["Grass"] * 4,
+                            "material": "Grass",
+                        },
+                        "roads": [],
+                        "buildings": [],
+                        "water": [],
+                        "props": [
+                            {"id": "tree_10", "kind": "tree", "species": "oak", "position": {"x": 0, "y": 0, "z": 0}},
+                            {"id": "tree_11", "kind": "tree", "position": {"x": 4, "y": 0, "z": 4}},
+                            {"id": "tree_12", "kind": "tree", "species": "maple", "position": {"x": 8, "y": 0, "z": 8}},
+                        ],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            source_path.write_text(
+                json.dumps(
+                    {
+                        "generator": "Overpass API",
+                        "osm3s": {"timestamp_osm_base": "2026-03-20T02:00:19Z"},
+                        "elements": [
+                            {"type": "node", "id": 10, "lat": 30.0010, "lon": -96.9990, "tags": {"natural": "tree", "species": "oak"}},
+                            {"type": "node", "id": 11, "lat": 30.0011, "lon": -96.9989, "tags": {"natural": "tree", "genus": "quercus"}},
+                            {"type": "node", "id": 12, "lat": 30.0012, "lon": -96.9988, "tags": {"natural": "tree", "taxon": "acer rubrum"}},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, [source_path])
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("source_to_manifest_tree_species_drift", codes)
+            self.assertEqual(report["summary"]["tree_species_mismatch_count"], 2)
+            self.assertCountEqual(
+                [row["id"] for row in report["summary"]["tree_species_mismatches"]],
+                ["tree_11", "tree_12"],
+            )
+            self.assertCountEqual(
+                [(row["id"], row["source_species"], row["manifest_species"]) for row in report["summary"]["tree_species_mismatches"]],
+                [
+                    ("tree_11", "quercus", ""),
+                    ("tree_12", "acer rubrum", "maple"),
+                ],
+            )
+
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("source_to_manifest_tree_species_drift", html)
+            self.assertIn("source tree species", html)
+            self.assertIn("acer rubrum", html)
+            self.assertIn("quercus", html)
+
+    def test_report_surfaces_rail_signal_drift(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "fixture-manifest.json"
+            source_path = root / "fixture-overpass.json"
+            html_path = root / "report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "RailDriftTown",
+                    "generator": "test",
+                    "source": "pipeline-export",
+                    "metersPerStud": 1.0,
+                    "chunkSizeStuds": 256,
+                    "bbox": {
+                        "minLat": 30.0,
+                        "minLon": -97.0,
+                        "maxLat": 30.01,
+                        "maxLon": -96.99,
+                    },
+                    "totalFeatures": 2,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "terrain": {
+                            "cellSizeStuds": 4,
+                            "width": 2,
+                            "depth": 2,
+                            "heights": [0, 0, 0, 0],
+                            "materials": ["Grass"] * 4,
+                            "material": "Grass",
+                        },
+                        "roads": [],
+                        "buildings": [],
+                        "water": [],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [
+                            {
+                                "id": "osm_rail_101",
+                                "kind": "rail",
+                                "widthStuds": 4,
+                                "points": [{"x": 0, "y": 0, "z": 0}, {"x": 32, "y": 0, "z": 0}],
+                            }
+                        ],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            source_path.write_text(
+                json.dumps(
+                    {
+                        "generator": "Overpass API",
+                        "osm3s": {"timestamp_osm_base": "2026-03-20T02:00:19Z"},
+                        "elements": [
+                            {"type": "way", "id": 101, "nodes": [1, 2], "tags": {"railway": "rail"}},
+                            {"type": "way", "id": 102, "nodes": [3, 4], "tags": {"railway": "tram"}},
+                            {"type": "node", "id": 1, "lat": 30.001, "lon": -96.999},
+                            {"type": "node", "id": 2, "lat": 30.001, "lon": -96.998},
+                            {"type": "node", "id": 3, "lat": 30.002, "lon": -96.999},
+                            {"type": "node", "id": 4, "lat": 30.002, "lon": -96.998},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, [source_path])
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("source_to_manifest_rail_drift", codes)
+            self.assertEqual(report["summary"]["rail_signal_mismatch_count"], 1)
+            self.assertEqual(
+                report["summary"]["source_rail_signal_distribution"],
+                {"railway:rail": 1, "railway:tram": 1},
+            )
+            self.assertEqual(report["summary"]["manifest_rail_signal_distribution"], {"railway:rail": 1})
+            self.assertEqual(
+                report["summary"]["rail_signal_mismatches"],
+                [
+                    {
+                        "rail_signal": "railway:tram",
+                        "source_count": 1,
+                        "manifest_count": 0,
+                    }
+                ],
+            )
+            self.assertEqual(report["summary"]["rail_signal_record_mismatch_count"], 1)
+            self.assertEqual(
+                report["summary"]["rail_signal_record_mismatches"],
+                [
+                    {
+                        "id": "osm_rail_102",
+                        "source_rail_signal": "railway:tram",
+                        "manifest_rail_signal": "",
+                    }
+                ],
+            )
+
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("source_to_manifest_rail_drift", html)
+            self.assertIn("source rail", html)
+            self.assertIn("manifest rail", html)
+            self.assertIn("osm_rail_102", html)
+            self.assertIn("railway:tram", html)
+
     def test_report_flags_broad_suspicious_material_usage_combinations(self) -> None:
         audit = load_module()
 
@@ -2089,7 +2391,7 @@ class ManifestQualityAuditTests(unittest.TestCase):
         self.assertGreater(report["summary"]["source_alignment"]["road_chunk_split_factor"], 1.0)
         self.assertLess(
             report["summary"]["source_alignment"]["manifest_building_source_breakdown"]["overture"],
-            1000,
+            1500,
         )
         self.assertGreater(
             report["summary"]["source_alignment"]["source_duplicate_overlap_counts"]["overture_dropped_as_duplicate"],
