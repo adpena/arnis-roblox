@@ -55,7 +55,7 @@ Owns:
 Owns:
 
 - file sync and edit-session orchestration
-- authoritative readiness state machine
+- authoritative edit-session and full-bake orchestration readiness state machine
 - target-based readiness query/event APIs
 - edit-session correctness contract consumed by harness tooling
 - authoritative full-bake orchestration
@@ -71,6 +71,29 @@ Owns:
 - screenshots and log capture
 
 It must not be part of correctness.
+
+## Canonical Artifact Boundary
+
+The canonical world source is the versioned compiled Austin manifest family owned by `arnis-roblox`.
+
+For this effort, the minimum canonical artifact contract is:
+
+- manifest schema version
+- chunk identity
+- chunk origin and size
+- canonical anchor
+- source-feature identity
+- allowed subplans/layers
+- terrain/building/road/water/prop payloads
+- chunk registration/signature inputs
+- minimap-static payload inputs
+
+Rules:
+
+- schema evolution is owned by `arnis-roblox`
+- any schema change that affects preview/play/place/export parity must be reflected in the manifest contract docs first
+- bounded preview/runtime fixtures are derived materializations of the canonical artifact family, not a separate schema family
+- baked Roblox place export and scene IR export are downstream projections of that canonical artifact family after full bake
 
 ## Core Design
 
@@ -95,6 +118,25 @@ The system distinguishes:
 Policy may vary by consumer. Content truth may not.
 
 The canonical source must be a full-bake contract, not the current preview-only manifest family.
+
+### 1.5 Canonical Anchor Contract
+
+The canonical anchor contract is part of content truth, not consumer policy.
+
+Minimum anchor fields:
+
+- `focus_point`
+- `spawn_point`
+- `look_target`
+- coordinate basis and world orientation assumptions
+- any canonical offset semantics relative to heuristic selection
+
+Rules:
+
+- for the same canonical artifact, selection envelope, and anchor mode, preview/play/full-bake/export must resolve the same anchor values before policy-specific runtime behavior is applied
+- bounded fixtures may project a smaller envelope, but they may not redefine anchor semantics
+- export alignment, minimap transforms, and startup chunk selection must all derive from the same anchor contract
+- any snapping or rounding used for selection must be deterministic and documented at the contract boundary
 
 ### 2. Consumer Modes On Top Of One World Contract
 
@@ -169,6 +211,15 @@ At minimum, the runtime path must publish stable attributes or equivalent signal
 - `gameplay_ready`
 - `failed`
 
+Observable semantics:
+
+- states are monotonic for a single bootstrap attempt, except that any state may transition to `failed`
+- `world_ready` means startup import completed, the world root exists, required startup chunks are registered, and the runtime root is non-empty
+- `streaming_ready` means streaming has started from a valid registered startup world and has not invalidated startup residency
+- `gameplay_ready` means downstream gameplay systems are allowed to activate; it does not redefine world truth
+- `failed` means the current bootstrap attempt is no longer safe to treat as converged, even if partial world state exists
+- retries must create a new bootstrap attempt identity rather than silently mutating a failed attempt in place
+
 ### 5. Canonical Chunk Registration
 
 Startup import and streaming reconciliation must use the same chunk signatures, registration metadata, and
@@ -201,8 +252,8 @@ Gameplay validation is a separate concern from world-truth validation. The play 
 `arnis-roblox` must emit authoritative runtime hooks and signals for world-ready and gameplay-ready. External
 tooling may consume those hooks, but `arnis-roblox` does not own MCP or screenshot orchestration.
 
-`vertigo-sync` readiness is the authoritative gate for edit targets; runtime bootstrap readiness emitted by
-`arnis-roblox` is the authoritative gate for play.
+`vertigo-sync` readiness is the authoritative gate for edit targets and full-bake orchestration targets.
+`arnis-roblox` runtime bootstrap readiness is the authoritative gate for play/runtime world observation.
 
 Screenshots, probes, and assertions taken before those gates are not trustworthy.
 
@@ -215,6 +266,7 @@ Screenshots, probes, and assertions taken before those gates are not trustworthy
 - verify same chunk IDs, same source-feature IDs, and same minimap payload payloads before policy-specific runtime differences
 - promote the canonical source to the full-bake/runtime world contract
 - keep bounded slices as derived local-dev accelerators only
+- use the already-defined internal readiness contract for parity verification; external-tooling migration can remain later
 
 ### Phase 2: Fix Runtime Bootstrap
 
@@ -279,6 +331,12 @@ Each phase must add or strengthen automation:
 - external-tooling checks for blocked assets, duplicate bootstrap, empty world roots, and overhead roof counts
 - post-ready visual regression snapshots for preview and play
 
+Identity rules:
+
+- canonical source-feature identity must survive into preview/play parity checks
+- canonical source-feature identity must survive into the baked Roblox place and scene IR unless intentionally merged at a documented layer boundary
+- when identity is intentionally collapsed, the export/runtime contract must preserve deterministic ownership metadata back to the canonical source-feature set
+
 ## Recommended Initial Task Order
 
 1. Canonical preview/play/export parity contract
@@ -294,12 +352,12 @@ Each phase must add or strengthen automation:
 
 This effort is complete when:
 
-- play mode looks materially the same as edit preview for the same bounded envelope
-- baked Roblox place export and `.glb`/`.fbx` exports materially match that same world truth
+- for the same bounded envelope contract, preview and play resolve the same chunk IDs and the same canonical source-feature identities before gameplay systems activate
+- baked Roblox place export and `.glb`/`.fbx` exports preserve canonical chunk ownership and canonical source-feature identity or documented deterministic collapsed ownership
 - no duplicate bootstrap remains
-- spawn is deterministic and street-valid
-- minimap is aligned, smooth, and intuitive
+- spawn is deterministic and is validated against the runtime anchor contract plus runtime ground/building-clearance checks
+- minimap uses one canonical transform for all static layers and does not reraster static layers every frame
 - no blocked assets occur in standard play
-- harness proofs are taken only after readiness and are visually trustworthy
-- dev play/edit stay under the configured memory guardrail
+- harness proofs are taken only after authoritative readiness and after the relevant runtime/edit target reports ready
+- dev play/edit stay under the configured memory guardrail with automated failure when the configured budget is exceeded
 - the same contracts can scale outward to larger-radius and future planetary streaming
