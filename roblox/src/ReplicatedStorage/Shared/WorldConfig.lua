@@ -107,11 +107,13 @@ local WorldConfig = {
                 ResumeBudgetRatio = 0.85,
                 HostProbe = {
                     Enabled = true,
+                    CriticalAvailableBytes = 256 * 1024 * 1024,
+                    CriticalPressureLevel = 0.95,
                 },
             },
             SubplanRollout = {
                 Enabled = true,
-                AllowedLayers = { "landuse", "roads" },
+                AllowedLayers = {},
                 AllowedChunkIds = {},
             },
         },

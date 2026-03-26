@@ -11,24 +11,21 @@ return function()
         "local_dev",
         "expected local_dev to remain the default streaming profile"
     )
-    Assert.truthy(
-        resolvedDefault.StreamingEnabled,
-        "expected resolved local_dev profile to keep streaming enabled"
-    )
+    Assert.truthy(resolvedDefault.StreamingEnabled, "expected resolved local_dev profile to keep streaming enabled")
     Assert.equal(
         resolvedDefault.StreamingMaxWorkItemsPerUpdate,
         2,
         "expected local_dev profile to keep a conservative work-item budget"
     )
     Assert.equal(
-        resolvedDefault.SubplanRollout.AllowedLayers[1],
-        "landuse",
-        "expected local_dev profile to stage rollout through cheaper core layers first"
+        #resolvedDefault.SubplanRollout.AllowedLayers,
+        0,
+        "expected local_dev profile to keep the full layer set available around the default Studio spawn"
     )
     Assert.equal(
-        resolvedDefault.SubplanRollout.AllowedLayers[2],
-        "roads",
-        "expected local_dev profile to keep roads in the staged rollout"
+        #resolvedDefault.SubplanRollout.AllowedChunkIds,
+        0,
+        "expected local_dev profile not to gate default Studio playthroughs behind a chunk allowlist"
     )
     Assert.truthy(
         resolvedDefault.MemoryGuardrails.Enabled,
@@ -47,6 +44,16 @@ return function()
     Assert.truthy(
         resolvedDefault.MemoryGuardrails.HostProbe.Enabled,
         "expected local_dev profile to enable host probing"
+    )
+    Assert.equal(
+        resolvedDefault.MemoryGuardrails.HostProbe.CriticalAvailableBytes,
+        256 * 1024 * 1024,
+        "expected local_dev profile to reserve some host-memory headroom before admitting more work"
+    )
+    Assert.equal(
+        resolvedDefault.MemoryGuardrails.HostProbe.CriticalPressureLevel,
+        0.95,
+        "expected local_dev profile to pause when harness-observed pressure is effectively at the ceiling"
     )
 
     local resolvedProduction = StreamingRuntimeConfig.Resolve({

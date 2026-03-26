@@ -36,7 +36,7 @@ local AUSTIN_CANONICAL_WORLD_NAMES = table.freeze({
     AustinPreviewDowntown = true,
 })
 
-local AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS = -192
+local AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS = -256
 local anchorCache = setmetatable({}, { __mode = "k" })
 
 local function getLoadCenter(loadCenter)
@@ -110,8 +110,7 @@ local function materializeChunksForSelection(manifest, loadRadius, loadCenter)
     end
 
     if type(manifest.LoadChunksWithinRadius) == "function" then
-        local focusCenter = loadCenter
-            or AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
+        local focusCenter = loadCenter or AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
         local ok, chunksOrErr = pcall(function()
             return manifest:LoadChunksWithinRadius(focusCenter, loadRadius)
         end)
@@ -211,44 +210,51 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
     local heuristicFocusPoint = AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
     local bestPoint
     local bestScore
-    local selectionCenter = loadCenter or heuristicFocusPoint
-    local chunks = materializeChunksForSelection(manifest, loadRadius, heuristicFocusPoint)
 
-    for _, chunk in ipairs(chunks) do
-        if isChunkWithinRadius(chunk, manifest, loadRadius, selectionCenter) then
-            local origin = chunk.originStuds or { x = 0, y = 0, z = 0 }
-            for _, road in ipairs(chunk.roads or {}) do
-                if EXCLUDED_SPAWN_KINDS[road.kind] then
-                    continue
-                end
-                local priority = getRoadPriority(road.kind)
-                local points = road.points or {}
-
-                for i = 1, #points - 1 do
-                    local p1 = points[i]
-                    local p2 = points[i + 1]
-                    local midX = origin.x + (p1.x + p2.x) * 0.5
-                    local midY = origin.y + (p1.y + p2.y) * 0.5
-                    local midZ = origin.z + (p1.z + p2.z) * 0.5
-                    local dx = midX - heuristicFocusPoint.X
-                    local dz = midZ - heuristicFocusPoint.Z
-                    local distSq = dx * dx + dz * dz
-                    if math.abs(midY - heuristicFocusPoint.Y) > 18 then
+    local function considerChunks(chunksToScan, radiusLimit, centerPoint)
+        for _, chunk in ipairs(chunksToScan) do
+            if isChunkWithinRadius(chunk, manifest, radiusLimit, centerPoint) then
+                local origin = chunk.originStuds or { x = 0, y = 0, z = 0 }
+                for _, road in ipairs(chunk.roads or {}) do
+                    if EXCLUDED_SPAWN_KINDS[road.kind] then
                         continue
                     end
-                    local score = priority * 100000000 + distSq
+                    local priority = getRoadPriority(road.kind)
+                    local points = road.points or {}
 
-                    if not bestScore or score < bestScore then
-                        bestScore = score
-                        bestPoint = Vector3.new(midX, midY, midZ)
+                    for i = 1, #points - 1 do
+                        local p1 = points[i]
+                        local p2 = points[i + 1]
+                        local midX = origin.x + (p1.x + p2.x) * 0.5
+                        local midY = origin.y + (p1.y + p2.y) * 0.5
+                        local midZ = origin.z + (p1.z + p2.z) * 0.5
+                        local dx = midX - heuristicFocusPoint.X
+                        local dz = midZ - heuristicFocusPoint.Z
+                        local distSq = dx * dx + dz * dz
+                        if math.abs(midY - heuristicFocusPoint.Y) > 18 then
+                            continue
+                        end
+                        local score = priority * 100000000 + distSq
+
+                        if not bestScore or score < bestScore then
+                            bestScore = score
+                            bestPoint = Vector3.new(midX, midY, midZ)
+                        end
                     end
                 end
             end
         end
     end
 
-    local spawnPoint =
-        applyAustinCanonicalAnchorOverride(manifest, bestPoint or heuristicFocusPoint)
+    local selectionCenter = loadCenter or heuristicFocusPoint
+    local chunks = materializeChunksForSelection(manifest, loadRadius, heuristicFocusPoint)
+    considerChunks(chunks, loadRadius, selectionCenter)
+
+    if bestPoint == nil and loadCenter == nil then
+        considerChunks(materializeChunksForSelection(manifest, nil, heuristicFocusPoint), nil, nil)
+    end
+
+    local spawnPoint = applyAustinCanonicalAnchorOverride(manifest, bestPoint or heuristicFocusPoint)
     local anchor = {
         heuristicFocusPoint = heuristicFocusPoint,
         focusPoint = spawnPoint,
@@ -301,6 +307,7 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
         return Vector3.new(0, 0, 0)
     end
 
+    local effectiveLoadRadius = if loadCenter ~= nil then loadRadius else nil
     local bounds = {}
     local chunkRefs = iterChunkRefs(manifest)
     local weightedX = 0
@@ -314,7 +321,7 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
     end
 
     for _, chunk in ipairs(chunkRefs) do
-        if isChunkWithinRadius(chunk, manifest, loadRadius, loadCenter) then
+        if isChunkWithinRadius(chunk, manifest, effectiveLoadRadius, loadCenter) then
             local origin = chunk.originStuds or { x = 0, y = 0, z = 0 }
 
             if not chunk.roads and not chunk.buildings and not chunk.props then

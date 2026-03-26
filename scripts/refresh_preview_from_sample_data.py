@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Refresh the Studio preview manifest from the current exported Austin JSON manifest.
+Refresh the Studio preview manifest from the current exported Austin manifest artifacts.
 
 This keeps edit-mode preview aligned with the same authoritative manifest content
 used to generate runtime sample-data, instead of relying on stale checked-in
@@ -10,8 +10,10 @@ preview fixtures or copying runtime Lua shards wholesale.
 from __future__ import annotations
 
 import json
+import mmap
 import re
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +23,41 @@ from json_manifest_to_sharded_lua import CHUNK_LIST_FIELDS, INDEX_ONLY_FIELDS, l
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_INDEX = ROOT / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
 SOURCE_JSON = ROOT / "rust" / "out" / "austin-manifest.json"
+SOURCE_SQLITE = ROOT / "rust" / "out" / "austin-manifest.sqlite"
 PREVIEW_DIR = ROOT / "roblox" / "src" / "ServerScriptService" / "StudioPreview"
 PREVIEW_INDEX = PREVIEW_DIR / "AustinPreviewManifestIndex.lua"
 PREVIEW_SHARDS = PREVIEW_DIR / "AustinPreviewManifestChunks"
 MAX_PREVIEW_BYTES = 199_998
 
 TARGET_CHUNK_IDS = ["-1_-1", "0_-1", "-1_0", "0_0"]
+PREVIEW_LOAD_RADIUS_STUDS = 1024
+PREVIEW_SELECTION_GUTTER_STUDS = 256
+DEFAULT_CHUNK_SIZE_STUDS = 256
+AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS = -256
+COUNTED_FEATURE_FIELDS = ("roads", "rails", "buildings", "water", "props", "landuse", "barriers")
+EXCLUDED_SPAWN_KINDS = {"motorway", "motorway_link", "trunk"}
+ROAD_PRIORITY = {
+    "footway": 10,
+    "pedestrian": 12,
+    "path": 14,
+    "cycleway": 16,
+    "living_street": 18,
+    "service": 20,
+    "residential": 24,
+    "unclassified": 28,
+    "tertiary": 36,
+    "secondary": 52,
+    "primary": 80,
+    "trunk": 140,
+    "motorway_link": 220,
+    "motorway": 260,
+    "track": 280,
+}
 
 SCHEMA_RE = re.compile(r'return \{schemaVersion="(?P<schema>[^"]+)"')
+CHUNK_SIZE_RE = re.compile(r"\bchunkSizeStuds\s*=\s*(?P<chunk_size>-?\d+(?:\.\d+)?)")
 NUMERIC_STRING_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+JSON_WHITESPACE = b" \t\r\n"
 
 
 def _extract_lua_table(text: str, field_name: str) -> str | None:
@@ -164,6 +192,248 @@ def _format_lua_value(value: Any) -> str:
     return str(value)
 
 
+def _skip_json_whitespace(buffer: mmap.mmap, position: int) -> int:
+    while position < len(buffer) and buffer[position] in JSON_WHITESPACE:
+        position += 1
+    return position
+
+
+def _scan_json_string_end(buffer: mmap.mmap, position: int) -> int:
+    if position >= len(buffer) or buffer[position] != ord('"'):
+        raise SystemExit(f"expected JSON string at byte offset {position} in {SOURCE_JSON}")
+
+    position += 1
+    escaped = False
+    while position < len(buffer):
+        byte = buffer[position]
+        if escaped:
+            escaped = False
+        elif byte == ord("\\"):
+            escaped = True
+        elif byte == ord('"'):
+            return position + 1
+        position += 1
+
+    raise SystemExit(f"unterminated JSON string in {SOURCE_JSON}")
+
+
+def _scan_json_value_end(buffer: mmap.mmap, position: int) -> int:
+    position = _skip_json_whitespace(buffer, position)
+    if position >= len(buffer):
+        raise SystemExit(f"unexpected end of JSON while parsing {SOURCE_JSON}")
+
+    token = buffer[position]
+    if token == ord('"'):
+        return _scan_json_string_end(buffer, position)
+
+    if token in (ord("{"), ord("[")):
+        stack = [token]
+        position += 1
+        in_string = False
+        escaped = False
+
+        while position < len(buffer):
+            byte = buffer[position]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif byte == ord("\\"):
+                    escaped = True
+                elif byte == ord('"'):
+                    in_string = False
+            else:
+                if byte == ord('"'):
+                    in_string = True
+                elif byte in (ord("{"), ord("[")):
+                    stack.append(byte)
+                elif byte in (ord("}"), ord("]")):
+                    opener = stack.pop()
+                    if (opener, byte) not in ((ord("{"), ord("}")), (ord("["), ord("]"))):
+                        raise SystemExit(f"malformed JSON nesting in {SOURCE_JSON}")
+                    if not stack:
+                        return position + 1
+            position += 1
+
+        raise SystemExit(f"unterminated JSON object/array in {SOURCE_JSON}")
+
+    while position < len(buffer) and buffer[position] not in b",]}" + JSON_WHITESPACE:
+        position += 1
+    return position
+
+
+def _decode_json_segment(buffer: mmap.mmap, start: int, end: int) -> Any:
+    try:
+        return json.loads(buffer[start:end].decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"could not decode JSON segment from {SOURCE_JSON}: {exc}") from exc
+
+
+def _extract_target_chunks_from_manifest(
+    buffer: mmap.mmap,
+    position: int,
+    target_chunk_ids: set[str],
+    *,
+    allow_early_return: bool,
+) -> tuple[int, dict[str, dict[str, Any]], bool]:
+    position = _skip_json_whitespace(buffer, position)
+    if position >= len(buffer) or buffer[position] != ord("["):
+        raise SystemExit(f"missing chunks array in {SOURCE_JSON}")
+
+    position += 1
+    remaining = set(target_chunk_ids)
+    extracted: dict[str, dict[str, Any]] = {}
+
+    while position < len(buffer):
+        position = _skip_json_whitespace(buffer, position)
+        if position >= len(buffer):
+            break
+        if buffer[position] == ord("]"):
+            return position + 1, extracted, False
+
+        value_end = _scan_json_value_end(buffer, position)
+        chunk = _decode_json_segment(buffer, position, value_end)
+        if not isinstance(chunk, dict):
+            raise SystemExit(f"encountered non-object chunk entry in {SOURCE_JSON}")
+
+        chunk_id = chunk.get("id")
+        if isinstance(chunk_id, str) and chunk_id in remaining:
+            extracted[chunk_id] = chunk
+            remaining.remove(chunk_id)
+            if not remaining and allow_early_return:
+                return value_end, extracted, True
+
+        position = _skip_json_whitespace(buffer, value_end)
+        if position < len(buffer) and buffer[position] == ord(","):
+            position += 1
+            continue
+        if position < len(buffer) and buffer[position] == ord("]"):
+            return position + 1, extracted, False
+        raise SystemExit(f"malformed chunks array in {SOURCE_JSON}")
+
+    raise SystemExit(f"unterminated chunks array in {SOURCE_JSON}")
+
+
+def load_source_manifest_subset_from_sqlite(
+    source_sqlite: Path, target_chunk_ids: list[str]
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    connection = sqlite3.connect(source_sqlite)
+    try:
+        row = connection.execute(
+            """
+            SELECT schema_version
+            FROM manifest_meta
+            WHERE singleton_id = 1
+            """
+        ).fetchone()
+        if row is None or not isinstance(row[0], str) or not row[0]:
+            raise SystemExit(f"missing schemaVersion in {source_sqlite}")
+        schema_version = row[0]
+
+        source_chunks: dict[str, dict[str, Any]] = {}
+        for chunk_id in target_chunk_ids:
+            row = connection.execute(
+                """
+                SELECT chunk_json
+                FROM manifest_chunks
+                WHERE chunk_id = ?
+                """,
+                (chunk_id,),
+            ).fetchone()
+            if row is None or not isinstance(row[0], str):
+                raise SystemExit(f"missing chunk {chunk_id} in {source_sqlite}")
+            chunk = json.loads(row[0])
+            if not isinstance(chunk, dict):
+                raise SystemExit(f"malformed chunk {chunk_id} in {source_sqlite}")
+            source_chunks[chunk_id] = chunk
+    finally:
+        connection.close()
+
+    return schema_version, source_chunks
+
+
+def load_source_manifest_subset(
+    source_json: Path, target_chunk_ids: list[str], *, source_sqlite: Path | None = None
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    if source_sqlite is not None and source_sqlite.exists():
+        return load_source_manifest_subset_from_sqlite(source_sqlite, target_chunk_ids)
+
+    target_chunk_id_set = set(target_chunk_ids)
+    if not target_chunk_id_set:
+        raise SystemExit("target_chunk_ids must not be empty")
+
+    with source_json.open("rb") as handle:
+        try:
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as buffer:
+                position = _skip_json_whitespace(buffer, 0)
+                if position >= len(buffer) or buffer[position] != ord("{"):
+                    raise SystemExit(f"{source_json} is not a JSON object manifest")
+
+                position += 1
+                schema_version: str | None = None
+                source_chunks: dict[str, dict[str, Any]] = {}
+
+                while position < len(buffer):
+                    position = _skip_json_whitespace(buffer, position)
+                    if position >= len(buffer):
+                        break
+                    if buffer[position] == ord("}"):
+                        break
+
+                    key_end = _scan_json_string_end(buffer, position)
+                    key = _decode_json_segment(buffer, position, key_end)
+                    if not isinstance(key, str):
+                        raise SystemExit(f"malformed top-level key in {source_json}")
+
+                    position = _skip_json_whitespace(buffer, key_end)
+                    if position >= len(buffer) or buffer[position] != ord(":"):
+                        raise SystemExit(f"missing ':' after key {key!r} in {source_json}")
+
+                    value_start = _skip_json_whitespace(buffer, position + 1)
+                    if key == "schemaVersion":
+                        value_end = _scan_json_value_end(buffer, value_start)
+                        schema_value = _decode_json_segment(buffer, value_start, value_end)
+                        if not isinstance(schema_value, str) or not schema_value:
+                            raise SystemExit(f"missing schemaVersion in {source_json}")
+                        schema_version = schema_value
+                        position = value_end
+                    elif key == "chunks":
+                        position, extracted_chunks, completed_early = _extract_target_chunks_from_manifest(
+                            buffer,
+                            value_start,
+                            target_chunk_id_set - set(source_chunks),
+                            allow_early_return=schema_version is not None,
+                        )
+                        source_chunks.update(extracted_chunks)
+                        if completed_early and schema_version is not None:
+                            missing_chunks = [chunk_id for chunk_id in target_chunk_ids if chunk_id not in source_chunks]
+                            if missing_chunks:
+                                raise SystemExit(
+                                    "missing chunk(s) " + ", ".join(missing_chunks) + f" in {source_json}"
+                                )
+                            return schema_version, source_chunks
+                    else:
+                        position = _scan_json_value_end(buffer, value_start)
+
+                    position = _skip_json_whitespace(buffer, position)
+                    if position < len(buffer) and buffer[position] == ord(","):
+                        position += 1
+                        continue
+                    if position < len(buffer) and buffer[position] == ord("}"):
+                        break
+
+        except ValueError as exc:
+            raise SystemExit(f"could not memory-map {source_json}: {exc}") from exc
+
+    if schema_version is None:
+        raise SystemExit(f"missing schemaVersion in {source_json}")
+
+    missing_chunks = [chunk_id for chunk_id in target_chunk_ids if chunk_id not in source_chunks]
+    if missing_chunks:
+        raise SystemExit("missing chunk(s) " + ", ".join(missing_chunks) + f" in {source_json}")
+
+    return schema_version, source_chunks
+
+
 def parse_source_index(source_text: str) -> tuple[str, dict[str, dict[str, Any]]]:
     schema_match = SCHEMA_RE.search(source_text)
     if schema_match is None:
@@ -200,7 +470,230 @@ def parse_source_index(source_text: str) -> tuple[str, dict[str, dict[str, Any]]
     return schema_match.group("schema"), chunk_refs
 
 
-def write_preview_index(schema_version: str, chunk_refs: list[tuple[str, dict[str, Any]]], shard_names: list[str]) -> None:
+def parse_source_chunk_size_studs(source_text: str) -> float:
+    match = CHUNK_SIZE_RE.search(source_text)
+    if match is None:
+        return float(DEFAULT_CHUNK_SIZE_STUDS)
+    return float(match.group("chunk_size"))
+
+
+def _coerce_float(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and NUMERIC_STRING_RE.match(value):
+        return float(value)
+    raise SystemExit(f"expected numeric chunk coordinate, got {value!r}")
+
+
+def derive_preview_chunk_ids(
+    chunk_refs: dict[str, dict[str, Any]],
+    *,
+    seed_chunk_ids: list[str] | tuple[str, ...] = TARGET_CHUNK_IDS,
+    chunk_size_studs: float = DEFAULT_CHUNK_SIZE_STUDS,
+    load_radius_studs: float = PREVIEW_LOAD_RADIUS_STUDS,
+    gutter_studs: float = PREVIEW_SELECTION_GUTTER_STUDS,
+) -> list[str]:
+    if not chunk_refs:
+        return list(seed_chunk_ids)
+
+    seed_centers: list[tuple[float, float]] = []
+    for chunk_id in seed_chunk_ids:
+        chunk_ref = chunk_refs.get(chunk_id)
+        if chunk_ref is None:
+            raise SystemExit(f"missing seed chunk {chunk_id} in AustinManifestIndex.lua")
+        center_x = _coerce_float(chunk_ref["x"]) + chunk_size_studs * 0.5
+        center_z = _coerce_float(chunk_ref["z"]) + chunk_size_studs * 0.5
+        seed_centers.append((center_x, center_z))
+
+    focus_x = sum(center_x for center_x, _ in seed_centers) / len(seed_centers)
+    focus_z = sum(center_z for _, center_z in seed_centers) / len(seed_centers)
+    selection_radius_sq = (load_radius_studs + gutter_studs) ** 2
+
+    selected_chunk_ids: list[str] = []
+    for chunk_id, chunk_ref in chunk_refs.items():
+        center_x = _coerce_float(chunk_ref["x"]) + chunk_size_studs * 0.5
+        center_z = _coerce_float(chunk_ref["z"]) + chunk_size_studs * 0.5
+        dx = center_x - focus_x
+        dz = center_z - focus_z
+        if dx * dx + dz * dz <= selection_radius_sq:
+            selected_chunk_ids.append(chunk_id)
+
+    selected_chunk_ids.sort(key=lambda chunk_id: tuple(int(part) for part in chunk_id.split("_", 1)))
+    return selected_chunk_ids
+
+
+def resolve_source_sqlite_path(source_json: Path) -> Path:
+    expected_sqlite = source_json.with_suffix(".sqlite")
+    if SOURCE_SQLITE == expected_sqlite:
+        return SOURCE_SQLITE
+    return expected_sqlite
+
+
+def compute_preview_canonical_anchor_position(
+    source_chunks: dict[str, dict[str, Any]],
+    *,
+    seed_chunk_ids: list[str] | tuple[str, ...] = TARGET_CHUNK_IDS,
+    chunk_size_studs: float = DEFAULT_CHUNK_SIZE_STUDS,
+) -> tuple[float, float, float]:
+    weighted_x = 0.0
+    weighted_z = 0.0
+    weighted_count = 0
+    bounds: dict[str, float] = {}
+
+    def accumulate_point(x: float, y: float, z: float) -> None:
+        bounds["minX"] = min(bounds.get("minX", x), x)
+        bounds["maxX"] = max(bounds.get("maxX", x), x)
+        bounds["minY"] = min(bounds.get("minY", y), y)
+        bounds["maxY"] = max(bounds.get("maxY", y), y)
+        bounds["minZ"] = min(bounds.get("minZ", z), z)
+        bounds["maxZ"] = max(bounds.get("maxZ", z), z)
+
+    def accumulate_ground_y(y: float) -> None:
+        bounds["minGroundY"] = min(bounds.get("minGroundY", y), y)
+        bounds["maxGroundY"] = max(bounds.get("maxGroundY", y), y)
+
+    def accumulate_focus(x: float, z: float) -> None:
+        nonlocal weighted_x, weighted_z, weighted_count
+        weighted_x += x
+        weighted_z += z
+        weighted_count += 1
+
+    for chunk_id in seed_chunk_ids:
+        chunk = source_chunks.get(chunk_id)
+        if chunk is None:
+            raise SystemExit(f"missing preview seed chunk {chunk_id} in {SOURCE_JSON}")
+        origin = chunk.get("originStuds") or {"x": 0, "y": 0, "z": 0}
+        origin_x = float(origin.get("x", 0))
+        origin_y = float(origin.get("y", 0))
+        origin_z = float(origin.get("z", 0))
+
+        if not chunk.get("roads") and not chunk.get("buildings") and not chunk.get("props"):
+            accumulate_point(origin_x, origin_y, origin_z)
+            accumulate_point(origin_x + chunk_size_studs, origin_y, origin_z + chunk_size_studs)
+            accumulate_ground_y(origin_y)
+
+        terrain = chunk.get("terrain")
+        if isinstance(terrain, dict) and isinstance(terrain.get("heights"), list):
+            for height in terrain["heights"]:
+                accumulate_ground_y(origin_y + float(height or 0))
+
+        for road in chunk.get("roads", []):
+            for point in road.get("points", []):
+                world_x = origin_x + float(point.get("x", 0))
+                world_y = origin_y + float(point.get("y", 0))
+                world_z = origin_z + float(point.get("z", 0))
+                accumulate_point(world_x, world_y, world_z)
+                accumulate_ground_y(world_y)
+                accumulate_focus(world_x, world_z)
+
+        for building in chunk.get("buildings", []):
+            base_y = origin_y + float(building.get("baseY") or 0)
+            for point in building.get("footprint", []):
+                world_x = origin_x + float(point.get("x", 0))
+                world_z = origin_z + float(point.get("z", 0))
+                accumulate_point(world_x, base_y, world_z)
+                accumulate_focus(world_x, world_z)
+            accumulate_ground_y(base_y)
+
+        for prop in chunk.get("props", []):
+            position = prop.get("position")
+            if isinstance(position, dict):
+                world_x = origin_x + float(position.get("x", 0))
+                world_y = origin_y + float(position.get("y", 0))
+                world_z = origin_z + float(position.get("z", 0))
+                accumulate_point(world_x, world_y, world_z)
+                accumulate_focus(world_x, world_z)
+
+    if not bounds:
+        return (0.0, 0.0, 0.0)
+
+    if weighted_count > 0:
+        heuristic_focus_x = weighted_x / weighted_count
+        heuristic_focus_z = weighted_z / weighted_count
+    else:
+        heuristic_focus_x = (bounds["minX"] + bounds["maxX"]) * 0.5
+        heuristic_focus_z = (bounds["minZ"] + bounds["maxZ"]) * 0.5
+
+    if "minGroundY" in bounds and "maxGroundY" in bounds:
+        heuristic_focus_y = (bounds["minGroundY"] + bounds["maxGroundY"]) * 0.5
+    else:
+        heuristic_focus_y = (bounds["minY"] + bounds["maxY"]) * 0.5
+
+    best_point: tuple[float, float, float] | None = None
+    best_score: float | None = None
+    for chunk_id in seed_chunk_ids:
+        chunk = source_chunks[chunk_id]
+        origin = chunk.get("originStuds") or {"x": 0, "y": 0, "z": 0}
+        origin_x = float(origin.get("x", 0))
+        origin_y = float(origin.get("y", 0))
+        origin_z = float(origin.get("z", 0))
+        for road in chunk.get("roads", []):
+            kind = road.get("kind")
+            if kind in EXCLUDED_SPAWN_KINDS:
+                continue
+            priority = ROAD_PRIORITY.get(kind, 65)
+            points = road.get("points") or []
+            for index in range(len(points) - 1):
+                p1 = points[index]
+                p2 = points[index + 1]
+                mid_x = origin_x + (float(p1.get("x", 0)) + float(p2.get("x", 0))) * 0.5
+                mid_y = origin_y + (float(p1.get("y", 0)) + float(p2.get("y", 0))) * 0.5
+                mid_z = origin_z + (float(p1.get("z", 0)) + float(p2.get("z", 0))) * 0.5
+                if abs(mid_y - heuristic_focus_y) > 18:
+                    continue
+                dx = mid_x - heuristic_focus_x
+                dz = mid_z - heuristic_focus_z
+                score = priority * 100000000 + dx * dx + dz * dz
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_point = (mid_x, mid_y, mid_z)
+
+    spawn_x, spawn_y, spawn_z = best_point or (heuristic_focus_x, heuristic_focus_y, heuristic_focus_z)
+    return (spawn_x, spawn_y, spawn_z + AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS)
+
+
+def _coerce_feature_count(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def count_chunk_features(chunk: dict[str, Any]) -> int:
+    total = 1 if isinstance(chunk.get("terrain"), dict) else 0
+    for field in COUNTED_FEATURE_FIELDS:
+        values = chunk.get(field)
+        if isinstance(values, list):
+            total += len(values)
+    return total
+
+
+def compute_preview_total_features(
+    chunk_refs: list[tuple[str, dict[str, Any]]], source_chunks: dict[str, dict[str, Any]]
+) -> int:
+    total_features = 0
+    for chunk_id, chunk_ref in chunk_refs:
+        feature_count = _coerce_feature_count(chunk_ref.get("featureCount"))
+        if feature_count is None:
+            source_chunk = source_chunks.get(chunk_id)
+            if source_chunk is None:
+                raise SystemExit(f"missing chunk {chunk_id} in {SOURCE_JSON}")
+            feature_count = count_chunk_features(source_chunk)
+        total_features += feature_count
+    return total_features
+
+
+def write_preview_index(
+    schema_version: str,
+    total_features: int,
+    chunk_refs: list[tuple[str, dict[str, Any]]],
+    shard_names: list[str],
+    *,
+    canonical_anchor_position: tuple[float, float, float],
+    chunk_size_studs: float,
+) -> None:
+    anchor_x, anchor_y, anchor_z = canonical_anchor_position
 
     lines = [
         "return {",
@@ -210,10 +703,15 @@ def write_preview_index(schema_version: str, chunk_refs: list[tuple[str, dict[st
         '        generator = "arbx_roblox_export",',
         '        source = "pipeline-export",',
         "        metersPerStud = 1,",
-        "        chunkSizeStuds = 256,",
+        f"        chunkSizeStuds = {_format_lua_value(chunk_size_studs)},",
         "        bbox = { minLat = 30.245, minLon = -97.765, maxLat = 30.305, maxLon = -97.715 },",
+        f"        totalFeatures = {total_features},",
         "        canonicalAnchor = {",
-        "            positionOffsetFromHeuristicStuds = { x = 0, y = 0, z = -192 },",
+        "            positionStuds = { "
+        f"x = {_format_lua_value(round(anchor_x, 4))}, "
+        f"y = {_format_lua_value(round(anchor_y, 4))}, "
+        f"z = {_format_lua_value(round(anchor_z, 4))} "
+        "},",
         "            lookDirectionStuds = { x = 0, y = 0, z = 1 },",
         "        },",
         "        notes = {",
@@ -385,14 +883,19 @@ def fragment_preview_chunk(chunk: dict, max_bytes: int) -> list[dict]:
 def main() -> int:
     source_text = SOURCE_INDEX.read_text(encoding="utf-8")
     _, source_chunk_refs = parse_source_index(source_text)
-    source_manifest = json.loads(SOURCE_JSON.read_text(encoding="utf-8"))
-    schema_version = source_manifest.get("schemaVersion")
-    if not isinstance(schema_version, str) or not schema_version:
-        raise SystemExit(f"missing schemaVersion in {SOURCE_JSON}")
-    source_chunks = {chunk["id"]: chunk for chunk in source_manifest.get("chunks", [])}
+    chunk_size_studs = parse_source_chunk_size_studs(source_text)
+    preview_chunk_ids = derive_preview_chunk_ids(source_chunk_refs, chunk_size_studs=chunk_size_studs)
+    source_sqlite = resolve_source_sqlite_path(SOURCE_JSON)
+    schema_version, source_chunks = load_source_manifest_subset(
+        SOURCE_JSON, preview_chunk_ids, source_sqlite=source_sqlite
+    )
+    canonical_anchor_position = compute_preview_canonical_anchor_position(
+        source_chunks,
+        chunk_size_studs=chunk_size_studs,
+    )
 
     preview_chunk_refs: list[tuple[str, dict[str, Any]]] = []
-    for chunk_id in TARGET_CHUNK_IDS:
+    for chunk_id in preview_chunk_ids:
         chunk_ref = source_chunk_refs.get(chunk_id)
         if chunk_ref is None:
             raise SystemExit(f"missing chunk {chunk_id} in AustinManifestIndex.lua")
@@ -438,9 +941,18 @@ def main() -> int:
             shard_names.append(shard_name)
             shard_index += 1
 
-    write_preview_index(schema_version, preview_chunk_refs, shard_names)
+    total_features = compute_preview_total_features(preview_chunk_refs, source_chunks)
+    write_preview_index(
+        schema_version,
+        total_features,
+        preview_chunk_refs,
+        shard_names,
+        canonical_anchor_position=canonical_anchor_position,
+        chunk_size_studs=chunk_size_studs,
+    )
 
     print(f"Refreshed StudioPreview from {SOURCE_JSON}")
+    print(f"Selected {len(preview_chunk_ids)} preview chunks from AustinManifestIndex.lua")
     print(f"Wrote {len(shard_names)} preview shards to {PREVIEW_SHARDS}")
     return 0
 
