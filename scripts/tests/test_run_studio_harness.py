@@ -8,12 +8,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS_PATH = ROOT / "scripts" / "run_studio_harness.sh"
+POLICY_PATH = ROOT / "scripts" / "studio_harness_policy.py"
 
 
 class RunStudioHarnessTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = HARNESS_PATH.read_text(encoding="utf-8")
+        cls.policy_text = POLICY_PATH.read_text(encoding="utf-8")
 
     def test_capture_mcp_probe_uses_shared_stop_decision_policy(self) -> None:
         match = re.search(
@@ -75,11 +77,78 @@ class RunStudioHarnessTests(unittest.TestCase):
     def test_harness_manages_vsync_serve_lifecycle_for_fresh_process_bootstrap(self) -> None:
         self.assertIn("ensure_vsync_server_running()", self.text)
         self.assertIn("stop_vsync_server()", self.text)
+        self.assertIn('VSYNC_SERVER_LOG="$(mktemp -t arnis-vsync-serve)"', self.text)
         self.assertIn('curl -sf "$VSYNC_SERVER_URL/project"', self.text)
         self.assertIn('VSYNC_SERVER_PID=""', self.text)
         self.assertIn("resolve_vsync_server_url()", self.text)
         self.assertIn("ensure_vsync_server_running", self.text)
         self.assertIn("stop_vsync_server", self.text)
+
+    def test_edit_mode_waits_for_vsync_readiness_before_mcp_actions(self) -> None:
+        self.assertIn("wait_for_vsync_edit_readiness()", self.text)
+        self.assertIn("wait_for_readiness(", self.policy_text)
+        self.assertIn('/readiness?target=', self.policy_text)
+        self.assertIn("build_readiness_expectation(", self.policy_text)
+        self.assertIn("expected_target", self.policy_text)
+        self.assertIn("expected_epoch", self.policy_text)
+        self.assertIn("expected_incarnation_id", self.policy_text)
+        self.assertIn('"readiness": readiness', self.text)
+        self.assertIn(
+            'wait_for_log_pattern "\\\\[VertigoSync\\\\] Snapshot reconciled|\\\\[VertigoSync\\\\] Plugin initialized"',
+            self.text,
+        )
+        self.assertIn("edit-mode setup did not reach Vertigo Sync readiness before timeout", self.text)
+        readiness_index = self.text.find(
+            'edit_readiness_json="$(VSYNC_EDIT_READINESS_TARGET="$edit_readiness_target" wait_for_vsync_edit_readiness)"'
+        )
+        mcp_index = self.text.find(
+            'client.call_tool(\n        "run_code",\n        {"command": luau, "readiness": readiness},'
+        )
+        self.assertGreaterEqual(readiness_index, 0, "expected edit-mode flow to wait for Vertigo Sync readiness")
+        self.assertGreaterEqual(mcp_index, 0, "expected edit-mode flow to invoke MCP edit actions")
+        self.assertLess(
+            readiness_index,
+            mcp_index,
+            "expected Vertigo Sync readiness gating before edit-mode MCP actions",
+        )
+
+    def test_vsync_readiness_policy_builds_authoritative_mcp_expectation(self) -> None:
+        self.assertIn("def fetch_readiness(", self.policy_text)
+        self.assertIn("def wait_for_readiness(", self.policy_text)
+        self.assertIn("def build_readiness_expectation(", self.policy_text)
+        self.assertIn("from urllib import request", self.policy_text)
+        self.assertIn("request.urlopen", self.policy_text)
+        self.assertIn("target=", self.policy_text)
+        self.assertIn("expected_target", self.policy_text)
+        self.assertIn("expected_epoch", self.policy_text)
+        self.assertIn("expected_incarnation_id", self.policy_text)
+
+    def test_harness_samples_memory_and_enforces_configurable_budget(self) -> None:
+        self.assertIn('MEMORY_LIMIT_MB="${HARNESS_MEMORY_LIMIT_MB:-4096}"', self.text)
+        self.assertIn('MEMORY_SAMPLE_SECONDS="${HARNESS_MEMORY_SAMPLE_SECONDS:-2}"', self.text)
+        self.assertIn('ALLOW_HEAVY_PREVIEW_SOURCE="${HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE:-0}"', self.text)
+        self.assertIn("--memory-limit-mb MB", self.text)
+        self.assertIn("--memory-sample-sec SEC", self.text)
+        self.assertIn("sample_harness_memory_json()", self.text)
+        self.assertIn("start_memory_monitor()", self.text)
+        self.assertIn("stop_memory_monitor()", self.text)
+        self.assertIn("summarize_memory_monitor()", self.text)
+        self.assertIn('kill -TERM "$parent_pid"', self.text)
+        self.assertIn("aggregate harness RSS exceeded budget:", self.text)
+        self.assertIn('"[harness] memory peaks "', self.text)
+        self.assertIn('f"total={peak_total / 1024:.1f}MB "', self.text)
+        self.assertIn("start_memory_monitor", self.text)
+        self.assertIn("stop_memory_monitor", self.text)
+        self.assertIn("summarize_memory_monitor", self.text)
+
+    def test_harness_captures_preview_telemetry_artifacts(self) -> None:
+        self.assertIn("capture_preview_telemetry_artifacts()", self.text)
+        self.assertIn('local preview_telemetry_dir="${ARNIS_PREVIEW_TELEMETRY_DIR:-/tmp}"', self.text)
+        self.assertIn('curl -sf "$VSYNC_SERVER_URL/plugin/state"', self.text)
+        self.assertIn('local plugin_state_json="$preview_telemetry_dir/arnis-preview-plugin-state.json"', self.text)
+        self.assertIn('local telemetry_summary_txt="$preview_telemetry_dir/arnis-preview-telemetry-summary.txt"', self.text)
+        self.assertIn('log "preview telemetry saved: $plugin_state_json"', self.text)
+        self.assertIn('log "preview telemetry summary: $(cat "$telemetry_summary_txt")"', self.text)
 
     def test_harness_does_not_ignore_vsync_plugin_install_failure(self) -> None:
         self.assertIn("ensure_vsync_plugin_installed()", self.text)
@@ -91,6 +160,32 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn("RUNALL_EDIT_ENABLED=0", self.text)
         self.assertIn("set_runall_entry_modes \"$edit_enabled\" \"$play_enabled\"", self.text)
 
+    def test_harness_supports_optional_luau_spec_filter(self) -> None:
+        self.assertIn("--spec-filter NAME", self.text)
+        self.assertIn('RUNALL_SPEC_FILTER=""', self.text)
+        self.assertIn('RUNALL_SPEC_FILTER="$2"', self.text)
+        self.assertIn('set_runall_entry_filter "$RUNALL_SPEC_FILTER"', self.text)
+        self.assertIn('runall_spec_filter = os.environ.get("RUNALL_SPEC_FILTER", "").strip()', self.text)
+        self.assertIn("local runAllSpecFilter = ", self.text)
+        self.assertIn("specNameFilter = runAllSpecFilter", self.text)
+
+    def test_runall_entry_edit_mode_is_disabled_when_mcp_drives_edit_tests(self) -> None:
+        self.assertIn('if [[ $RUNALL_EDIT_ENABLED -eq 0 || -n "$MCP_BINARY" ]]; then', self.text)
+
+    def test_edit_mcp_path_skips_preview_probe_for_non_preview_isolated_specs(self) -> None:
+        self.assertIn('run_preview_probe = runall_spec_filter == "" or "Preview" in runall_spec_filter', self.text)
+        self.assertIn("local runPreviewProbe = ", self.text)
+        self.assertIn("if runPreviewProbe then", self.text)
+        self.assertIn('status = "skipped"', self.text)
+        self.assertIn('skipReason = "spec_filter_non_preview"', self.text)
+
+    def test_auto_built_clean_place_uses_one_canonical_output_path(self) -> None:
+        self.assertIn('local output_place="$roblox_dir/out/arnis-test-clean.rbxlx"', self.text)
+        self.assertIn('"$VSYNC_BINARY" --root "$roblox_dir" build --project "$build_project" --output "$output_place"', self.text)
+        self.assertIn('printf \'%s\\n\' "$output_place"', self.text)
+        self.assertIn('if output_place="$(build_clean_place)"; then', self.text)
+        self.assertNotIn("--project out/default.build.project.json --output out/arnis-test-clean.rbxlx", self.text)
+
     def test_emit_scene_markers_split_large_roof_coverage_payloads(self) -> None:
         self.assertIn('print(marker .. "_SCALAR " .. HttpService:JSONEncode({', self.text)
         self.assertIn('print(marker .. "_ROOF_USAGE_BUCKET " .. HttpService:JSONEncode({', self.text)
@@ -98,6 +193,8 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('print(marker .. "_WATER_TYPE_BUCKET " .. HttpService:JSONEncode({', self.text)
         self.assertIn('print(marker .. "_WATER_KIND_BUCKET " .. HttpService:JSONEncode({', self.text)
         self.assertIn('emitSourceIdBatches(marker, "_WATER_KIND_IDS_BATCH"', self.text)
+        self.assertIn('print(marker .. "_RAIL_KIND_BUCKET " .. HttpService:JSONEncode({', self.text)
+        self.assertIn('emitSourceIdBatches(marker, "_RAIL_KIND_IDS_BATCH"', self.text)
         self.assertIn('print(marker .. "_ROAD_KIND_BUCKET " .. HttpService:JSONEncode({', self.text)
         self.assertIn('emitSourceIdBatches(marker, "_ROAD_KIND_IDS_BATCH"', self.text)
         self.assertIn('print(marker .. "_ROAD_SUBKIND_BUCKET " .. HttpService:JSONEncode({', self.text)
@@ -119,6 +216,7 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('key ~= "ambientPropInstanceCountByKind"', self.text)
         self.assertIn('key ~= "treeInstanceCountBySpecies"', self.text)
         self.assertIn('key ~= "vegetationInstanceCountByKind"', self.text)
+        self.assertIn('key ~= "railReceiptCountByKind"', self.text)
         self.assertIn('statsKey ~= "_sourceIdSet"', self.text)
 
     def test_emit_source_id_batches_use_character_budget_not_fixed_count(self) -> None:
@@ -165,6 +263,19 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('local edit_html="$scene_audit_dir/arnis-scene-fidelity-edit.html"', self.text)
         self.assertIn('local play_json="$scene_audit_dir/arnis-scene-fidelity-play.json"', self.text)
         self.assertIn('local play_html="$scene_audit_dir/arnis-scene-fidelity-play.html"', self.text)
+
+    def test_scene_fidelity_audits_prefer_sqlite_manifest_store_when_available(self) -> None:
+        self.assertIn('local manifest_sqlite_path="$ROOT_DIR/rust/out/austin-manifest.sqlite"', self.text)
+        self.assertIn('local manifest_scene_index_args=()', self.text)
+        self.assertIn('manifest_scene_index_args=(--manifest-sqlite "$manifest_sqlite_path")', self.text)
+        self.assertIn('manifest_scene_index_args=(--manifest "$manifest_path")', self.text)
+        self.assertIn('"${manifest_scene_index_args[@]}"', self.text)
+
+    def test_harness_fails_fast_on_heavy_preview_source_unless_explicitly_allowed(self) -> None:
+        self.assertIn("preview_source_looks_heavy()", self.text)
+        self.assertIn('HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE=1', self.text)
+        self.assertIn('if [[ "$ALLOW_HEAVY_PREVIEW_SOURCE" != "1" ]] && preview_source_looks_heavy; then', self.text)
+        self.assertIn('preview source appears to be insane/yolo-grade terrain data', self.text)
 
 
 if __name__ == "__main__":

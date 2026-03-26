@@ -27,6 +27,7 @@ DO_PLAY=1
 KEEP_RUNALL_ENABLED=0
 RUNALL_EDIT_ENABLED=1
 RUNALL_PLAY_ENABLED=0
+RUNALL_SPEC_FILTER=""
 CLOSE_ON_EXIT=1
 ALLOW_TAKEOVER=0
 RELAUNCH_FOR_PLAY=0
@@ -103,6 +104,7 @@ local function emitSceneMarkers(marker, phase, rootName, radius, sceneSummary)
     local vegetationInstanceCountByKind = {}
     local waterSurfacePartCountByType = {}
     local waterSurfacePartCountByKind = {}
+    local railReceiptCountByKind = {}
     local roadSurfacePartCountByKind = {}
     local roadSurfacePartCountBySubkind = {}
     local buildingModelCountByWallMaterial = {}
@@ -127,6 +129,8 @@ local function emitSceneMarkers(marker, phase, rootName, radius, sceneSummary)
                 waterSurfacePartCountByType = value
             elseif key == "waterSurfacePartCountByKind" and typeof(value) == "table" then
                 waterSurfacePartCountByKind = value
+            elseif key == "railReceiptCountByKind" and typeof(value) == "table" then
+                railReceiptCountByKind = value
             elseif key == "roadSurfacePartCountByKind" and typeof(value) == "table" then
                 roadSurfacePartCountByKind = value
             elseif key == "roadSurfacePartCountBySubkind" and typeof(value) == "table" then
@@ -144,6 +148,7 @@ local function emitSceneMarkers(marker, phase, rootName, radius, sceneSummary)
                 and key ~= "vegetationInstanceCountByKind"
                 and key ~= "waterSurfacePartCountByType"
                 and key ~= "waterSurfacePartCountByKind"
+                and key ~= "railReceiptCountByKind"
                 and key ~= "roadSurfacePartCountByKind"
                 and key ~= "roadSurfacePartCountBySubkind"
                 and key ~= "buildingModelCountByWallMaterial"
@@ -236,6 +241,15 @@ local function emitSceneMarkers(marker, phase, rootName, radius, sceneSummary)
         }))
         emitSourceIdBatches(marker, "_WATER_KIND_IDS_BATCH", phase, rootName, bucket, stats.sourceIds)
     end
+    for bucket, stats in pairs(railReceiptCountByKind) do
+        print(marker .. "_RAIL_KIND_BUCKET " .. HttpService:JSONEncode({
+            phase = phase,
+            rootName = rootName,
+            bucket = bucket,
+            stats = cloneStatsWithoutSourceIds(stats),
+        }))
+        emitSourceIdBatches(marker, "_RAIL_KIND_IDS_BATCH", phase, rootName, bucket, stats.sourceIds)
+    end
     for bucket, stats in pairs(roadSurfacePartCountByKind) do
         print(marker .. "_ROAD_KIND_BUCKET " .. HttpService:JSONEncode({
             phase = phase,
@@ -307,6 +321,12 @@ STARTED_AT=0
 CLEANUP_RUNNING=0
 HARNESS_OWNS_STUDIO=0
 ATTACHED_TO_EXISTING_STUDIO=0
+MEMORY_MONITOR_PID=""
+MEMORY_METRICS_FILE=""
+MEMORY_GUARD_FILE=""
+MEMORY_LIMIT_MB="${HARNESS_MEMORY_LIMIT_MB:-4096}"
+MEMORY_SAMPLE_SECONDS="${HARNESS_MEMORY_SAMPLE_SECONDS:-2}"
+ALLOW_HEAVY_PREVIEW_SOURCE="${HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE:-0}"
 PLUGIN_SANDBOX_DIR=""
 PLUGIN_SANDBOX_SOURCE_DIR=""
 FOREIGN_PLUGIN_CANDIDATES=(
@@ -335,11 +355,15 @@ Options:
   --keep-enabled       Leave RunAllEntry.server.lua enabled after the script exits.
   --skip-edit-tests    Skip edit-mode RunAll execution and only validate preview/import behavior.
   --play-tests         Also enable RunAllEntry.server.lua during Play mode.
+  --spec-filter NAME   Run only the named Luau spec module during RunAll, for example StreamingPriority.spec.lua.
   --keep-open          Leave Roblox Studio open when the harness exits.
   --takeover           Allow the harness to take control of an already-running Studio session. By default this now means quit/relaunch for a clean harness-owned session.
   --hard-restart       Force a full Studio quit/relaunch cycle even when reuse would otherwise be allowed.
   --relaunch-play      Relaunch Studio before Play mode. Disabled by default to avoid save-dialog churn on fresh templates.
   --skip-plugin-smoke Skip the final Vertigo Sync Studio log smoke check.
+  --memory-limit-mb MB Aggregate RSS budget for Roblox Studio + vsync server + MCP helper during the harness run. Set 0 to disable the fail-fast guard. Default: ${HARNESS_MEMORY_LIMIT_MB:-4096}
+  --memory-sample-sec SEC  Seconds between harness memory telemetry samples. Default: ${HARNESS_MEMORY_SAMPLE_SECONDS:-2}
+  HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE=1  Allow the harness to run against preview sample data that looks like insane/yolo terrain density.
   --help               Show this message.
 
 This script:
@@ -363,7 +387,7 @@ build_clean_place() {
   local build_project="$roblox_dir/out/default.build.project.json"
 
   if [[ -z "$VSYNC_BINARY" ]]; then
-    return 0
+    return 1
   fi
 
   mkdir -p "$roblox_dir/out"
@@ -381,13 +405,10 @@ data.pop("vertigoSync", None)
 data.pop("globIgnorePaths", None)
 out.write_text(json.dumps(data, indent=2), encoding="utf-8")
 PY
-  (
-    cd "$roblox_dir"
-    mkdir -p out
-    "$VSYNC_BINARY" --root "$roblox_dir" build --project out/default.build.project.json --output out/arnis-test-clean.rbxlx >/dev/null
-  )
+  "$VSYNC_BINARY" --root "$roblox_dir" build --project "$build_project" --output "$output_place" >/dev/null
 
   [[ -f "$output_place" ]]
+  printf '%s\n' "$output_place"
 }
 
 resolve_vsync_binary() {
@@ -482,13 +503,13 @@ ensure_vsync_plugin_installed() {
 }
 
 auto_prepare_place() {
-  local output_place="$ROOT_DIR/roblox/out/arnis-test-clean.rbxlx"
+  local output_place=""
 
   if [[ $PLACE_PATH_CUSTOM -eq 1 ]]; then
     return
   fi
 
-  if build_clean_place; then
+  if output_place="$(build_clean_place)"; then
     PLACE_PATH="$output_place"
     PLACE_PATH_CUSTOM=1
     AUTO_BUILT_PLACE=1
@@ -541,6 +562,10 @@ while [[ $# -gt 0 ]]; do
       RUNALL_PLAY_ENABLED=1
       shift
       ;;
+    --spec-filter)
+      RUNALL_SPEC_FILTER="$2"
+      shift 2
+      ;;
     --keep-open)
       CLOSE_ON_EXIT=0
       shift
@@ -561,6 +586,14 @@ while [[ $# -gt 0 ]]; do
     --skip-plugin-smoke)
       SKIP_PLUGIN_SMOKE=1
       shift
+      ;;
+    --memory-limit-mb)
+      MEMORY_LIMIT_MB="$2"
+      shift 2
+      ;;
+    --memory-sample-sec)
+      MEMORY_SAMPLE_SECONDS="$2"
+      shift 2
       ;;
     --help)
       usage
@@ -586,6 +619,262 @@ fi
 
 log() {
   printf '[harness] %s\n' "$*"
+}
+
+preview_source_looks_heavy() {
+  local preview_chunk_dir="$ROOT_DIR/roblox/src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks"
+  if [[ ! -d "$preview_chunk_dir" ]]; then
+    return 1
+  fi
+  if rg -q 'cellSizeStuds = 1' "$preview_chunk_dir"/*.lua 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+if [[ "$ALLOW_HEAVY_PREVIEW_SOURCE" != "1" ]] && preview_source_looks_heavy; then
+  echo "[harness] preview source appears to be insane/yolo-grade terrain data; regenerate lighter Austin preview assets or rerun with HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE=1" >&2
+  exit 1
+fi
+
+sample_harness_memory_json() {
+  python3 - "$VSYNC_SERVER_PID" <<'PY'
+import json
+import subprocess
+import sys
+
+vsync_pid_raw = sys.argv[1].strip()
+vsync_pid = int(vsync_pid_raw) if vsync_pid_raw.isdigit() else None
+
+try:
+    ps_output = subprocess.check_output(["ps", "axo", "pid=,rss=,comm=,args="], text=True)
+except Exception:
+    print(json.dumps({"studio_kb": 0, "vsync_kb": 0, "mcp_kb": 0, "total_kb": 0}))
+    raise SystemExit(0)
+
+studio_pids = set()
+try:
+    studio_pid_output = subprocess.check_output(["pgrep", "-x", "RobloxStudio"], text=True)
+    for raw_pid in studio_pid_output.splitlines():
+        raw_pid = raw_pid.strip()
+        if raw_pid.isdigit():
+            studio_pids.add(int(raw_pid))
+except Exception:
+    pass
+
+studio_kb = 0
+vsync_kb = 0
+mcp_kb = 0
+for raw_line in ps_output.splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    parts = line.split(None, 3)
+    if len(parts) < 4:
+        continue
+    pid_raw, rss_raw, comm, args = parts
+    try:
+        pid = int(pid_raw)
+        rss_kb = int(rss_raw)
+    except ValueError:
+        continue
+    if pid in studio_pids or comm == "RobloxStudio" or "RobloxStudio.app/Contents/MacOS/RobloxStudio" in args:
+        studio_kb += rss_kb
+    if vsync_pid is not None and pid == vsync_pid:
+        vsync_kb += rss_kb
+    if "rbx-studio-mcp" in args:
+        mcp_kb += rss_kb
+
+print(
+    json.dumps(
+        {
+            "studio_kb": studio_kb,
+            "vsync_kb": vsync_kb,
+            "mcp_kb": mcp_kb,
+            "total_kb": studio_kb + vsync_kb + mcp_kb,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+start_memory_monitor() {
+  if [[ -n "$MEMORY_MONITOR_PID" ]]; then
+    return
+  fi
+
+  MEMORY_METRICS_FILE="$(mktemp)"
+  MEMORY_GUARD_FILE="$(mktemp)"
+  local limit_mb="$MEMORY_LIMIT_MB"
+  local sample_seconds="$MEMORY_SAMPLE_SECONDS"
+  local parent_pid="$$"
+
+  (
+    while true; do
+      local sample_json=""
+      sample_json="$(sample_harness_memory_json 2>/dev/null || printf '')"
+      if [[ -n "$sample_json" ]]; then
+        local sample_line=""
+        sample_line="$(python3 - "$sample_json" <<'PY'
+import json
+import sys
+
+sample = json.loads(sys.argv[1])
+print(
+    f"{sample.get('total_kb', 0)},{sample.get('studio_kb', 0)},{sample.get('vsync_kb', 0)},{sample.get('mcp_kb', 0)}"
+)
+PY
+)"
+        printf '%s\n' "$sample_line" >>"$MEMORY_METRICS_FILE"
+
+        if [[ "$limit_mb" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+          python3 - "$sample_json" "$limit_mb" "$MEMORY_GUARD_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sample = json.loads(sys.argv[1])
+limit_mb = float(sys.argv[2])
+guard_path = Path(sys.argv[3])
+if limit_mb <= 0:
+    raise SystemExit(0)
+
+total_mb = sample.get("total_kb", 0) / 1024
+if total_mb <= limit_mb:
+    raise SystemExit(0)
+
+guard_path.write_text(
+    "aggregate harness RSS exceeded budget: "
+    f"total={total_mb:.1f}MB limit={limit_mb:.1f}MB "
+    f"studio={sample.get('studio_kb', 0) / 1024:.1f}MB "
+    f"vsync={sample.get('vsync_kb', 0) / 1024:.1f}MB "
+    f"mcp={sample.get('mcp_kb', 0) / 1024:.1f}MB",
+    encoding="utf-8",
+)
+raise SystemExit(1)
+PY
+          local breach_exit=$?
+          if [[ $breach_exit -ne 0 ]]; then
+            kill -TERM "$parent_pid" >/dev/null 2>&1 || true
+            exit 0
+          fi
+        fi
+      fi
+
+      sleep "$sample_seconds"
+    done
+  ) &
+  MEMORY_MONITOR_PID="$!"
+}
+
+stop_memory_monitor() {
+  if [[ -n "$MEMORY_MONITOR_PID" ]]; then
+    kill "$MEMORY_MONITOR_PID" >/dev/null 2>&1 || true
+    wait "$MEMORY_MONITOR_PID" >/dev/null 2>&1 || true
+    MEMORY_MONITOR_PID=""
+  fi
+}
+
+summarize_memory_monitor() {
+  if [[ -z "$MEMORY_METRICS_FILE" || ! -f "$MEMORY_METRICS_FILE" ]]; then
+    return
+  fi
+
+  python3 - "$MEMORY_METRICS_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+metrics_path = Path(sys.argv[1])
+peak_total = 0
+peak_studio = 0
+peak_vsync = 0
+peak_mcp = 0
+for line in metrics_path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    total_kb, studio_kb, vsync_kb, mcp_kb = (int(part) for part in line.split(",", 3))
+    peak_total = max(peak_total, total_kb)
+    peak_studio = max(peak_studio, studio_kb)
+    peak_vsync = max(peak_vsync, vsync_kb)
+    peak_mcp = max(peak_mcp, mcp_kb)
+
+print(
+    "[harness] memory peaks "
+    f"total={peak_total / 1024:.1f}MB "
+    f"studio={peak_studio / 1024:.1f}MB "
+    f"vsync={peak_vsync / 1024:.1f}MB "
+    f"mcp={peak_mcp / 1024:.1f}MB"
+)
+PY
+
+  if [[ -f "$MEMORY_GUARD_FILE" && -s "$MEMORY_GUARD_FILE" ]]; then
+    log "$(cat "$MEMORY_GUARD_FILE")"
+  fi
+
+  rm -f "$MEMORY_METRICS_FILE" "$MEMORY_GUARD_FILE"
+  MEMORY_METRICS_FILE=""
+  MEMORY_GUARD_FILE=""
+}
+
+capture_preview_telemetry_artifacts() {
+  if [[ -z "$VSYNC_SERVER_URL" ]]; then
+    return 0
+  fi
+
+  local preview_telemetry_dir="${ARNIS_PREVIEW_TELEMETRY_DIR:-/tmp}"
+  mkdir -p "$preview_telemetry_dir"
+
+  local plugin_state_json="$preview_telemetry_dir/arnis-preview-plugin-state.json"
+  local telemetry_summary_txt="$preview_telemetry_dir/arnis-preview-telemetry-summary.txt"
+
+  if ! curl -sf "$VSYNC_SERVER_URL/plugin/state" -o "$plugin_state_json"; then
+    log "preview telemetry unavailable from $VSYNC_SERVER_URL/plugin/state"
+    rm -f "$plugin_state_json" "$telemetry_summary_txt"
+    return 0
+  fi
+
+  python3 - "$plugin_state_json" "$telemetry_summary_txt" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+plugin_state_path = Path(sys.argv[1])
+summary_path = Path(sys.argv[2])
+data = json.loads(plugin_state_path.read_text(encoding="utf-8"))
+runtime = data.get("preview_runtime") or {}
+project = data.get("preview_project") or {}
+project_counters = project.get("counters") or {}
+project_chunks = project.get("chunkTotals") or {}
+
+summary = (
+    "runtime="
+    f"schedule={runtime.get('schedule_count', 0)} "
+    f"run={runtime.get('run_count', 0)} "
+    f"success={runtime.get('success_count', 0)} "
+    f"failure={runtime.get('failure_count', 0)} "
+    f"skip={runtime.get('skip_count', 0)} "
+    f"retry={runtime.get('auto_retry_count', 0)} "
+    f"busy={runtime.get('queued_while_busy_count', 0)}; "
+    "project="
+    f"build={project_counters.get('build_scheduled', 0)} "
+    f"sync_complete={project_counters.get('sync_complete', 0)} "
+    f"sync_cancelled={project_counters.get('sync_cancelled', 0)} "
+    f"state_apply_succeeded={project_counters.get('state_apply_succeeded', 0)} "
+    f"state_apply_failed={project_counters.get('state_apply_failed', 0)} "
+    f"imported={project_chunks.get('imported', 0)} "
+    f"skipped={project_chunks.get('skipped', 0)} "
+    f"unloaded={project_chunks.get('unloaded', 0)}"
+)
+
+summary_path.write_text(summary, encoding="utf-8")
+print(summary)
+PY
+
+  log "preview telemetry saved: $plugin_state_json"
+  if [[ -f "$telemetry_summary_txt" ]]; then
+    log "preview telemetry summary: $(cat "$telemetry_summary_txt")"
+  fi
 }
 
 latest_studio_log() {
@@ -727,6 +1016,31 @@ path.write_text(text, encoding="utf-8")
 PY
 }
 
+set_runall_entry_filter() {
+  local spec_filter="$1"
+  python3 - "$RUNALL_ENTRY" "$spec_filter" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+spec_filter = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+marker = 'local SPEC_NAME_FILTER = ""'
+
+if marker not in text:
+    for line in text.splitlines():
+        if line.startswith("local SPEC_NAME_FILTER = "):
+            marker = line
+            break
+    else:
+        raise SystemExit("RunAllEntry spec filter constant not found")
+
+replacement = f"local SPEC_NAME_FILTER = {spec_filter!r}"
+text = text.replace(marker, replacement, 1)
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 disable_runall_entry() {
   set_runall_entry_modes false false
 }
@@ -738,6 +1052,7 @@ cleanup() {
   fi
   CLEANUP_RUNNING=1
   stop_log_pipe
+  stop_memory_monitor
   if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" ]]; then
     rm -f "$LOG_SLICE_FILE"
   fi
@@ -761,6 +1076,7 @@ cleanup() {
   elif [[ $CLOSE_ON_EXIT -eq 1 && $HARNESS_OWNS_STUDIO -eq 1 ]]; then
     log "preserving harness-owned Studio session on exit (reason=$cleanup_reason status=$session_status exit=$exit_code)"
   fi
+  summarize_memory_monitor
   stop_vsync_server
   restore_runall_entry
   restore_foreign_plugins
@@ -772,7 +1088,7 @@ trap 'exit 130' INT TERM
 enable_runall_entry() {
   local edit_enabled="true"
   local play_enabled="false"
-  if [[ $RUNALL_EDIT_ENABLED -eq 0 ]]; then
+  if [[ $RUNALL_EDIT_ENABLED -eq 0 || -n "$MCP_BINARY" ]]; then
     edit_enabled="false"
   fi
   if [[ $RUNALL_PLAY_ENABLED -eq 1 ]]; then
@@ -781,6 +1097,7 @@ enable_runall_entry() {
   RUNALL_BACKUP="$(mktemp)"
   cp "$RUNALL_ENTRY" "$RUNALL_BACKUP"
   set_runall_entry_modes "$edit_enabled" "$play_enabled"
+  set_runall_entry_filter "$RUNALL_SPEC_FILTER"
 }
 
 quit_studio() {
@@ -1204,7 +1521,7 @@ ensure_vsync_server_running() {
   fi
 
   local roblox_dir="$ROOT_DIR/roblox"
-  VSYNC_SERVER_LOG="$(mktemp /tmp/arnis-vsync-serve.XXXXXX.log)"
+  VSYNC_SERVER_LOG="$(mktemp -t arnis-vsync-serve)"
   (
     cd "$roblox_dir"
     exec "$VSYNC_BINARY" serve --project default.project.json
@@ -1236,6 +1553,30 @@ ensure_vsync_server_running() {
   fi
   stop_vsync_server
   return 1
+}
+
+wait_for_vsync_edit_readiness() {
+  local readiness_target="${VSYNC_EDIT_READINESS_TARGET:-preview}"
+  local readiness_timeout="${VSYNC_READINESS_TIMEOUT:-$PATTERN_WAIT_SECONDS}"
+
+  VSYNC_SERVER_URL="$VSYNC_SERVER_URL" \
+  VSYNC_READINESS_TARGET="$readiness_target" \
+  VSYNC_READINESS_TIMEOUT="$readiness_timeout" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, '/Users/adpena/Projects/arnis-roblox/scripts')
+from studio_harness_policy import wait_for_readiness
+
+record = wait_for_readiness(
+    os.environ["VSYNC_SERVER_URL"],
+    os.environ["VSYNC_READINESS_TARGET"],
+    int(os.environ["VSYNC_READINESS_TIMEOUT"]),
+)
+print(json.dumps(record, separators=(",", ":")))
+PY
 }
 
 wait_for_studio_process() {
@@ -1764,6 +2105,16 @@ run_edit_actions_via_mcp() {
     return 1
   fi
 
+  local edit_readiness_target="preview"
+  if [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then
+    edit_readiness_target="edit_sync"
+  fi
+  local edit_readiness_json
+  edit_readiness_json="$(VSYNC_EDIT_READINESS_TARGET="$edit_readiness_target" wait_for_vsync_edit_readiness)" || {
+    log "edit-mode setup did not reach Vertigo Sync readiness before timeout"
+    return 1
+  }
+
   local mcp_wall_timeout=$((EDIT_WAIT_SECONDS + 150))
   if [[ $mcp_wall_timeout -lt 120 ]]; then
     mcp_wall_timeout=120
@@ -1801,7 +2152,9 @@ run_edit_actions_via_mcp() {
     MCP_WALL_TIMEOUT="$mcp_wall_timeout" \
     MCP_PREFLIGHT_SESSION_STATUS="$preflight_status_for_mcp" \
     MCP_LOG_INDICATES_PLAY="$log_indicates_play_for_mcp" \
+    VSYNC_READINESS_JSON="$edit_readiness_json" \
     RUNALL_EDIT_ENABLED="$RUNALL_EDIT_ENABLED" \
+    RUNALL_SPEC_FILTER="$RUNALL_SPEC_FILTER" \
     python3 - <<'PY'
 import json
 import os
@@ -1814,14 +2167,18 @@ from studio_mcp_direct_lib import JsonRpcStdioClient
 
 root = Path('/Users/adpena/Projects/arnis-roblox')
 sys.path.insert(0, str(root / 'scripts'))
-from studio_harness_policy import mcp_mode_stop_decision
+from studio_harness_policy import build_readiness_expectation, mcp_mode_stop_decision
 
 edit_wait_seconds = max(5, int(os.environ.get("EDIT_WAIT_SECONDS", "20")))
 wall_clock_timeout = max(int(os.environ.get("MCP_WALL_TIMEOUT", "120")), edit_wait_seconds + 90, 120)
 preflight_session_status = os.environ.get("MCP_PREFLIGHT_SESSION_STATUS", "unknown")
 log_indicates_play = os.environ.get("MCP_LOG_INDICATES_PLAY", "false").strip().lower() in {"1", "true", "yes", "on"}
 scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
+readiness_record = json.loads(os.environ["VSYNC_READINESS_JSON"])
+readiness = build_readiness_expectation(readiness_record)
 run_edit_tests = os.environ.get("RUNALL_EDIT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+runall_spec_filter = os.environ.get("RUNALL_SPEC_FILTER", "").strip()
+run_preview_probe = runall_spec_filter == "" or "Preview" in runall_spec_filter
 
 def on_alarm(_signum, _frame):
     raise TimeoutError(f"run_edit_actions_via_mcp timed out after {wall_clock_timeout}s")
@@ -1863,6 +2220,8 @@ local payload = {
     errors = {},
 }
 local runEditTests = """ + ("true" if run_edit_tests else "false") + """
+local runAllSpecFilter = """ + json.dumps(runall_spec_filter) + """
+local runPreviewProbe = """ + ("true" if run_preview_probe else "false") + """
 
 local function waitForPreviewSyncCompletion(timeoutSeconds)
     local deadline = os.clock() + timeoutSeconds
@@ -1889,7 +2248,9 @@ if runEditTests then
         local runAllModule = testsFolder:FindFirstChild("RunAll")
         if runAllModule then
             local ok, runAllResult = pcall(function()
-                return require(runAllModule).run()
+                return require(runAllModule).run({
+                    specNameFilter = runAllSpecFilter,
+                })
             end)
             if ok then
                 payload.runAll = runAllResult
@@ -1904,43 +2265,50 @@ if runEditTests then
     end
 end
 
-local previewFolder = ServerScriptService:FindFirstChild("StudioPreview")
-if previewFolder then
-    local previewBuilderModule = previewFolder:FindFirstChild("AustinPreviewBuilder")
-    if previewBuilderModule then
-        local ok, previewResult = pcall(function()
-            return require(previewBuilderModule).Build()
-        end)
-        if ok then
-            local root, waitError = waitForPreviewSyncCompletion(90)
-            local scene = SceneAudit.summarizeWorld(root)
-            payload.preview = {
-                status = if waitError then "timeout" else "ok",
-                resultType = typeof(previewResult),
-                rootExists = root ~= nil,
-                children = root and #root:GetChildren() or 0,
-                sceneSummary = {
-                    buildingModelCount = scene and scene.buildingModelCount or 0,
-                    buildingModelsWithDirectRoof = scene and scene.buildingModelsWithDirectRoof or 0,
-                    buildingModelsWithRoofClosureDeck = scene and scene.buildingModelsWithRoofClosureDeck or 0,
-                    roadSurfacePartCount = scene and scene.roadSurfacePartCount or 0,
-                    waterSurfacePartCount = scene and scene.waterSurfacePartCount or 0,
-                    propInstanceCount = scene and scene.propInstanceCount or 0,
-                },
-            }
-            if waitError then
-                payload.preview.waitError = waitError
-                table.insert(payload.errors, "AustinPreviewBuilderWait: " .. waitError)
+if runPreviewProbe then
+    local previewFolder = ServerScriptService:FindFirstChild("StudioPreview")
+    if previewFolder then
+        local previewBuilderModule = previewFolder:FindFirstChild("AustinPreviewBuilder")
+        if previewBuilderModule then
+            local ok, previewResult = pcall(function()
+                return require(previewBuilderModule).Build()
+            end)
+            if ok then
+                local root, waitError = waitForPreviewSyncCompletion(90)
+                local scene = SceneAudit.summarizeWorld(root)
+                payload.preview = {
+                    status = if waitError then "timeout" else "ok",
+                    resultType = typeof(previewResult),
+                    rootExists = root ~= nil,
+                    children = root and #root:GetChildren() or 0,
+                    sceneSummary = {
+                        buildingModelCount = scene and scene.buildingModelCount or 0,
+                        buildingModelsWithDirectRoof = scene and scene.buildingModelsWithDirectRoof or 0,
+                        buildingModelsWithRoofClosureDeck = scene and scene.buildingModelsWithRoofClosureDeck or 0,
+                        roadSurfacePartCount = scene and scene.roadSurfacePartCount or 0,
+                        waterSurfacePartCount = scene and scene.waterSurfacePartCount or 0,
+                        propInstanceCount = scene and scene.propInstanceCount or 0,
+                    },
+                }
+                if waitError then
+                    payload.preview.waitError = waitError
+                    table.insert(payload.errors, "AustinPreviewBuilderWait: " .. waitError)
+                end
+                emitSceneMarkers("ARNIS_SCENE_EDIT", "edit", "GeneratedWorld_AustinPreview", 1024, scene)
+            else
+                table.insert(payload.errors, "AustinPreviewBuilder: " .. tostring(previewResult))
             end
-            emitSceneMarkers("ARNIS_SCENE_EDIT", "edit", "GeneratedWorld_AustinPreview", 1024, scene)
         else
-            table.insert(payload.errors, "AustinPreviewBuilder: " .. tostring(previewResult))
+            table.insert(payload.errors, "AustinPreviewBuilder module missing")
         end
     else
-        table.insert(payload.errors, "AustinPreviewBuilder module missing")
+        table.insert(payload.errors, "StudioPreview folder missing")
     end
 else
-    table.insert(payload.errors, "StudioPreview folder missing")
+    payload.preview = {
+        status = "skipped",
+        skipReason = "spec_filter_non_preview",
+    }
 end
 
 print("ARNIS_MCP_EDIT_ACTION " .. HttpService:JSONEncode(payload))
@@ -1950,6 +2318,7 @@ try:
     client.initialize()
     mode_result = client.call_tool("get_studio_mode", {})
     print(f"[harness-mcp] phase=edit mode={json.dumps(mode_result, separators=(',', ':'))}")
+    print(f"[harness-mcp] phase=edit readiness={json.dumps(readiness, separators=(',', ':'))}")
     mode_label = extract_mode_label(mode_result)
     if mode_label == "stop":
         decision = mcp_mode_stop_decision(
@@ -1977,7 +2346,7 @@ try:
         sys.exit(3)
     result = client.call_tool(
         "run_code",
-        {"command": luau},
+        {"command": luau, "readiness": readiness},
         allow_is_error=True,
         timeout_seconds=max(edit_wait_seconds + 90, 120),
     )
@@ -2313,11 +2682,21 @@ summarize_log() {
 
 run_scene_fidelity_audits() {
   local manifest_path="$ROOT_DIR/rust/out/austin-manifest.json"
+  local manifest_sqlite_path="$ROOT_DIR/rust/out/austin-manifest.sqlite"
   local manifest_summary_path="$ROOT_DIR/rust/out/austin-manifest.scene-index.json"
   local audit_script="$ROOT_DIR/scripts/scene_fidelity_audit.py"
   local audit_log="$ACTIVE_LOG"
   local scene_audit_dir="${ARNIS_SCENE_AUDIT_DIR:-/tmp}"
-  if [[ ! -f "$manifest_path" || ! -f "$audit_script" ]]; then
+  local manifest_scene_index_args=()
+  if [[ ! -f "$audit_script" ]]; then
+    log "scene fidelity audit unavailable; missing manifest or script"
+    return 0
+  fi
+  if [[ -f "$manifest_sqlite_path" ]]; then
+    manifest_scene_index_args=(--manifest-sqlite "$manifest_sqlite_path")
+  elif [[ -f "$manifest_path" ]]; then
+    manifest_scene_index_args=(--manifest "$manifest_path")
+  else
     log "scene fidelity audit unavailable; missing manifest or script"
     return 0
   fi
@@ -2332,7 +2711,11 @@ run_scene_fidelity_audits() {
   local play_html="$scene_audit_dir/arnis-scene-fidelity-play.html"
 
   local refresh_manifest_summary=0
-  if [[ ! -f "$manifest_summary_path" || "$manifest_path" -nt "$manifest_summary_path" ]]; then
+  if [[ ! -f "$manifest_summary_path" ]]; then
+    refresh_manifest_summary=1
+  elif [[ -f "$manifest_sqlite_path" && "$manifest_sqlite_path" -nt "$manifest_summary_path" ]]; then
+    refresh_manifest_summary=1
+  elif [[ -f "$manifest_path" && "$manifest_path" -nt "$manifest_summary_path" ]]; then
     refresh_manifest_summary=1
   elif find \
     "$ROOT_DIR/rust/crates/arbx_cli/src" \
@@ -2376,7 +2759,7 @@ PY
   if [[ $refresh_manifest_summary -eq 1 ]]; then
     log "refreshing manifest scene index"
     cargo run --quiet --manifest-path "$ROOT_DIR/rust/Cargo.toml" -p arbx_cli -- scene-index \
-      --manifest "$manifest_path" \
+      "${manifest_scene_index_args[@]}" \
       --json-out "$manifest_summary_path"
   fi
 
@@ -2433,6 +2816,7 @@ enable_runall_entry
 ensure_vsync_plugin_installed
 auto_prepare_place
 ensure_vsync_server_running
+start_memory_monitor
 
 prepare_log_cursor
 quarantine_foreign_plugins
@@ -2613,5 +2997,6 @@ elif [[ $DO_PLAY -eq 1 ]]; then
 fi
 
 summarize_log
+capture_preview_telemetry_artifacts
 run_scene_fidelity_audits
 run_plugin_smoke_check

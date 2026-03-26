@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import sys
+from urllib import request
+
+
+READINESS_TARGETS = {"edit_sync", "preview", "full_bake_start", "full_bake_result"}
 
 
 def should_stop_play_before_quit(session_status: str, log_indicates_play: bool) -> bool:
@@ -68,6 +73,74 @@ def decide_cleanup_close(
 def parse_bool_flag(raw: str) -> bool:
     normalized = raw.strip().lower()
     return normalized in {"1", "true", "yes", "on"}
+
+
+def normalize_readiness_target(target: str) -> str:
+    normalized = target.strip().lower()
+    if normalized not in READINESS_TARGETS:
+        raise ValueError(
+            "invalid readiness target: "
+            f"{target}. Expected one of: {', '.join(sorted(READINESS_TARGETS))}"
+        )
+    return normalized
+
+
+def fetch_readiness(base_url: str, target: str) -> dict[str, object]:
+    readiness_target = normalize_readiness_target(target)
+    url = f"{base_url.rstrip('/')}/readiness?target={readiness_target}"
+    with request.urlopen(url, timeout=10) as response:
+        payload = json.load(response)
+    if not isinstance(payload, dict):
+        raise ValueError("readiness response must be a JSON object")
+    return payload
+
+
+def wait_for_readiness(base_url: str, target: str, timeout_seconds: int) -> dict[str, object]:
+    readiness_target = normalize_readiness_target(target)
+    deadline = time.monotonic() + max(timeout_seconds, 0)
+    last_error: Exception | None = None
+
+    while time.monotonic() < deadline:
+        try:
+            payload = fetch_readiness(base_url, readiness_target)
+            if payload.get("target") != readiness_target:
+                raise ValueError(
+                    "readiness response target mismatch: "
+                    f"expected {readiness_target}, got {payload.get('target')!r}"
+                )
+            if payload.get("ready") is True:
+                return payload
+            last_error = None
+        except Exception as exc:  # noqa: BLE001 - policy helper retries on transport/readiness churn
+            last_error = exc
+        time.sleep(1.0)
+
+    if last_error is None:
+        raise TimeoutError(
+            f"timed out waiting for readiness target={readiness_target} at {base_url}"
+        )
+    raise TimeoutError(
+        f"timed out waiting for readiness target={readiness_target} at {base_url}: {last_error}"
+    ) from last_error
+
+
+def build_readiness_expectation(record: dict[str, object]) -> dict[str, object]:
+    target = normalize_readiness_target(str(record.get("target", "")))
+    epoch = record.get("epoch")
+    incarnation_id = record.get("incarnation_id")
+
+    if not isinstance(epoch, int):
+        raise ValueError("readiness record must include an integer epoch")
+    if not isinstance(incarnation_id, str) or not incarnation_id:
+        raise ValueError("readiness record must include a non-empty incarnation_id")
+    if record.get("ready") is not True:
+        raise ValueError("readiness record must be ready before building an expectation")
+
+    return {
+        "expected_target": target,
+        "expected_epoch": epoch,
+        "expected_incarnation_id": incarnation_id,
+    }
 
 
 def main() -> int:
