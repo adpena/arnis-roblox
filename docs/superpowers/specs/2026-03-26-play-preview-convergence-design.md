@@ -74,7 +74,7 @@ It must not be part of correctness.
 
 ## Canonical Artifact Boundary
 
-The canonical world source is the versioned compiled Austin manifest family owned by `arnis-roblox`.
+The canonical world source is the versioned full-bake Austin manifest family owned by `arnis-roblox`.
 
 For this effort, the minimum canonical artifact contract is:
 
@@ -94,6 +94,7 @@ Rules:
 - any schema change that affects preview/play/place/export parity must be reflected in the manifest contract docs first
 - bounded preview/runtime fixtures are derived materializations of the canonical artifact family, not a separate schema family
 - baked Roblox place export and scene IR export are downstream projections of that canonical artifact family after full bake
+- the current preview-only manifest family is non-canonical and may exist only as a deterministic derived accelerator
 
 ## Core Design
 
@@ -133,7 +134,7 @@ Minimum anchor fields:
 
 Rules:
 
-- for the same canonical artifact, selection envelope, and anchor mode, preview/play/full-bake/export must resolve the same anchor values before policy-specific runtime behavior is applied
+- for the same canonical artifact and selection envelope, preview/play/full-bake/export must resolve the same canonical anchor values before policy-specific runtime behavior is applied
 - bounded fixtures may project a smaller envelope, but they may not redefine anchor semantics
 - export alignment, minimap transforms, and startup chunk selection must all derive from the same anchor contract
 - any snapping or rounding used for selection must be deterministic and documented at the contract boundary
@@ -327,7 +328,7 @@ Each phase must add or strengthen automation:
 - unit/spec tests for spawn, minimap transforms, roof/wall truth, terrain-material truth
 - import parity tests for preview vs play
 - full-bake/export parity tests for place vs scene IR vs `.glb`/`.fbx`
-- runtime contract tests for bootstrap ordering and observable `world_ready` / `gameplay_ready` state
+- runtime contract tests for bootstrap ordering, observable `world_ready` / `streaming_ready` / `gameplay_ready` / `failed` state, monotonic state transitions, and new bootstrap-attempt identity on retry
 - external-tooling checks for blocked assets, duplicate bootstrap, empty world roots, and overhead roof counts
 - post-ready visual regression snapshots for preview and play
 
