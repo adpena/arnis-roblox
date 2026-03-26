@@ -85,18 +85,142 @@ def normalize_readiness_target(target: str) -> str:
     return normalized
 
 
-def fetch_readiness(base_url: str, target: str) -> dict[str, object]:
-    readiness_target = normalize_readiness_target(target)
-    url = f"{base_url.rstrip('/')}/readiness?target={readiness_target}"
-    with request.urlopen(url, timeout=10) as response:
-        payload = json.load(response)
+def normalize_plugin_state(payload: object) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError("readiness response must be a JSON object")
     return payload
 
 
+def _readiness_endpoint(base_url: str, target: str) -> str:
+    readiness_target = normalize_readiness_target(target)
+    return f"{base_url.rstrip('/')}/readiness?target={readiness_target}"
+
+
+def _string_field(payload: dict[str, object], key: str) -> str:
+    value = payload.get(key)
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _plugin_project_ready(payload: dict[str, object]) -> tuple[bool, str, str]:
+    if payload.get("_stale") is True:
+        return False, "plugin_state_stale", "Vertigo Sync plugin state is stale."
+
+    if payload.get("project_blocked") is True:
+        message = _string_field(payload, "project_message")
+        if message:
+            return False, "project_blocked", message
+        return False, "project_blocked", "Project bootstrap is blocked."
+
+    project_mode = _string_field(payload, "project_mode")
+    if project_mode != "dynamic":
+        message = _string_field(payload, "project_message")
+        if message:
+            return False, "project_bootstrap_pending", message
+        return False, "project_bootstrap_pending", "Waiting for /project"
+
+    status = _string_field(payload, "status")
+    if status == "error":
+        message = _string_field(payload, "project_message")
+        if message:
+            return False, "sync_error", message
+        return False, "sync_error", "Sync is in an error state."
+    if status != "connected":
+        return False, "sync_disconnected", "Waiting for the initial sync connection."
+
+    return True, "ready", "Project is ready for sync."
+
+
+def _is_edit_mode(studio_mode: str) -> bool:
+    return studio_mode == "edit" or studio_mode.startswith("edit+")
+
+
+def evaluate_plugin_readiness(payload: object, target: str) -> dict[str, object]:
+    readiness_target = normalize_readiness_target(target)
+    record = normalize_plugin_state(payload)
+
+    ready, code, message = _plugin_project_ready(record)
+    if not ready:
+        return {
+            "target": readiness_target,
+            "ready": False,
+            "code": code,
+            "message": message,
+            "record": record,
+        }
+
+    studio_mode = _string_field(record, "studio_mode")
+    if readiness_target in {"edit_sync", "preview", "full_bake_start", "full_bake_result"} and not _is_edit_mode(
+        studio_mode
+    ):
+        return {
+            "target": readiness_target,
+            "ready": False,
+            "code": "studio_mode_unsupported",
+            "message": f"Sync is unavailable in Studio mode {studio_mode or 'unknown'}.",
+            "record": record,
+        }
+
+    if readiness_target == "full_bake_start":
+        project = record.get("preview_project")
+        full_bake = project.get("projectFacts", {}).get("full_bake", {}) if isinstance(project, dict) else {}
+        if full_bake.get("active") is not True:
+            return {
+                "target": readiness_target,
+                "ready": False,
+                "code": "full_bake_inactive",
+                "message": "Waiting for full bake to start.",
+                "record": record,
+            }
+
+    if readiness_target == "full_bake_result":
+        project = record.get("preview_project")
+        full_bake = project.get("projectFacts", {}).get("full_bake", {}) if isinstance(project, dict) else {}
+        last_result = full_bake.get("last_result")
+        if full_bake.get("active") is True or not isinstance(last_result, str) or not last_result.strip():
+            return {
+                "target": readiness_target,
+                "ready": False,
+                "code": "full_bake_result_pending",
+                "message": "Waiting for full bake result.",
+                "record": record,
+            }
+
+    message = "Project is ready for sync and edit preview."
+    if readiness_target == "edit_sync":
+        message = "Project is ready for edit-mode sync."
+    elif readiness_target == "full_bake_start":
+        message = "Full bake has started."
+    elif readiness_target == "full_bake_result":
+        message = "Full bake result is available."
+
+    return {
+        "target": readiness_target,
+        "ready": True,
+        "code": "ready",
+        "message": message,
+        "record": record,
+    }
+
+
+def fetch_readiness(base_url: str, target: str) -> dict[str, object]:
+    readiness_target = normalize_readiness_target(target)
+    url = _readiness_endpoint(base_url, readiness_target)
+    with request.urlopen(url, timeout=10) as response:
+        payload = json.load(response)
+    record = normalize_plugin_state(payload)
+    if _string_field(record, "target") != readiness_target:
+        raise ValueError(
+            "readiness response target mismatch: "
+            f"expected {readiness_target}, got {record.get('target')!r}"
+        )
+    return record
+
+
 def wait_for_readiness(base_url: str, target: str, timeout_seconds: int) -> dict[str, object]:
     readiness_target = normalize_readiness_target(target)
+    endpoint = _readiness_endpoint(base_url, readiness_target)
     deadline = time.monotonic() + max(timeout_seconds, 0)
     last_error: Exception | None = None
 
@@ -117,24 +241,23 @@ def wait_for_readiness(base_url: str, target: str, timeout_seconds: int) -> dict
 
     if last_error is None:
         raise TimeoutError(
-            f"timed out waiting for readiness target={readiness_target} at {base_url}"
+            f"timed out waiting for readiness target={readiness_target} at {endpoint}"
         )
     raise TimeoutError(
-        f"timed out waiting for readiness target={readiness_target} at {base_url}: {last_error}"
+        f"timed out waiting for readiness target={readiness_target} at {endpoint}: {last_error}"
     ) from last_error
 
 
 def build_readiness_expectation(record: dict[str, object]) -> dict[str, object]:
     target = normalize_readiness_target(str(record.get("target", "")))
-    epoch = record.get("epoch")
-    incarnation_id = record.get("incarnation_id")
-
-    if not isinstance(epoch, int):
-        raise ValueError("readiness record must include an integer epoch")
-    if not isinstance(incarnation_id, str) or not incarnation_id:
-        raise ValueError("readiness record must include a non-empty incarnation_id")
     if record.get("ready") is not True:
         raise ValueError("readiness record must be ready before building an expectation")
+    epoch = record.get("epoch")
+    incarnation_id = record.get("incarnation_id")
+    if not isinstance(epoch, int):
+        raise ValueError("readiness record must include integer epoch")
+    if not isinstance(incarnation_id, str) or not incarnation_id.strip():
+        raise ValueError("readiness record must include incarnation_id")
 
     return {
         "expected_target": target,

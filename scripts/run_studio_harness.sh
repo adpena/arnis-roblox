@@ -13,7 +13,7 @@ LOG_DIR="$HOME/Library/Logs/Roblox"
 ROBLOX_PLUGIN_DIR="${ROBLOX_PLUGIN_DIR:-$HOME/Documents/Roblox/Plugins}"
 ROBLOX_STUDIO_STATE_DIR="$HOME/Library/Application Support/Roblox/RobloxStudio"
 ROBLOX_AUTOSAVE_DIR="$ROBLOX_STUDIO_STATE_DIR/AutoSaves"
-RUNALL_ENTRY="$ROOT_DIR/roblox/src/ServerScriptService/Tests/RunAllEntry.server.lua"
+RUNALL_CONFIG="$ROOT_DIR/roblox/src/ServerScriptService/Tests/RunAllConfig.lua"
 VSYNC_REPO_DIR="${VSYNC_REPO_DIR:-$(cd "$ROOT_DIR/.." && pwd)/vertigo-sync}"
 PLACE_PATH=""
 PLACE_PATH_CUSTOM=0
@@ -21,11 +21,12 @@ AUTO_BUILT_PLACE=0
 EDIT_WAIT_SECONDS=20
 PLAY_WAIT_SECONDS=25
 PATTERN_WAIT_SECONDS=90
+MCP_READY_WAIT_SECONDS="${HARNESS_MCP_READY_WAIT_SECONDS:-12}"
 SCREENSHOT_PATH="/tmp/arnis-studio-harness.png"
 DO_RESTART=1
 DO_PLAY=1
 KEEP_RUNALL_ENABLED=0
-RUNALL_EDIT_ENABLED=1
+RUNALL_EDIT_ENABLED=0
 RUNALL_PLAY_ENABLED=0
 RUNALL_SPEC_FILTER=""
 CLOSE_ON_EXIT=1
@@ -41,6 +42,7 @@ VSYNC_SOURCE_REPO=0
 VSYNC_SERVER_URL=""
 VSYNC_SERVER_PID=""
 VSYNC_SERVER_LOG=""
+MCP_READY=0
 SCENE_MARKER_LUAU=""
 read -r -d '' SCENE_MARKER_LUAU <<'LUA' || true
 local function cloneStatsWithoutSourceIds(stats)
@@ -352,9 +354,10 @@ Options:
   --screenshot PATH    Capture a Studio screenshot after edit/play phases. Default: /tmp/arnis-studio-harness.png
   --no-restart         Reuse an already-running Studio session instead of relaunching it.
   --no-play            Do not enter Play mode after edit-mode harness completes.
-  --keep-enabled       Leave RunAllEntry.server.lua enabled after the script exits.
-  --skip-edit-tests    Skip edit-mode RunAll execution and only validate preview/import behavior.
-  --play-tests         Also enable RunAllEntry.server.lua during Play mode.
+  --keep-enabled       Leave RunAllConfig.lua enabled after the script exits.
+  --edit-tests         Opt into edit-mode RunAll execution inside the harness-owned Studio session.
+  --skip-edit-tests    Force edit-mode RunAll to stay disabled and only validate preview/import behavior.
+  --play-tests         Also enable RunAllConfig.lua during Play mode.
   --spec-filter NAME   Run only the named Luau spec module during RunAll, for example StreamingPriority.spec.lua.
   --keep-open          Leave Roblox Studio open when the harness exits.
   --takeover           Allow the harness to take control of an already-running Studio session. By default this now means quit/relaunch for a clean harness-owned session.
@@ -367,13 +370,13 @@ Options:
   --help               Show this message.
 
 This script:
-  1. Temporarily enables ServerScriptService.Tests.RunAllEntry.server.lua for edit mode unless --skip-edit-tests is set
+  1. Keeps edit-mode RunAll disabled by default; enable it explicitly with --edit-tests when you want tests to mutate the Studio session
   2. Opens Roblox Studio in a harness-owned session when takeover is allowed
   3. Opens an auto-built clean Arnis place when available, otherwise falls back to File > New
   4. Streams the latest Studio log to stdout
   5. Waits for the edit-mode Roblox harness to finish
   6. Optionally enters Play mode and streams runtime Austin output
-  7. Restores RunAllEntry.server.lua on exit unless --keep-enabled is set
+  7. Restores RunAllConfig.lua on exit unless --keep-enabled is set
 
 Play mode never inherits the test suite unless --play-tests is supplied.
 
@@ -382,9 +385,15 @@ EOF
 }
 
 build_clean_place() {
+  local include_runtime_sample_data="${1:-true}"
   local roblox_dir="$ROOT_DIR/roblox"
-  local output_place="$roblox_dir/out/arnis-test-clean.rbxlx"
-  local build_project="$roblox_dir/out/default.build.project.json"
+  local output_suffix="edit"
+  if [[ "$include_runtime_sample_data" == "true" ]]; then
+    output_suffix="play"
+  fi
+  local output_place="$roblox_dir/out/arnis-test-clean-$output_suffix.rbxlx"
+  local build_project="$roblox_dir/.harness.build.project.json"
+  local serve_project="$roblox_dir/.harness.serve.project.json"
 
   if [[ -z "$VSYNC_BINARY" ]]; then
     return 1
@@ -392,19 +401,17 @@ build_clean_place() {
 
   mkdir -p "$roblox_dir/out"
 
-  ROOT_DIR_PY="$ROOT_DIR" python3 - <<'PY'
-import json
-import os
-from pathlib import Path
+  local harness_project_args=(
+    --default-project "$roblox_dir/default.project.json"
+    --build-project "$build_project"
+    --serve-project "$serve_project"
+  )
+  if [[ "$include_runtime_sample_data" == "true" ]]; then
+    harness_project_args+=(--include-runtime-sample-data)
+  fi
+  python3 "$ROOT_DIR/scripts/generate_harness_projects.py" "${harness_project_args[@]}"
 
-root_dir = Path(os.environ["ROOT_DIR_PY"])
-src = root_dir / "roblox" / "default.project.json"
-out = root_dir / "roblox" / "out" / "default.build.project.json"
-data = json.loads(src.read_text(encoding="utf-8"))
-data.pop("vertigoSync", None)
-data.pop("globIgnorePaths", None)
-out.write_text(json.dumps(data, indent=2), encoding="utf-8")
-PY
+  HARNESS_INCLUDE_RUNTIME_SAMPLE_DATA="$include_runtime_sample_data" \
   "$VSYNC_BINARY" --root "$roblox_dir" build --project "$build_project" --output "$output_place" >/dev/null
 
   [[ -f "$output_place" ]]
@@ -504,12 +511,17 @@ ensure_vsync_plugin_installed() {
 
 auto_prepare_place() {
   local output_place=""
+  local include_runtime_sample_data="true"
 
   if [[ $PLACE_PATH_CUSTOM -eq 1 ]]; then
     return
   fi
 
-  if output_place="$(build_clean_place)"; then
+  if [[ $DO_PLAY -eq 0 ]]; then
+    include_runtime_sample_data="false"
+  fi
+
+  if output_place="$(build_clean_place "$include_runtime_sample_data")"; then
     PLACE_PATH="$output_place"
     PLACE_PATH_CUSTOM=1
     AUTO_BUILT_PLACE=1
@@ -552,6 +564,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-enabled)
       KEEP_RUNALL_ENABLED=1
+      shift
+      ;;
+    --edit-tests)
+      RUNALL_EDIT_ENABLED=1
       shift
       ;;
     --skip-edit-tests)
@@ -612,8 +628,8 @@ if [[ $PLACE_PATH_CUSTOM -eq 1 && ! -f "$PLACE_PATH" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$RUNALL_ENTRY" ]]; then
-  echo "[harness] RunAllEntry not found: $RUNALL_ENTRY" >&2
+if [[ ! -f "$RUNALL_CONFIG" ]]; then
+  echo "[harness] RunAllConfig not found: $RUNALL_CONFIG" >&2
   exit 1
 fi
 
@@ -692,6 +708,36 @@ print(
             "vsync_kb": vsync_kb,
             "mcp_kb": mcp_kb,
             "total_kb": studio_kb + vsync_kb + mcp_kb,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+sample_harness_host_probe_json() {
+  local sample_json
+  sample_json="$(sample_harness_memory_json 2>/dev/null || printf '')"
+  python3 - "$sample_json" "$MEMORY_LIMIT_MB" <<'PY'
+import json
+import sys
+
+raw_sample = sys.argv[1].strip()
+sample = json.loads(raw_sample) if raw_sample else {}
+limit_mb = float(sys.argv[2]) if sys.argv[2].strip() else 0.0
+total_kb = int(sample.get("total_kb", 0) or 0)
+limit_bytes = int(limit_mb * 1024 * 1024) if limit_mb > 0 else 0
+used_bytes = total_kb * 1024
+available_bytes = max(0, limit_bytes - used_bytes) if limit_bytes > 0 else None
+pressure_level = (used_bytes / limit_bytes) if limit_bytes > 0 else None
+
+print(
+    json.dumps(
+        {
+            "availableBytes": available_bytes,
+            "pressureLevel": pressure_level,
+            "limitBytes": limit_bytes if limit_bytes > 0 else None,
+            "usedBytes": used_bytes,
         },
         separators=(",", ":"),
     )
@@ -898,9 +944,9 @@ studio_session_status_value() {
   python3 "$STUDIO_UI_CONTROL" get-session-status-value "$field" 2>/dev/null || true
 }
 
-restore_runall_entry() {
+restore_runall_config() {
   if [[ -n "$RUNALL_BACKUP" && -f "$RUNALL_BACKUP" && $KEEP_RUNALL_ENABLED -eq 0 ]]; then
-    cp "$RUNALL_BACKUP" "$RUNALL_ENTRY"
+    cp "$RUNALL_BACKUP" "$RUNALL_CONFIG"
   fi
   if [[ -n "$RUNALL_BACKUP" && -f "$RUNALL_BACKUP" ]]; then
     rm -f "$RUNALL_BACKUP"
@@ -984,10 +1030,10 @@ purge_harness_autosaves() {
   fi
 }
 
-set_runall_entry_modes() {
+set_runall_config_modes() {
   local edit_enabled="$1"
   local play_enabled="$2"
-  python3 - "$RUNALL_ENTRY" "$edit_enabled" "$play_enabled" <<'PY'
+  python3 - "$RUNALL_CONFIG" "$edit_enabled" "$play_enabled" <<'PY'
 from pathlib import Path
 import sys
 
@@ -995,54 +1041,54 @@ path = Path(sys.argv[1])
 edit_enabled = sys.argv[2].lower() == "true"
 play_enabled = sys.argv[3].lower() == "true"
 text = path.read_text(encoding="utf-8")
-edit_markers = ("local RUN_IN_EDIT_MODE = true", "local RUN_IN_EDIT_MODE = false")
-play_markers = ("local RUN_IN_PLAY_MODE = true", "local RUN_IN_PLAY_MODE = false")
+edit_markers = ("runInEditMode = true", "runInEditMode = false")
+play_markers = ("runInPlayMode = true", "runInPlayMode = false")
 
 for old in edit_markers:
     if old in text:
-        text = text.replace(old, f"local RUN_IN_EDIT_MODE = {'true' if edit_enabled else 'false'}", 1)
+        text = text.replace(old, f"runInEditMode = {'true' if edit_enabled else 'false'}", 1)
         break
 else:
-    raise SystemExit("RunAllEntry edit-mode toggle constant not found")
+    raise SystemExit("RunAllConfig edit-mode toggle field not found")
 
 for old in play_markers:
     if old in text:
-        text = text.replace(old, f"local RUN_IN_PLAY_MODE = {'true' if play_enabled else 'false'}", 1)
+        text = text.replace(old, f"runInPlayMode = {'true' if play_enabled else 'false'}", 1)
         break
 else:
-    raise SystemExit("RunAllEntry play-mode toggle constant not found")
+    raise SystemExit("RunAllConfig play-mode toggle field not found")
 
 path.write_text(text, encoding="utf-8")
 PY
 }
 
-set_runall_entry_filter() {
+set_runall_config_filter() {
   local spec_filter="$1"
-  python3 - "$RUNALL_ENTRY" "$spec_filter" <<'PY'
+  python3 - "$RUNALL_CONFIG" "$spec_filter" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 spec_filter = sys.argv[2]
 text = path.read_text(encoding="utf-8")
-marker = 'local SPEC_NAME_FILTER = ""'
+marker = 'specNameFilter = ""'
 
 if marker not in text:
     for line in text.splitlines():
-        if line.startswith("local SPEC_NAME_FILTER = "):
+        if line.strip().startswith("specNameFilter = "):
             marker = line
             break
     else:
-        raise SystemExit("RunAllEntry spec filter constant not found")
+        raise SystemExit("RunAllConfig spec filter field not found")
 
-replacement = f"local SPEC_NAME_FILTER = {spec_filter!r}"
+replacement = f"specNameFilter = {spec_filter!r}"
 text = text.replace(marker, replacement, 1)
 path.write_text(text, encoding="utf-8")
 PY
 }
 
 disable_runall_entry() {
-  set_runall_entry_modes false false
+  set_runall_config_modes false false
 }
 
 cleanup() {
@@ -1078,7 +1124,7 @@ cleanup() {
   fi
   summarize_memory_monitor
   stop_vsync_server
-  restore_runall_entry
+  restore_runall_config
   restore_foreign_plugins
 }
 
@@ -1095,9 +1141,18 @@ enable_runall_entry() {
     play_enabled="true"
   fi
   RUNALL_BACKUP="$(mktemp)"
-  cp "$RUNALL_ENTRY" "$RUNALL_BACKUP"
-  set_runall_entry_modes "$edit_enabled" "$play_enabled"
-  set_runall_entry_filter "$RUNALL_SPEC_FILTER"
+  cp "$RUNALL_CONFIG" "$RUNALL_BACKUP"
+  set_runall_config_modes "$edit_enabled" "$play_enabled"
+  set_runall_config_filter "$RUNALL_SPEC_FILTER"
+}
+
+can_run_runall_entry_edit_fallback() {
+  [[ $RUNALL_EDIT_ENABLED -eq 1 ]] || return 1
+  [[ -n "$RUNALL_SPEC_FILTER" ]] || return 1
+  if [[ "$RUNALL_SPEC_FILTER" == *Preview* ]]; then
+    return 1
+  fi
+  return 0
 }
 
 quit_studio() {
@@ -1295,7 +1350,7 @@ wait_for_new_log() {
   local previous_log="$1"
   local started_at="$2"
   local waited=0
-  while [[ $waited -lt $PATTERN_WAIT_SECONDS ]]; do
+  while [[ $waited -lt $MCP_READY_WAIT_SECONDS ]]; do
     dismiss_startup_dialogs
     local newest
     newest="$(latest_studio_log)"
@@ -1489,6 +1544,53 @@ vsync_project_endpoint_ready() {
   curl -sf "$VSYNC_SERVER_URL/project" >/dev/null 2>&1
 }
 
+vsync_server_port() {
+  resolve_vsync_server_url || return 1
+  python3 - "$VSYNC_SERVER_URL" <<'PY'
+from urllib.parse import urlparse
+import sys
+
+parsed = urlparse(sys.argv[1])
+port = parsed.port
+if port is None:
+    port = 443 if parsed.scheme == "https" else 80
+print(port)
+PY
+}
+
+should_reuse_vsync_server() {
+  [[ $DO_RESTART -eq 0 && $HARD_RESTART -eq 0 && $ALLOW_TAKEOVER -eq 1 ]]
+}
+
+terminate_stale_vsync_listener() {
+  local port=""
+  port="$(vsync_server_port)" || return 1
+
+  local listener_pids=""
+  listener_pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ' || true)"
+  if [[ -z "$listener_pids" ]]; then
+    return 0
+  fi
+
+  local pid=""
+  for pid in $listener_pids; do
+    local command_line=""
+    command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$command_line" != *vsync*serve* ]]; then
+      log "refusing to kill non-vsync listener on port $port (pid=$pid cmd=$command_line)"
+      return 1
+    fi
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      log "stopping stale Vertigo Sync listener on port $port (pid=$pid)"
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 1
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill -9 "$pid" >/dev/null 2>&1 || true
+      fi
+    fi
+  done
+}
+
 stop_vsync_server() {
   if [[ -n "$VSYNC_SERVER_PID" ]]; then
     if kill -0 "$VSYNC_SERVER_PID" >/dev/null 2>&1; then
@@ -1505,6 +1607,9 @@ stop_vsync_server() {
 }
 
 ensure_vsync_server_running() {
+  local roblox_dir="$ROOT_DIR/roblox"
+  local serve_project="$roblox_dir/.harness.serve.project.json"
+
   if ! ensure_vsync_binary_fresh; then
     log "vsync binary unavailable; cannot start local sync server"
     return 1
@@ -1515,15 +1620,22 @@ ensure_vsync_server_running() {
     return 1
   }
 
-  if vsync_project_endpoint_ready; then
+  if should_reuse_vsync_server && vsync_project_endpoint_ready; then
     log "reusing existing Vertigo Sync server at $VSYNC_SERVER_URL"
     return 0
   fi
 
-  local roblox_dir="$ROOT_DIR/roblox"
+  terminate_stale_vsync_listener || {
+    log "failed to clear stale Vertigo Sync listener before starting a fresh server"
+    return 1
+  }
+
   VSYNC_SERVER_LOG="$(mktemp -t arnis-vsync-serve)"
   (
     cd "$roblox_dir"
+    if [[ -f "$serve_project" ]]; then
+      exec "$VSYNC_BINARY" serve --project "$serve_project"
+    fi
     exec "$VSYNC_BINARY" serve --project default.project.json
   ) >"$VSYNC_SERVER_LOG" 2>&1 &
   VSYNC_SERVER_PID=$!
@@ -1577,6 +1689,25 @@ record = wait_for_readiness(
 )
 print(json.dumps(record, separators=(",", ":")))
 PY
+}
+
+recover_vsync_server_for_edit_readiness() {
+  if vsync_project_endpoint_ready; then
+    return 0
+  fi
+
+  log "Vertigo Sync server is unreachable during edit readiness; restarting it before retry"
+  stop_vsync_server
+  ensure_vsync_server_running || {
+    log "failed to restart Vertigo Sync server during edit readiness recovery"
+    return 1
+  }
+
+  wait_for_log_pattern "\\[VertigoSync\\] Snapshot reconciled|\\[VertigoSync\\] Plugin initialized" "$PATTERN_WAIT_SECONDS" || {
+    log "Vertigo Sync plugin did not emit initialization markers after server recovery; continuing with best effort"
+  }
+
+  return 0
 }
 
 wait_for_studio_process() {
@@ -1655,6 +1786,21 @@ PY
     sleep 2
     waited=$((waited + 2))
   done
+  return 1
+}
+
+run_edit_actions_via_runall_entry() {
+  can_run_runall_entry_edit_fallback || return 1
+
+  log "enabling RunAllEntry fallback for isolated edit spec: $RUNALL_SPEC_FILTER"
+  set_runall_config_filter "$RUNALL_SPEC_FILTER"
+  set_runall_config_modes true false
+
+  if wait_for_log_pattern "Filtering tests to spec:|Running tests:|TestEZ tests complete|Tests failed" "$EDIT_WAIT_SECONDS"; then
+    return 0
+  fi
+
+  log "RunAllEntry fallback did not emit edit-mode test markers before timeout"
   return 1
 }
 
@@ -2101,7 +2247,7 @@ run_probe_best_effort() {
 }
 
 run_edit_actions_via_mcp() {
-  if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" ]]; then
+  if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" || $MCP_READY -ne 1 ]]; then
     return 1
   fi
 
@@ -2109,11 +2255,29 @@ run_edit_actions_via_mcp() {
   if [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then
     edit_readiness_target="edit_sync"
   fi
-  local edit_readiness_json
-  edit_readiness_json="$(VSYNC_EDIT_READINESS_TARGET="$edit_readiness_target" wait_for_vsync_edit_readiness)" || {
-    log "edit-mode setup did not reach Vertigo Sync readiness before timeout"
-    return 1
-  }
+  local edit_readiness_json=""
+  local readiness_attempt=1
+  local readiness_max_attempts=2
+  while [[ $readiness_attempt -le $readiness_max_attempts ]]; do
+    if edit_readiness_json="$(VSYNC_EDIT_READINESS_TARGET="$edit_readiness_target" wait_for_vsync_edit_readiness)"; then
+      break
+    fi
+
+    if [[ $readiness_attempt -ge $readiness_max_attempts ]]; then
+      log "edit-mode setup did not reach Vertigo Sync readiness before timeout"
+      return 1
+    fi
+
+    log "edit-mode setup did not reach Vertigo Sync readiness before timeout; attempting Vertigo Sync recovery"
+    recover_vsync_server_for_edit_readiness || {
+      log "edit-mode readiness recovery failed"
+      return 1
+    }
+    wait_for_mcp_ready || {
+      log "Studio MCP helper did not become ready after Vertigo Sync recovery; retrying readiness anyway"
+    }
+    readiness_attempt=$((readiness_attempt + 1))
+  done
 
   local mcp_wall_timeout=$((EDIT_WAIT_SECONDS + 150))
   if [[ $mcp_wall_timeout -lt 120 ]]; then
@@ -2142,9 +2306,11 @@ run_edit_actions_via_mcp() {
 
     local preflight_status_for_mcp="$preflight_status"
     local log_indicates_play_for_mcp="false"
+    local host_probe_json="{}"
     if studio_log_indicates_play_session; then
       log_indicates_play_for_mcp="true"
     fi
+    host_probe_json="$(sample_harness_host_probe_json)"
 
     (
     MCP_BINARY_PATH="$MCP_BINARY" \
@@ -2152,6 +2318,7 @@ run_edit_actions_via_mcp() {
     MCP_WALL_TIMEOUT="$mcp_wall_timeout" \
     MCP_PREFLIGHT_SESSION_STATUS="$preflight_status_for_mcp" \
     MCP_LOG_INDICATES_PLAY="$log_indicates_play_for_mcp" \
+    HARNESS_HOST_PROBE_JSON="$host_probe_json" \
     VSYNC_READINESS_JSON="$edit_readiness_json" \
     RUNALL_EDIT_ENABLED="$RUNALL_EDIT_ENABLED" \
     RUNALL_SPEC_FILTER="$RUNALL_SPEC_FILTER" \
@@ -2176,9 +2343,10 @@ log_indicates_play = os.environ.get("MCP_LOG_INDICATES_PLAY", "false").strip().l
 scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
 readiness_record = json.loads(os.environ["VSYNC_READINESS_JSON"])
 readiness = build_readiness_expectation(readiness_record)
-run_edit_tests = os.environ.get("RUNALL_EDIT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+run_edit_tests = os.environ.get("RUNALL_EDIT_ENABLED", "0").strip().lower() not in {"0", "false", "no", "off"}
 runall_spec_filter = os.environ.get("RUNALL_SPEC_FILTER", "").strip()
 run_preview_probe = runall_spec_filter == "" or "Preview" in runall_spec_filter
+host_probe_sample = json.loads(os.environ.get("HARNESS_HOST_PROBE_JSON", "{}"))
 
 def on_alarm(_signum, _frame):
     raise TimeoutError(f"run_edit_actions_via_mcp timed out after {wall_clock_timeout}s")
@@ -2218,10 +2386,16 @@ local payload = {
     runAll = nil,
     preview = nil,
     errors = {},
+    hostProbe = nil,
 }
 local runEditTests = """ + ("true" if run_edit_tests else "false") + """
 local runAllSpecFilter = """ + json.dumps(runall_spec_filter) + """
 local runPreviewProbe = """ + ("true" if run_preview_probe else "false") + """
+local hostProbeSample = """ + json.dumps(host_probe_sample, separators=(",", ":")) + """
+
+Workspace:SetAttribute("ArnisStreamingHostProbeAvailableBytes", hostProbeSample.availableBytes)
+Workspace:SetAttribute("ArnisStreamingHostProbePressureLevel", hostProbeSample.pressureLevel)
+payload.hostProbe = hostProbeSample
 
 local function waitForPreviewSyncCompletion(timeoutSeconds)
     local deadline = os.clock() + timeoutSeconds
@@ -2860,9 +3034,12 @@ if [[ "$CURRENT_STUDIO_STATUS" != "not_running" ]]; then
     wait_for_editor_ready "$PATTERN_WAIT_SECONDS" || {
       log "Studio editor did not become ready after relaunch before timeout; continuing with best effort"
     }
-    wait_for_mcp_ready || {
-      log "Studio MCP helper did not become ready after relaunch; continuing without MCP readiness gate"
-    }
+    if wait_for_mcp_ready; then
+      MCP_READY=1
+    else
+      MCP_READY=0
+      log "Studio MCP helper did not become ready after relaunch; edit-mode MCP actions will stay disabled"
+    fi
   else
     log "reusing existing Roblox Studio session without restart (status=$CURRENT_STUDIO_STATUS)"
     ATTACHED_TO_EXISTING_STUDIO=1
@@ -2889,6 +3066,12 @@ if [[ "$CURRENT_STUDIO_STATUS" != "not_running" ]]; then
       wait_for_editor_ready "$PATTERN_WAIT_SECONDS" || {
         log "attached Studio session did not become editor-ready before timeout; continuing with best effort"
       }
+      if wait_for_mcp_ready; then
+        MCP_READY=1
+      else
+        MCP_READY=0
+        log "Studio MCP helper did not become ready while attaching to edit mode; edit-mode MCP actions will stay disabled"
+      fi
     fi
   fi
 else
@@ -2909,9 +3092,12 @@ else
   wait_for_editor_ready "$PATTERN_WAIT_SECONDS" || {
     log "Studio editor did not become ready after initial launch before timeout; continuing with best effort"
   }
-  wait_for_mcp_ready || {
-    log "Studio MCP helper did not become ready after initial launch; continuing without MCP readiness gate"
-  }
+  if wait_for_mcp_ready; then
+    MCP_READY=1
+  else
+    MCP_READY=0
+    log "Studio MCP helper did not become ready after initial launch; edit-mode MCP actions will stay disabled"
+  fi
 fi
 
 if [[ -n "$MCP_BINARY" ]]; then
@@ -2933,6 +3119,7 @@ fi
 if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || $ATTACHED_SESSION_ALREADY_PLAYING -eq 0 ]]; then
   edit_mcp_status=0
   edit_actions_via_mcp=0
+  edit_actions_via_runall_entry=0
   if run_edit_actions_via_mcp; then
     edit_actions_via_mcp=1
     log "triggered edit-mode actions via MCP"
@@ -2942,11 +3129,16 @@ if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || $ATTACHED_SESSION_ALREADY_PLAYING -e
       echo "[harness] edit-mode MCP actions reported harness failures" >&2
       exit 1
     fi
-    log "edit-mode MCP actions unavailable; falling back to passive edit wait"
+    if run_edit_actions_via_runall_entry; then
+      edit_actions_via_runall_entry=1
+      log "triggered edit-mode actions via RunAllEntry fallback"
+    else
+      log "edit-mode MCP actions unavailable; falling back to passive edit wait"
+    fi
   fi
   log "waiting for edit-mode harness output"
   if wait_for_edit_completion; then
-    if [[ $edit_actions_via_mcp -eq 0 ]]; then
+    if [[ $edit_actions_via_mcp -eq 0 && $edit_actions_via_runall_entry -eq 0 ]]; then
       sleep "$EDIT_WAIT_SECONDS"
     fi
   else
