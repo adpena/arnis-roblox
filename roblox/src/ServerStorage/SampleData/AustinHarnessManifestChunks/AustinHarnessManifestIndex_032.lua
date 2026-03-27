@@ -1,0 +1,1 @@
+return {chunks={{id="-36_7",props={{id="water_9459695443",kind="drinking_water",position={x=6.0932,y=-1.1119,z=69.6093},yawDegrees=0,scale=1},{id="water_9459695444",kind="drinking_water",position={x=155.3356,y=0.1392,z=36.3547},yawDegrees=0,scale=1}}}}}

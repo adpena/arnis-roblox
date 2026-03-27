@@ -1,0 +1,1 @@
+return {chunks={{id="-2_-1",buildings={{id="osm_734639133",material="Concrete",wallColor={r=198,g=193,b=184},roofShape="onion",usage="office",minHeight=0,footprint={{x=205.2035,z=234.0012},{x=188.8395,z=285.0023},{x=109.8027,z=259.6521},{x=126.2038,z=208.6509}},indices={3,0,1,1,2,3},baseY=1.7295,height=106.6667,height_m=32,roof="onion"}}}}}

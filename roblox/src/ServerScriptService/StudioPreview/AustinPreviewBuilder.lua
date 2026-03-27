@@ -28,9 +28,6 @@ AustinPreviewBuilder.BackgroundBuild = true
 AustinPreviewBuilder.PERF_PREFIX = "VertigoPreview"
 AustinPreviewBuilder.PERF_FLUSH_SECONDS = 0.25
 AustinPreviewBuilder.SLOW_CHUNK_LOG_THRESHOLD_MS = 150
-AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME = "AustinManifestIndex"
-AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME = "AustinPreviewManifestIndex"
-AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME = "AustinPreviewManifestChunks"
 AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR = "VertigoSyncTimeTravelEpoch"
 AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR = "VertigoSyncPreviewInvalidationEpoch"
 AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR = "VertigoSyncPreviewStateEpoch"
@@ -199,6 +196,15 @@ local function setPerfAttribute(name, value)
     Workspace:SetAttribute(AustinPreviewBuilder.PERF_PREFIX .. name, value)
 end
 
+local function setDeferredPreviewEpochAttributes(worldRoot, invalidationEpoch, stateEpoch)
+    if worldRoot then
+        worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", invalidationEpoch)
+        worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", stateEpoch)
+    end
+    Workspace:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", invalidationEpoch)
+    Workspace:SetAttribute("VertigoPreviewDeferredStateEpoch", stateEpoch)
+end
+
 local function setAustinAnchorAttributes(focusPoint, spawnPoint)
     if focusPoint then
         Workspace:SetAttribute("VertigoAustinFocusX", math.round(focusPoint.X))
@@ -265,16 +271,15 @@ local function loadPreviewManifestSource(timeTravelActive)
         local currentHash = getCurrentSyncHash()
         if cachedPreviewManifestHandle ~= nil and cachedPreviewManifestHash == currentHash then
             updatePreviewPerf({
-                ManifestSource = "preview-derived-cached",
+                ManifestSource = "canonical-preview-cached",
             }, true)
             return cachedPreviewManifestHandle
         end
     end
 
-    local previewManifest = ManifestLoader.LoadShardedModuleHandle(
-        script.Parent[AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME],
-        script.Parent[AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME]
-    )
+    local previewManifest = CanonicalWorldContract.loadCanonicalManifestSource("preview", nil, {
+        freshRequire = timeTravelActive,
+    })
 
     if RunService:IsStudio() and not timeTravelActive then
         cachedPreviewManifestHandle = previewManifest
@@ -282,7 +287,7 @@ local function loadPreviewManifestSource(timeTravelActive)
     end
 
     updatePreviewPerf({
-        ManifestSource = if timeTravelActive then "preview-derived-frozen" else "preview-derived",
+        ManifestSource = if timeTravelActive then "canonical-preview-frozen" else "canonical-preview",
     }, true)
     return previewManifest
 end
@@ -303,9 +308,10 @@ local function loadFullManifestSource(timeTravelActive)
     end
 
     local fullOk, fullManifest = pcall(function()
-        return ManifestLoader.LoadNamedShardedSampleHandle(AustinPreviewBuilder.FULL_MANIFEST_INDEX_NAME, nil, {
+        local manifestHandle = CanonicalWorldContract.loadCanonicalManifestSource("full_bake", nil, {
             freshRequire = timeTravelActive,
         })
+        return manifestHandle
     end)
     if not fullOk then
         return nil
@@ -330,7 +336,9 @@ local function loadManifestSource(request)
         if fullManifest ~= nil then
             return fullManifest
         end
-        error("[AustinPreviewBuilder] Full-bake mode requires the full Austin manifest handle")
+        error(
+            "[AustinPreviewBuilder] Full-bake mode requires the canonical full-bake Austin manifest family in local-dev parity mode"
+        )
     end
 
     return loadPreviewManifestSource(timeTravelActive)
@@ -340,6 +348,11 @@ function applyPreviewWorldState(manifestSource, stateEpoch)
     local worldRoot = getPreviewRoot()
     if not worldRoot then
         return false
+    end
+
+    local resolvedStateEpoch = stateEpoch
+    if resolvedStateEpoch == nil then
+        resolvedStateEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR)
     end
 
     local resolvedManifestSource = manifestSource
@@ -369,15 +382,17 @@ function applyPreviewWorldState(manifestSource, stateEpoch)
         end)
         recordPreviewTelemetry("state_apply_failed", {
             error = tostring(err),
-            stateEpoch = stateEpoch,
+            stateEpoch = resolvedStateEpoch,
         })
         return false
     end
 
-    deferredPreviewStateEpoch = nil
-    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", nil)
-    if type(stateEpoch) == "number" then
-        Workspace:SetAttribute("VertigoPreviewAppliedStateEpoch", stateEpoch)
+    if deferredPreviewStateEpoch == resolvedStateEpoch then
+        deferredPreviewStateEpoch = nil
+    end
+    setDeferredPreviewEpochAttributes(worldRoot, deferredPreviewInvalidationEpoch, deferredPreviewStateEpoch)
+    if type(resolvedStateEpoch) == "number" then
+        Workspace:SetAttribute("VertigoPreviewAppliedStateEpoch", resolvedStateEpoch)
     end
     updatePreviewProjectFacts(function(projectFacts)
         projectFacts.preview.state_apply_pending = false
@@ -388,7 +403,7 @@ function applyPreviewWorldState(manifestSource, stateEpoch)
         end
     end)
     recordPreviewTelemetry("state_apply_succeeded", {
-        stateEpoch = stateEpoch,
+        stateEpoch = resolvedStateEpoch,
     })
     return true
 end
@@ -562,7 +577,7 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_INVALIDATION_EP
         return
     end
 
-    worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", deferredPreviewInvalidationEpoch)
+    setDeferredPreviewEpochAttributes(worldRoot, deferredPreviewInvalidationEpoch, deferredPreviewStateEpoch)
     if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
         logPreview("preview invalidation deferred", {
             buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
@@ -581,7 +596,7 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATT
         return
     end
 
-    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
+    setDeferredPreviewEpochAttributes(worldRoot, deferredPreviewInvalidationEpoch, deferredPreviewStateEpoch)
     if Workspace:GetAttribute(AustinPreviewBuilder.PERF_PREFIX .. "SyncActive") == true then
         logPreview("preview state deferred", {
             buildToken = worldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR),
@@ -593,7 +608,7 @@ Workspace:GetAttributeChangedSignal(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATT
         return
     end
 
-    applyPreviewWorldState(nil, deferredPreviewStateEpoch)
+    applyPreviewWorldState(nil)
 end)
 
 local function ensurePreviewRoot()
@@ -603,8 +618,7 @@ local function ensurePreviewRoot()
         worldRoot.Name = AustinPreviewBuilder.WORLD_ROOT_NAME
         worldRoot.Parent = Workspace
     end
-    worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", deferredPreviewInvalidationEpoch)
-    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
+    setDeferredPreviewEpochAttributes(worldRoot, deferredPreviewInvalidationEpoch, deferredPreviewStateEpoch)
 
     return worldRoot
 end
@@ -717,8 +731,7 @@ local function getPreviewBounds(manifestSource, chunkIds)
 end
 
 local function addPreviewBeacon(parent, manifestSource, chunkIds, focusPoint)
-    focusPoint =
-        focusPoint
+    focusPoint = focusPoint
         or CanonicalWorldContract.resolveCanonicalAnchor(manifestSource, AustinPreviewBuilder.LOAD_RADIUS).focusPoint
     local bounds = getPreviewBounds(manifestSource, chunkIds)
     local groundY = bounds and bounds.minY or focusPoint.Y
@@ -1324,7 +1337,7 @@ local function syncPreviewChunks(
                 return desiredChunkIds
             end
 
-            ChunkLoader.UnloadChunk(loadedChunkId)
+            ChunkLoader.UnloadChunk(loadedChunkId, nil, AustinPreviewBuilder.WORLD_ROOT_NAME)
             ImportService.ResetSubplanState(loadedChunkId)
             local orphan = worldRoot and worldRoot:FindFirstChild(loadedChunkId)
             if orphan then
@@ -1500,6 +1513,8 @@ function AustinPreviewBuilder.Clear()
     deferredPreviewInvalidationEpoch = nil
     deferredPreviewStateEpoch = nil
     Workspace:SetAttribute("VertigoPreviewAppliedStateEpoch", nil)
+    Workspace:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", nil)
+    Workspace:SetAttribute("VertigoPreviewDeferredStateEpoch", nil)
     table.clear(observedChunkCostById)
     table.clear(semanticFingerprintCacheByHandle)
     ImportService.ResetSubplanState()
@@ -1507,8 +1522,9 @@ function AustinPreviewBuilder.Clear()
     local existing = getPreviewRoot()
     if existing then
         for _, chunkId in ipairs(listPreviewChunkIds(existing)) do
-            ChunkLoader.UnloadChunk(chunkId)
+            ChunkLoader.UnloadChunk(chunkId, nil, AustinPreviewBuilder.WORLD_ROOT_NAME)
         end
+        setDeferredPreviewEpochAttributes(existing, nil, nil)
         existing:Destroy()
     end
 end
@@ -1526,8 +1542,7 @@ function AustinPreviewBuilder.Build(request)
     worldRoot:SetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR, buildToken)
     worldRoot:SetAttribute("VertigoPreviewBuildEpoch", buildEpoch)
     worldRoot:SetAttribute("VertigoPreviewHardPause", hardPause)
-    worldRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", nil)
-    worldRoot:SetAttribute("VertigoPreviewDeferredStateEpoch", deferredPreviewStateEpoch)
+    setDeferredPreviewEpochAttributes(worldRoot, nil, deferredPreviewStateEpoch)
     worldRoot:SetAttribute("VertigoPreviewDeferredTimeTravelEpoch", nil)
     if deferredPreviewInvalidationEpoch == buildEpoch then
         deferredPreviewInvalidationEpoch = nil
@@ -1641,7 +1656,10 @@ function AustinPreviewBuilder.Build(request)
         return { worldRoot }
     end
 
-    if normalizedRequest.debugHelpers then
+    local shouldRenderPreviewHelpers = normalizedRequest.mode == AustinPreviewRequest.MODE_PREVIEW
+        and normalizedRequest.debugHelpers
+
+    if shouldRenderPreviewHelpers then
         addPreviewBeacon(liveWorldRoot, manifestSource, previewChunkIds, focusPoint)
     else
         local existingPreviewFocus = liveWorldRoot:FindFirstChild("PreviewFocus")
@@ -1664,11 +1682,10 @@ function AustinPreviewBuilder.Build(request)
         return { worldRoot }
     end
 
-    local currentStateEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR)
     updatePreviewProjectFacts(function(projectFacts)
         projectFacts.preview.state_apply_pending = true
     end)
-    applyPreviewWorldState(manifestSource, currentStateEpoch)
+    applyPreviewWorldState(manifestSource)
 
     local latestRoot = getPreviewRoot()
     local currentEpoch = Workspace:GetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR)
@@ -1677,7 +1694,7 @@ function AustinPreviewBuilder.Build(request)
         and latestRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) == buildToken
         and currentEpoch ~= buildEpoch
     then
-        latestRoot:SetAttribute("VertigoPreviewDeferredInvalidationEpoch", currentEpoch)
+        setDeferredPreviewEpochAttributes(latestRoot, currentEpoch, deferredPreviewStateEpoch)
         logPreview("rebuild deferred preview invalidation", {
             buildToken = buildToken,
             buildEpoch = buildEpoch,

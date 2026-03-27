@@ -162,6 +162,12 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn("stop_memory_monitor", self.text)
         self.assertIn("summarize_memory_monitor", self.text)
 
+    def test_edit_action_serializes_host_probe_as_luau_literal_not_raw_json(self) -> None:
+        self.assertIn("def to_luau_literal(value):", self.text)
+        self.assertIn('host_probe_sample_luau = to_luau_literal(host_probe_sample)', self.text)
+        self.assertIn('local hostProbeSample = """ + host_probe_sample_luau + """', self.text)
+        self.assertNotIn('local hostProbeSample = """ + json.dumps(host_probe_sample, separators=(",", ":")) + """', self.text)
+
     def test_harness_captures_preview_telemetry_artifacts(self) -> None:
         self.assertIn("capture_preview_telemetry_artifacts()", self.text)
         self.assertIn('local preview_telemetry_dir="${ARNIS_PREVIEW_TELEMETRY_DIR:-/tmp}"', self.text)
@@ -174,6 +180,42 @@ class RunStudioHarnessTests(unittest.TestCase):
     def test_harness_does_not_ignore_vsync_plugin_install_failure(self) -> None:
         self.assertIn("ensure_vsync_plugin_installed()", self.text)
         self.assertNotIn("ensure_vsync_plugin_installed || true", self.text)
+        self.assertIn("ensure_mcp_plugin_installed()", self.text)
+        self.assertNotIn("ensure_mcp_plugin_installed || true", self.text)
+
+    def test_vsync_repo_ownership_survives_prebuilt_binary_override(self) -> None:
+        self.assertIn('if [[ -f "$VSYNC_REPO_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then', self.text)
+        self.assertIn('if [[ -n "$VSYNC_BINARY" && -x "$VSYNC_BINARY" ]]; then', self.text)
+        repo_block_index = self.text.find('if [[ -f "$VSYNC_REPO_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then')
+        binary_fallback_index = self.text.find('if [[ -n "$VSYNC_BINARY" && -x "$VSYNC_BINARY" ]]; then\n    VSYNC_SOURCE_REPO=0')
+        self.assertGreaterEqual(repo_block_index, 0)
+        self.assertGreaterEqual(binary_fallback_index, 0)
+        self.assertLess(repo_block_index, binary_fallback_index)
+        self.assertIn('VSYNC_SOURCE_REPO=1', self.text)
+
+    def test_mcp_plugin_is_bootstrapped_from_binary_on_clean_machine(self) -> None:
+        self.assertIn('local installed_plugin="$ROBLOX_PLUGIN_DIR/MCPStudioPlugin.rbxm"', self.text)
+        self.assertIn('log "installing MCP Studio plugin from $MCP_BINARY"', self.text)
+        self.assertIn('"$MCP_BINARY" >/dev/null', self.text)
+        enable_index = self.text.find("ensure_vsync_plugin_installed")
+        mcp_index = self.text.find("ensure_mcp_plugin_installed")
+        self.assertGreaterEqual(enable_index, 0)
+        self.assertGreaterEqual(mcp_index, 0)
+        self.assertLess(enable_index, mcp_index)
+
+    def test_plugin_quarantine_is_file_level_not_directory_rename(self) -> None:
+        self.assertIn("PLUGIN_SANDBOXED_FILES=()", self.text)
+        self.assertIn('cp "$ROBLOX_PLUGIN_DIR/$plugin_name" "$sandbox_dir/$plugin_name"', self.text)
+        self.assertIn('rm -f "$ROBLOX_PLUGIN_DIR/$plugin_name"', self.text)
+        self.assertIn('for plugin_name in "${PLUGIN_SANDBOXED_FILES[@]}"; do', self.text)
+        self.assertIn('cp "$PLUGIN_SANDBOX_DIR/$plugin_name" "$ROBLOX_PLUGIN_DIR/$plugin_name"', self.text)
+        self.assertNotIn('mv "$ROBLOX_PLUGIN_DIR" "$sandbox_source_dir"', self.text)
+        self.assertNotIn('mv "$PLUGIN_SANDBOX_SOURCE_DIR" "$ROBLOX_PLUGIN_DIR"', self.text)
+
+    def test_screenshot_capture_failure_is_best_effort_only(self) -> None:
+        self.assertIn('if screencapture -x "$target"; then', self.text)
+        self.assertIn('log "failed to capture Studio screenshot: $target"', self.text)
+        self.assertNotIn('screencapture -x "$target"\n  log "captured Studio screenshot: $target"', self.text)
 
     def test_harness_defaults_to_clean_preview_without_edit_mode_runall(self) -> None:
         self.assertIn("--edit-tests", self.text)
@@ -205,6 +247,12 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('triggered edit-mode actions via RunAllEntry fallback', self.text)
         self.assertIn('if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" || $MCP_READY -ne 1 ]]; then', self.text)
 
+    def test_isolated_preview_specs_gate_on_edit_sync_not_preview(self) -> None:
+        self.assertIn('local edit_readiness_target="preview"', self.text)
+        self.assertIn('if [[ -n "$RUNALL_SPEC_FILTER" ]]; then', self.text)
+        self.assertIn('edit_readiness_target="edit_sync"', self.text)
+        self.assertNotIn('if [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then', self.text)
+
     def test_harness_tracks_real_mcp_bridge_readiness_before_using_edit_actions(self) -> None:
         self.assertIn('MCP_READY_WAIT_SECONDS="${HARNESS_MCP_READY_WAIT_SECONDS:-12}"', self.text)
         self.assertIn('MCP_READY=1', self.text)
@@ -224,10 +272,16 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('local output_place="$roblox_dir/out/arnis-test-clean-$output_suffix.rbxlx"', self.text)
         self.assertIn('local output_suffix="edit"', self.text)
         self.assertIn('output_suffix="play"', self.text)
+        self.assertIn('elif [[ $RUNALL_EDIT_ENABLED -eq 1 ]]; then', self.text)
+        self.assertIn('output_suffix="edit-tests"', self.text)
         self.assertIn('"$VSYNC_BINARY" --root "$roblox_dir" build --project "$build_project" --output "$output_place"', self.text)
         self.assertIn('printf \'%s\\n\' "$output_place"', self.text)
-        self.assertIn('if output_place="$(build_clean_place "$include_runtime_sample_data")"; then', self.text)
+        self.assertIn(
+            'if output_place="$(build_clean_place "$include_runtime_sample_data")"; then',
+            self.text,
+        )
         self.assertNotIn("--project out/default.build.project.json --output out/arnis-test-clean.rbxlx", self.text)
+        self.assertNotIn('harness_project_args+=(--include-canonical-sample-data)', self.text)
 
     def test_edit_only_auto_build_omits_runtime_sample_data_from_clean_place(self) -> None:
         self.assertIn('local include_runtime_sample_data="${1:-true}"', self.text)
@@ -235,6 +289,11 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('harness_project_args+=(--include-runtime-sample-data)', self.text)
         self.assertIn('if [[ $DO_PLAY -eq 0 ]]; then', self.text)
         self.assertIn('include_runtime_sample_data="false"', self.text)
+        self.assertNotIn('harness_project_args+=(--include-canonical-sample-data)', self.text)
+
+    def test_edit_test_builds_keep_bounded_canonical_sample_data_visible(self) -> None:
+        self.assertIn('elif [[ $RUNALL_EDIT_ENABLED -eq 1 ]]; then', self.text)
+        self.assertIn('output_suffix="edit-tests"', self.text)
 
     def test_harness_uses_dedicated_vsync_serve_project_with_compiled_fixture_ignores(self) -> None:
         self.assertIn('local serve_project="$roblox_dir/.harness.serve.project.json"', self.text)
@@ -341,6 +400,12 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE=1', self.text)
         self.assertIn('if [[ "$ALLOW_HEAVY_PREVIEW_SOURCE" != "1" ]] && preview_source_looks_heavy; then', self.text)
         self.assertIn('preview source appears to be insane/yolo-grade terrain data', self.text)
+
+    def test_play_probe_captures_bootstrap_attempt_identity_and_trace(self) -> None:
+        self.assertIn('payload.bootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")', self.text)
+        self.assertIn('payload.bootstrapAttemptId = Workspace:GetAttribute("ArnisAustinBootstrapAttemptId")', self.text)
+        self.assertIn('payload.bootstrapStateTrace = Workspace:GetAttribute("ArnisAustinBootstrapStateTrace")', self.text)
+        self.assertIn('payload.bootstrapDuplicateCount = Workspace:GetAttribute("ArnisAustinBootstrapDuplicateCount")', self.text)
 
 
 if __name__ == "__main__":

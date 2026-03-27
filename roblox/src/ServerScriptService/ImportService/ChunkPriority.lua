@@ -240,6 +240,10 @@ local function compareMetrics(aId, aMetrics, bId, bMetrics, forwardVector, obser
         return aMetrics.distanceBand < bMetrics.distanceBand
     end
 
+    if aMetrics.distSq ~= bMetrics.distSq then
+        return aMetrics.distSq < bMetrics.distSq
+    end
+
     local normalizedForward = normalizeForwardVector(forwardVector)
     if normalizedForward then
         local aForward = aMetrics.dx * normalizedForward.X + aMetrics.dz * normalizedForward.Z
@@ -249,10 +253,6 @@ local function compareMetrics(aId, aMetrics, bId, bMetrics, forwardVector, obser
         if aForwardBucket ~= bForwardBucket then
             return aForwardBucket < bForwardBucket
         end
-    end
-
-    if aMetrics.distSq ~= bMetrics.distSq then
-        return aMetrics.distSq < bMetrics.distSq
     end
 
     if type(observedCostById) == "table" then
@@ -464,8 +464,16 @@ local function compareWorkItemKeys(leftKey, rightKey)
     end
 
     local normalizedForward = normalizeForwardVector(leftKey.forwardVector)
+    local leftIsWholeChunk = leftKey.subplanId == ""
+    local rightIsWholeChunk = rightKey.subplanId == ""
+    local bothWholeChunks = leftIsWholeChunk and rightIsWholeChunk
+
     if leftKey.distanceBand ~= rightKey.distanceBand then
         return leftKey.distanceBand < rightKey.distanceBand
+    end
+
+    if bothWholeChunks and leftKey.distSq ~= rightKey.distSq then
+        return leftKey.distSq < rightKey.distSq
     end
 
     if normalizedForward then

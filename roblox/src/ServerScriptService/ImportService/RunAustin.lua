@@ -1,6 +1,6 @@
 local ImportService = require(script.Parent)
+local AustinSpawn = require(script.Parent.AustinSpawn)
 local CanonicalWorldContract = require(script.Parent.CanonicalWorldContract)
-local ManifestLoader = require(script.Parent.ManifestLoader)
 local Profiler = require(script.Parent.Profiler)
 local Workspace = game:GetService("Workspace")
 
@@ -66,17 +66,20 @@ function RunAustin.getManifestName()
 end
 
 function RunAustin.getRuntimeManifestCandidates()
-    return {
-        RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
-    }
+    return CanonicalWorldContract.resolveCanonicalMaterializationCandidates("play")
 end
 
 function RunAustin.loadManifestSource()
-    print(("[RunAustin] Loading canonical manifest source %s"):format(RunAustin.CANONICAL_MANIFEST_INDEX_NAME))
-    return ManifestLoader.LoadNamedShardedSampleHandle(
-        RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
-        RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS
-    ), RunAustin.CANONICAL_MANIFEST_INDEX_NAME
+    local materializationFamily = CanonicalWorldContract.resolveCanonicalMaterializationFamily("play")
+    print(
+        ("[RunAustin] Loading canonical manifest source %s via %s"):format(
+            RunAustin.CANONICAL_MANIFEST_INDEX_NAME,
+            materializationFamily
+        )
+    )
+    local manifestSource, resolvedManifestName =
+        CanonicalWorldContract.loadCanonicalManifestSource("play", RunAustin.MANIFEST_WAIT_TIMEOUT_SECONDS)
+    return manifestSource, resolvedManifestName
 end
 
 function RunAustin.run(options)
@@ -100,11 +103,9 @@ function RunAustin.run(options)
     print("[RunAustin] Manifest source loaded")
     reportPhase(options, "importing_startup")
     local boundedEnvelope = CanonicalWorldContract.resolveBoundedEnvelope(manifestSource, RunAustin.LOAD_RADIUS)
-    local anchor = boundedEnvelope.anchor
-    -- Use the exact runtime spawn anchor as the import/load center so edit preview,
-    -- play-mode chunk coverage, and the eventual player spawn stay locked together.
-    local spawnPoint = boundedEnvelope.spawnPoint
     local loadCenter = boundedEnvelope.focusPoint
+    local runtimeAnchor = AustinSpawn.resolveRuntimeAnchor(manifestSource, RunAustin.LOAD_RADIUS, loadCenter)
+    local spawnPoint = runtimeAnchor.spawnPoint
     setPerfAttribute("FocusX", math.round(loadCenter.X))
     setPerfAttribute("FocusY", math.round(loadCenter.Y))
     setPerfAttribute("FocusZ", math.round(loadCenter.Z))

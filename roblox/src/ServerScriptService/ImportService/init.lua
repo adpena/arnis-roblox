@@ -5,8 +5,8 @@ local ChunkSchema = require(ReplicatedStorage.Shared.ChunkSchema)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
-local DayNightCycle = require(script.DayNightCycle)
 local LoadingScreen = require(script.LoadingScreen)
+local WorldStateApplier = require(script.WorldStateApplier)
 
 local Profiler = require(script.Profiler)
 local ChunkLoader = require(script.ChunkLoader)
@@ -48,63 +48,6 @@ local CANONICAL_SUBPLAN_LAYER_INDEX = table.freeze({
     water = 7,
     props = 8,
 })
-
--- Set up atmospheric and cinematic lighting effects.
--- Called once after all chunks have been imported.
-local function setupAtmosphere(_manifest)
-    local Lighting = game:GetService("Lighting")
-
-    -- Atmosphere
-    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
-    if not atmosphere then
-        atmosphere = Instance.new("Atmosphere")
-        atmosphere.Parent = Lighting
-    end
-
-    atmosphere.Density = 0.3
-    atmosphere.Offset = 0.25
-    atmosphere.Glare = 0
-    atmosphere.Haze = 1
-    atmosphere.Color = Color3.fromRGB(199, 210, 225) -- cool blue-grey
-    atmosphere.Decay = Color3.fromRGB(106, 112, 125) -- distance fade
-
-    -- Sky / sun position (ClockTime and GeographicLatitude are set by DayNightCycle.Configure)
-    Lighting.Brightness = 2
-    Lighting.EnvironmentDiffuseScale = 1
-    Lighting.EnvironmentSpecularScale = 1
-    Lighting.GlobalShadows = true
-    Lighting.ShadowSoftness = 0.2
-
-    -- Bloom for a cinematic look
-    local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
-    if not bloom then
-        bloom = Instance.new("BloomEffect")
-        bloom.Parent = Lighting
-    end
-    bloom.Intensity = 0.5
-    bloom.Size = 24
-    bloom.Threshold = 2
-
-    -- Color correction for warmth
-    local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
-    if not cc then
-        cc = Instance.new("ColorCorrectionEffect")
-        cc.Parent = Lighting
-    end
-    cc.Brightness = 0.02
-    cc.Contrast = 0.05
-    cc.Saturation = 0.1
-    cc.TintColor = Color3.fromRGB(255, 248, 240) -- warm white
-
-    -- Sun rays for god rays through buildings
-    local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
-    if not sunRays then
-        sunRays = Instance.new("SunRaysEffect")
-        sunRays.Parent = Lighting
-    end
-    sunRays.Intensity = 0.15
-    sunRays.Spread = 0.8
-end
 
 local function normalizePositiveNumber(value)
     if type(value) ~= "number" or value <= 0 then
@@ -232,6 +175,18 @@ local function getOrCreateNamedFolder(parent, name)
     folder.Name = name
     folder.Parent = parent
     return folder
+end
+
+local function setImportAuditAttributes(instance, chunkId, importRunId)
+    if instance == nil then
+        return
+    end
+    if type(chunkId) == "string" and chunkId ~= "" then
+        instance:SetAttribute("ArnisChunkId", chunkId)
+    end
+    if type(importRunId) == "string" and importRunId ~= "" then
+        instance:SetAttribute("ArnisImportRunId", importRunId)
+    end
 end
 
 local function createNamedFolder(parent, name)
@@ -638,6 +593,7 @@ local function makeImportChunkOptions(options, config)
     return {
         config = config,
         worldRootName = options.worldRootName,
+        importRunId = options.importRunId,
         meshCollisionPolicy = options.meshCollisionPolicy,
         frameBudgetSeconds = options.frameBudgetSeconds,
         nonBlocking = options.nonBlocking,
@@ -737,6 +693,8 @@ function ImportService.ImportChunk(chunk, options)
         return false
     end
 
+    local worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME
+
     -- PERFORMANCE: Capture instance count for delta tracking
     local profile = Profiler.begin("ImportChunk", true)
 
@@ -753,7 +711,7 @@ function ImportService.ImportChunk(chunk, options)
     end
     if not selectiveLayers then
         clearSubplanState(chunk.id)
-        ChunkLoader.UnloadChunk(chunk.id, true)
+        ChunkLoader.UnloadChunk(chunk.id, true, worldRootName)
         if checkpoint() then
             chunkProfile.cancelled = true
             Profiler.finish(profile, {
@@ -765,11 +723,11 @@ function ImportService.ImportChunk(chunk, options)
         end
     end
 
-    local worldRootName = options.worldRootName or DEFAULT_WORLD_ROOT_NAME
     local worldRoot = getWorldRoot(worldRootName)
     local chunkFolder = if selectiveLayers
         then getOrCreateNamedFolder(worldRoot, chunk.id)
         else ensureChunkFolder(worldRoot, chunk.id)
+    setImportAuditAttributes(chunkFolder, chunk.id, options.importRunId)
     if checkpoint() then
         chunkProfile.cancelled = true
         Profiler.finish(profile, {
@@ -870,6 +828,7 @@ function ImportService.ImportChunk(chunk, options)
         emitChunkProfile(chunkProfile)
         return nil
     end
+    setImportAuditAttributes(buildingsFolder, chunk.id, options.importRunId)
 
     local waterFolder = nil
     if plan.folderSpecs.water then
@@ -1200,6 +1159,7 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     ChunkLoader.RegisterChunk(chunk.id, chunkFolder, registrationChunk, {
+        worldRootName = worldRootName,
         planKey = plan.key,
         configSignature = options.configSignature,
         layerSignatures = options.layerSignatures,
@@ -1315,7 +1275,7 @@ function ImportService.ImportManifest(manifest, options)
     LoadingScreen.Show(validated.meta and validated.meta.worldName or "World")
 
     if options.clearFirst then
-        ChunkLoader.Clear() -- This now handles folder destruction and prop releasing
+        ChunkLoader.Clear(worldRootName) -- This now handles folder destruction and prop releasing
         clearResidualChildren(worldRoot)
         maybeYield(true)
     elseif options.sync then
@@ -1325,9 +1285,9 @@ function ImportService.ImportManifest(manifest, options)
             manifestChunkIds[chunk.id] = true
         end
 
-        for _, loadedChunkId in ipairs(ChunkLoader.ListLoadedChunks()) do
+        for _, loadedChunkId in ipairs(ChunkLoader.ListLoadedChunks(worldRootName)) do
             if not manifestChunkIds[loadedChunkId] then
-                ChunkLoader.UnloadChunk(loadedChunkId)
+                ChunkLoader.UnloadChunk(loadedChunkId, nil, worldRootName)
                 maybeYield(false)
             end
         end
@@ -1369,10 +1329,16 @@ function ImportService.ImportManifest(manifest, options)
     end
 
     local startupChunkCount = math.max(0, math.floor(options.startupChunkCount or 0))
+    local registrationChunksById = options.registrationChunksById
 
     local chunkOptions = makeImportChunkOptions(options, config)
 
     for chunkIndex, chunk in ipairs(chunksToImport) do
+        local registrationChunk = nil
+        if type(registrationChunksById) == "table" then
+            registrationChunk = registrationChunksById[chunk.id]
+        end
+        chunkOptions.registrationChunk = registrationChunk
         local _chunkFolder, artifactCount = ImportService.ImportChunk(chunk, chunkOptions)
 
         stats.chunksImported += 1
@@ -1421,26 +1387,11 @@ function ImportService.ImportManifest(manifest, options)
         Profiler.printReport()
     end
 
-    if config.EnableAtmosphere ~= false then
-        setupAtmosphere(validated)
-    end
-
-    if manifest.meta and manifest.meta.bbox then
-        local lat = (manifest.meta.bbox.minLat + manifest.meta.bbox.maxLat) / 2
-        local lon = (manifest.meta.bbox.minLon + manifest.meta.bbox.maxLon) / 2
-        local datetime = config.DateTime or "auto"
-        DayNightCycle.Configure(lat, lon, datetime)
-    end
-
-    if config.EnableDayNightCycle ~= false then
-        DayNightCycle.Start()
-    end
-
-    if config.EnableMinimap ~= false then
-        MinimapService.Start()
-    end
-
-    LoadingScreen.Hide()
+    WorldStateApplier.Apply(validated, config, {
+        startMinimap = true,
+        hideLoadingScreen = true,
+        worldRootName = worldRootName,
+    })
 
     return stats
 end

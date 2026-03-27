@@ -61,12 +61,22 @@ For every meaningful code change:
 
 - update or add a test if there is a harness for that area
 - update docs if the contract changed
+- if a spec or implementation plan is active, append a dated status note after any meaningful debugging/verification slice that changes the next agent's understanding, especially after remote Studio runs
+- keep remote Studio host aliases, usernames, and machine-specific paths in ignored local config or env, never in committed scripts
+- treat `primary` and `tertiary` as local profile aliases only; direct development may happen on either machine, and the committed repo must not depend on a specific hostname or pre-seeded sibling clones
 - avoid introducing new dependencies without a concrete payoff
 - prefer small, reviewable steps over giant speculative rewrites
 - zero per-frame allocations in render loops
 - all lerps must be dt-scaled (frame-rate independent)
 - all sounds must fade (no audio pops)
 - all UI transitions must use TweenService (no snaps)
+
+## Convergence guardrails
+
+- `arnis-roblox` owns canonical world truth, manifest semantics, and scene extraction adapters.
+- `vertigo-sync` owns edit/full-bake orchestration and export-3d user-facing orchestration.
+- Do not add new parallel preview/play/full-bake world-definition paths in `RunAustin.lua`, `AustinPreviewBuilder.lua`, `BootstrapAustin.server.lua`, or `AustinSpawn.lua`.
+- If this boundary changes, update `scripts/tests/test_convergence_guardrails.py` in the same change.
 
 ## Roblox-specific guardrails
 

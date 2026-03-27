@@ -330,7 +330,7 @@ MEMORY_LIMIT_MB="${HARNESS_MEMORY_LIMIT_MB:-4096}"
 MEMORY_SAMPLE_SECONDS="${HARNESS_MEMORY_SAMPLE_SECONDS:-2}"
 ALLOW_HEAVY_PREVIEW_SOURCE="${HARNESS_ALLOW_HEAVY_PREVIEW_SOURCE:-0}"
 PLUGIN_SANDBOX_DIR=""
-PLUGIN_SANDBOX_SOURCE_DIR=""
+PLUGIN_SANDBOXED_FILES=()
 FOREIGN_PLUGIN_CANDIDATES=(
   "VertigoBroadcastCam.lua"
   "VertigoEditRenderer.lua"
@@ -390,6 +390,8 @@ build_clean_place() {
   local output_suffix="edit"
   if [[ "$include_runtime_sample_data" == "true" ]]; then
     output_suffix="play"
+  elif [[ $RUNALL_EDIT_ENABLED -eq 1 ]]; then
+    output_suffix="edit-tests"
   fi
   local output_place="$roblox_dir/out/arnis-test-clean-$output_suffix.rbxlx"
   local build_project="$roblox_dir/.harness.build.project.json"
@@ -419,14 +421,18 @@ build_clean_place() {
 }
 
 resolve_vsync_binary() {
-  if [[ -n "$VSYNC_BINARY" && -x "$VSYNC_BINARY" ]]; then
-    VSYNC_SOURCE_REPO=0
+  if [[ -f "$VSYNC_REPO_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
+    if [[ -n "$VSYNC_BINARY" && -x "$VSYNC_BINARY" ]]; then
+      VSYNC_SOURCE_REPO=1
+      return 0
+    fi
+    VSYNC_BINARY="$VSYNC_REPO_DIR/target/debug/vsync"
+    VSYNC_SOURCE_REPO=1
     return 0
   fi
 
-  if [[ -f "$VSYNC_REPO_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
-    VSYNC_BINARY="$VSYNC_REPO_DIR/target/debug/vsync"
-    VSYNC_SOURCE_REPO=1
+  if [[ -n "$VSYNC_BINARY" && -x "$VSYNC_BINARY" ]]; then
+    VSYNC_SOURCE_REPO=0
     return 0
   fi
 
@@ -506,6 +512,27 @@ ensure_vsync_plugin_installed() {
   if [[ $needs_install -eq 1 ]]; then
     log "installing Vertigo Sync plugin from adjacent repo"
     "$VSYNC_BINARY" plugin-install >/dev/null
+  fi
+}
+
+ensure_mcp_plugin_installed() {
+  mkdir -p "$ROBLOX_PLUGIN_DIR"
+
+  if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" ]]; then
+    return 0
+  fi
+
+  local installed_plugin="$ROBLOX_PLUGIN_DIR/MCPStudioPlugin.rbxm"
+  local needs_install=0
+  if [[ ! -f "$installed_plugin" ]]; then
+    needs_install=1
+  elif [[ "$MCP_BINARY" -nt "$installed_plugin" ]]; then
+    needs_install=1
+  fi
+
+  if [[ $needs_install -eq 1 ]]; then
+    log "installing MCP Studio plugin from $MCP_BINARY"
+    "$MCP_BINARY" >/dev/null
   fi
 }
 
@@ -954,15 +981,20 @@ restore_runall_config() {
 }
 
 restore_foreign_plugins() {
-  if [[ -z "$PLUGIN_SANDBOX_DIR" || -z "$PLUGIN_SANDBOX_SOURCE_DIR" ]]; then
+  if [[ -z "$PLUGIN_SANDBOX_DIR" ]]; then
     return
   fi
 
-  rm -rf "$ROBLOX_PLUGIN_DIR"
-  mv "$PLUGIN_SANDBOX_SOURCE_DIR" "$ROBLOX_PLUGIN_DIR"
-  rmdir "$PLUGIN_SANDBOX_DIR" >/dev/null 2>&1 || true
+  mkdir -p "$ROBLOX_PLUGIN_DIR"
+  local plugin_name=""
+  for plugin_name in "${PLUGIN_SANDBOXED_FILES[@]}"; do
+    if [[ -f "$PLUGIN_SANDBOX_DIR/$plugin_name" ]]; then
+      cp "$PLUGIN_SANDBOX_DIR/$plugin_name" "$ROBLOX_PLUGIN_DIR/$plugin_name"
+    fi
+  done
+  rm -rf "$PLUGIN_SANDBOX_DIR"
   PLUGIN_SANDBOX_DIR=""
-  PLUGIN_SANDBOX_SOURCE_DIR=""
+  PLUGIN_SANDBOXED_FILES=()
 }
 
 quarantine_foreign_plugins() {
@@ -974,28 +1006,32 @@ quarantine_foreign_plugins() {
   local kept_count=0
   local quarantined_count=0
   local sandbox_dir
-  local sandbox_source_dir
   sandbox_dir="$(mktemp -d)"
-  sandbox_source_dir="$sandbox_dir/original_plugins"
-  mv "$ROBLOX_PLUGIN_DIR" "$sandbox_source_dir"
-  mkdir -p "$ROBLOX_PLUGIN_DIR"
+  PLUGIN_SANDBOXED_FILES=()
 
   for plugin_name in "${ALLOWED_PLUGIN_FILES[@]}"; do
-    if [[ -f "$sandbox_source_dir/$plugin_name" ]]; then
-      cp "$sandbox_source_dir/$plugin_name" "$ROBLOX_PLUGIN_DIR/$plugin_name"
+    if [[ -f "$ROBLOX_PLUGIN_DIR/$plugin_name" ]]; then
       kept_count=$((kept_count + 1))
     fi
   done
 
   for plugin_name in "${FOREIGN_PLUGIN_CANDIDATES[@]}"; do
-    if [[ -f "$sandbox_source_dir/$plugin_name" ]]; then
+    if [[ -f "$ROBLOX_PLUGIN_DIR/$plugin_name" ]]; then
+      cp "$ROBLOX_PLUGIN_DIR/$plugin_name" "$sandbox_dir/$plugin_name"
+      rm -f "$ROBLOX_PLUGIN_DIR/$plugin_name"
+      PLUGIN_SANDBOXED_FILES+=("$plugin_name")
       quarantined_count=$((quarantined_count + 1))
     fi
   done
 
+  if [[ $quarantined_count -eq 0 ]]; then
+    rm -rf "$sandbox_dir"
+    PLUGIN_SANDBOXED_FILES=()
+    return
+  fi
+
   PLUGIN_SANDBOX_DIR="$sandbox_dir"
-  PLUGIN_SANDBOX_SOURCE_DIR="$sandbox_source_dir"
-  log "sandboxed Roblox plugins for this harness run: kept $kept_count allowed plugin(s), quarantined $quarantined_count foreign Vertigo edit plugin(s)"
+  log "sandboxed Roblox plugins for this harness run: kept $kept_count allowed plugin(s), quarantined $quarantined_count foreign Vertigo edit plugin file(s)"
   if [[ -n "$(studio_pids)" ]]; then
     log "sandboxed plugins only affect Studio after restart; attached sessions may still have them loaded"
   fi
@@ -2076,8 +2112,13 @@ capture_studio_screenshot() {
 
   activate_studio
   sleep 1
-  screencapture -x "$target"
-  log "captured Studio screenshot: $target"
+  if screencapture -x "$target"; then
+    log "captured Studio screenshot: $target"
+    return 0
+  fi
+
+  log "failed to capture Studio screenshot: $target"
+  return 0
 }
 
 capture_mcp_probe() {
@@ -2252,7 +2293,7 @@ run_edit_actions_via_mcp() {
   fi
 
   local edit_readiness_target="preview"
-  if [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then
+  if [[ -n "$RUNALL_SPEC_FILTER" ]]; then
     edit_readiness_target="edit_sync"
   fi
   local edit_readiness_json=""
@@ -2373,6 +2414,28 @@ def extract_mode_label(mode_result):
             return text
     return ""
 
+
+def to_luau_literal(value):
+    if value is None:
+        return "nil"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "{ " + ", ".join(to_luau_literal(item) for item in value) + " }"
+    if isinstance(value, dict):
+        items = []
+        for key in sorted(value):
+            items.append(f"[{json.dumps(str(key))}] = {to_luau_literal(value[key])}")
+        return "{ " + ", ".join(items) + " }"
+    raise TypeError(f"unsupported Luau literal value: {value!r}")
+
+
+host_probe_sample_luau = to_luau_literal(host_probe_sample)
+
 luau = (
     """
 local HttpService = game:GetService("HttpService")
@@ -2391,7 +2454,7 @@ local payload = {
 local runEditTests = """ + ("true" if run_edit_tests else "false") + """
 local runAllSpecFilter = """ + json.dumps(runall_spec_filter) + """
 local runPreviewProbe = """ + ("true" if run_preview_probe else "false") + """
-local hostProbeSample = """ + json.dumps(host_probe_sample, separators=(",", ":")) + """
+local hostProbeSample = """ + host_probe_sample_luau + """
 
 Workspace:SetAttribute("ArnisStreamingHostProbeAvailableBytes", hostProbeSample.availableBytes)
 Workspace:SetAttribute("ArnisStreamingHostProbePressureLevel", hostProbeSample.pressureLevel)
@@ -2778,6 +2841,10 @@ local function sample()
     payload.austinSpawnX = Workspace:GetAttribute("VertigoAustinSpawnX")
     payload.austinSpawnY = Workspace:GetAttribute("VertigoAustinSpawnY")
     payload.austinSpawnZ = Workspace:GetAttribute("VertigoAustinSpawnZ")
+    payload.bootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")
+    payload.bootstrapAttemptId = Workspace:GetAttribute("ArnisAustinBootstrapAttemptId")
+    payload.bootstrapStateTrace = Workspace:GetAttribute("ArnisAustinBootstrapStateTrace")
+    payload.bootstrapDuplicateCount = Workspace:GetAttribute("ArnisAustinBootstrapDuplicateCount")
     return payload
 end
 
@@ -2988,6 +3055,7 @@ run_plugin_smoke_check() {
 
 enable_runall_entry
 ensure_vsync_plugin_installed
+ensure_mcp_plugin_installed
 auto_prepare_place
 ensure_vsync_server_running
 start_memory_monitor

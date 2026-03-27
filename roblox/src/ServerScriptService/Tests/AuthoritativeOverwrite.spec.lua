@@ -4,16 +4,17 @@ return function()
     local ChunkLoader = require(script.Parent.Parent.ImportService.ChunkLoader)
     local ManifestLoader = require(script.Parent.Parent.ImportService.ManifestLoader)
     local Assert = require(script.Parent.Assert)
+    local worldRootName = "OverwriteTest"
 
     local sampleManifest = ManifestLoader.LoadNamedSample("SampleManifest")
 
     -- 1. Initial import
     ImportService.ImportManifest(sampleManifest, {
         clearFirst = true,
-        worldRootName = "OverwriteTest",
+        worldRootName = worldRootName,
     })
 
-    local loadedBefore = ChunkLoader.ListLoadedChunks()
+    local loadedBefore = ChunkLoader.ListLoadedChunks(worldRootName)
     Assert.equal(#loadedBefore, 1, "expected 1 chunk loaded")
     Assert.equal(loadedBefore[1], "0_0", "expected chunk 0_0")
 
@@ -47,14 +48,14 @@ return function()
     -- 3. Import with sync = true
     ImportService.ImportManifest(otherManifest, {
         sync = true,
-        worldRootName = "OverwriteTest",
+        worldRootName = worldRootName,
     })
 
-    local loadedAfter = ChunkLoader.ListLoadedChunks()
+    local loadedAfter = ChunkLoader.ListLoadedChunks(worldRootName)
     Assert.equal(#loadedAfter, 1, "expected 1 chunk loaded after sync")
     Assert.equal(loadedAfter[1], "1_1", "expected chunk 1_1 to be the only one loaded")
 
-    local worldRoot = Workspace:FindFirstChild("OverwriteTest")
+    local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot:FindFirstChild("1_1"), "expected 1_1 folder to exist")
     Assert.falsy(worldRoot:FindFirstChild("0_0"), "expected 0_0 folder to be removed")
 

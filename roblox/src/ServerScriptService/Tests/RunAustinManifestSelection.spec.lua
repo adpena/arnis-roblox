@@ -15,10 +15,15 @@ return function()
     )
 
     local candidates = RunAustin.getRuntimeManifestCandidates()
-    Assert.equal(#candidates, 1, "expected exactly one runtime manifest candidate")
+    Assert.truthy(#candidates >= 1, "expected at least one runtime manifest candidate")
+    Assert.equal(
+        candidates[#candidates],
+        "AustinManifestIndex",
+        "expected runtime candidates to keep the canonical Austin family as the final fallback"
+    )
     Assert.equal(
         candidates[1],
-        "AustinManifestIndex",
-        "expected runtime candidates to stay on the canonical Austin family"
+        CanonicalWorldContract.resolveCanonicalMaterializationFamily("play"),
+        "expected runtime selection to resolve through the canonical materialization contract"
     )
 end

@@ -1,0 +1,1 @@
+return {chunks={{id="0_-4",buildings={{id="ov_106d2391-2a75-4110-b43b-7a1ce6315d30",material="Concrete",wallColor={r=201,g=196,b=188},roofShape="flat",usage="commercial",footprint={{x=65.9382,z=-4.1567},{x=39.0731,z=83.1531},{x=114.5478,z=106.3555},{x=141.4129,z=19.0457}},indices={},baseY=-3.2814,height=30.4899,height_m=9.147,roof="flat"}}}}}

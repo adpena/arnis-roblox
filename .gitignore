@@ -6,10 +6,22 @@
 __pycache__/
 *.pyc
 .venv/
+**/.venv/
+node_modules/
+**/node_modules/
 venv/
 .pytest_cache/
+**/.pytest_cache/
 .mypy_cache/
+**/.mypy_cache/
 .ruff_cache/
+**/.ruff_cache/
+coverage/
+**/coverage/
+.next/
+**/.next/
+.turbo/
+**/.turbo/
 
 # Roblox / Rojo
 *.rbxl
@@ -33,6 +45,11 @@ worktrees/
 
 # Generated outputs / temp
 out/
+**/out/
+dist/
+**/dist/
+build/
+**/build/
 exports/
 tmp/
 rust/out/
@@ -46,3 +63,4 @@ rust/fuzz/coverage/
 .env.*
 *.pem
 *.key
+scripts/remote_studio_profiles.local.sh

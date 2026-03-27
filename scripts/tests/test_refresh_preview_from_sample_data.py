@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
 
@@ -27,6 +28,31 @@ def load_module():
 
 
 class RefreshPreviewFromSampleDataTests(unittest.TestCase):
+    def test_resolve_generated_artifact_root_prefers_git_common_dir_for_worktrees(self) -> None:
+        module = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            worktree_root = temp_root / "repo" / ".worktrees" / "feature"
+            worktree_root.mkdir(parents=True)
+            shared_repo_root = temp_root / "repo"
+            (shared_repo_root / "rust" / "out").mkdir(parents=True)
+
+            original_run = module.subprocess.run
+
+            def fake_run(cmd, cwd=None, check=None, capture_output=None, text=None):
+                self.assertEqual(cmd, ["git", "rev-parse", "--git-common-dir"])
+                self.assertEqual(Path(cwd), worktree_root)
+                return SimpleNamespace(stdout=str(shared_repo_root / ".git") + "\n")
+
+            module.subprocess.run = fake_run
+            try:
+                resolved = module.resolve_generated_artifact_root(worktree_root)
+            finally:
+                module.subprocess.run = original_run
+
+            self.assertEqual(resolved, shared_repo_root)
+
     def test_parse_source_index_preserves_streaming_metadata(self) -> None:
         module = load_module()
         schema, chunk_refs = module.parse_source_index(
@@ -188,6 +214,7 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             try:
                 module.write_preview_index(
                     "0.4.0",
+                    13,
                     [
                         (
                             "0_0",
@@ -202,6 +229,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                         )
                     ],
                     ["AustinPreviewManifestIndex_001"],
+                    canonical_anchor_position=(0.0, 1.0, 2.0),
+                    chunk_size_studs=256,
+                    output_path=preview_index,
                 )
             finally:
                 module.PREVIEW_INDEX = original_preview_index
@@ -220,6 +250,7 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             try:
                 module.write_preview_index(
                     "0.4.0",
+                    13,
                     [
                         (
                             "0_0",
@@ -255,6 +286,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                         )
                     ],
                     ["AustinPreviewManifestIndex_001"],
+                    canonical_anchor_position=(0.0, 1.0, 2.0),
+                    chunk_size_studs=256,
+                    output_path=preview_index,
                 )
             finally:
                 module.PREVIEW_INDEX = original_preview_index
@@ -372,12 +406,21 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             original_preview_dir = module.PREVIEW_DIR
             original_preview_index = module.PREVIEW_INDEX
             original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
             original_max_preview_bytes = module.MAX_PREVIEW_BYTES
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
             module.SOURCE_INDEX = source_index
             module.SOURCE_JSON = source_json
             module.PREVIEW_DIR = preview_dir
             module.PREVIEW_INDEX = preview_index
             module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
             module.MAX_PREVIEW_BYTES = 50_000
             try:
                 exit_code = module.main()
@@ -387,6 +430,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 module.PREVIEW_DIR = original_preview_dir
                 module.PREVIEW_INDEX = original_preview_index
                 module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
                 module.MAX_PREVIEW_BYTES = original_max_preview_bytes
 
             self.assertEqual(exit_code, 0)
@@ -434,12 +480,21 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             original_preview_dir = module.PREVIEW_DIR
             original_preview_index = module.PREVIEW_INDEX
             original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
             original_max_preview_bytes = module.MAX_PREVIEW_BYTES
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
             module.SOURCE_INDEX = source_index
             module.SOURCE_JSON = source_json
             module.PREVIEW_DIR = preview_dir
             module.PREVIEW_INDEX = preview_index
             module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
             module.MAX_PREVIEW_BYTES = 50_000
             try:
                 exit_code = module.main()
@@ -449,12 +504,93 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 module.PREVIEW_DIR = original_preview_dir
                 module.PREVIEW_INDEX = original_preview_index
                 module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
                 module.MAX_PREVIEW_BYTES = original_max_preview_bytes
 
             self.assertEqual(exit_code, 0)
             written = preview_index.read_text(encoding="utf-8")
             self.assertIn('schemaVersion = "0.5.0"', written)
             self.assertNotIn('schemaVersion = "0.4.0"', written)
+
+    def test_main_writes_bounded_canonical_sample_data_from_preview_source(self) -> None:
+        module = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_index = temp_root / "AustinManifestIndex.lua"
+            source_json = temp_root / "austin-manifest.json"
+            preview_dir = temp_root / "StudioPreview"
+            preview_index = preview_dir / "AustinPreviewManifestIndex.lua"
+            preview_shards = preview_dir / "AustinPreviewManifestChunks"
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
+
+            source_index.write_text(
+                "\n".join(
+                    [
+                        'return {schemaVersion="0.4.0",chunkRefs={',
+                        '{id="-1_-1",originStuds={x=-256,y=1,z=-256},featureCount=1,shards={"AustinManifestIndex_001"}},',
+                        '{id="0_-1",originStuds={x=0,y=2,z=-256},featureCount=1,shards={"AustinManifestIndex_001"}},',
+                        '{id="-1_0",originStuds={x=-256,y=3,z=0},featureCount=1,shards={"AustinManifestIndex_001"}},',
+                        '{id="0_0",originStuds={x=0,y=4,z=0},featureCount=1,shards={"AustinManifestIndex_001"}},',
+                        "}}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            source_json.write_text(
+                '{"schemaVersion":"0.4.0","chunks":['
+                '{"id":"-1_-1","originStuds":{"x":-256,"y":1,"z":-256},"roads":[{"id":"road_a","points":[{"x":0,"z":0},{"x":16,"z":0}]}]},'
+                '{"id":"0_-1","originStuds":{"x":0,"y":2,"z":-256},"roads":[{"id":"road_b","points":[{"x":0,"z":0},{"x":16,"z":0}]}]},'
+                '{"id":"-1_0","originStuds":{"x":-256,"y":3,"z":0},"roads":[{"id":"road_c","points":[{"x":0,"z":0},{"x":16,"z":0}]}]},'
+                '{"id":"0_0","originStuds":{"x":0,"y":4,"z":0},"roads":[{"id":"road_d","points":[{"x":0,"z":0},{"x":16,"z":0}]}]}'
+                "]}",
+                encoding="utf-8",
+            )
+
+            original_source_index = module.SOURCE_INDEX
+            original_source_json = module.SOURCE_JSON
+            original_preview_dir = module.PREVIEW_DIR
+            original_preview_index = module.PREVIEW_INDEX
+            original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
+            original_max_preview_bytes = module.MAX_PREVIEW_BYTES
+            module.SOURCE_INDEX = source_index
+            module.SOURCE_JSON = source_json
+            module.PREVIEW_DIR = preview_dir
+            module.PREVIEW_INDEX = preview_index
+            module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
+            module.MAX_PREVIEW_BYTES = 50_000
+            try:
+                exit_code = module.main()
+            finally:
+                module.SOURCE_INDEX = original_source_index
+                module.SOURCE_JSON = original_source_json
+                module.PREVIEW_DIR = original_preview_dir
+                module.PREVIEW_INDEX = original_preview_index
+                module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
+                module.MAX_PREVIEW_BYTES = original_max_preview_bytes
+
+            self.assertEqual(exit_code, 0)
+            written = canonical_index.read_text(encoding="utf-8")
+            self.assertIn('worldName = "AustinCanonicalBounded"', written)
+            self.assertIn('shardFolder = "AustinCanonicalManifestChunks"', written)
+            self.assertIn(
+                'bounded canonical full-bake subset derived from rust/out/austin-manifest.json',
+                written,
+            )
+            self.assertTrue((canonical_shards / "AustinCanonicalManifestIndex_001.lua").exists())
 
 
 if __name__ == "__main__":

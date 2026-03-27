@@ -143,8 +143,16 @@ return function()
         return #roadsFolder:GetChildren()
     end
 
+    local function describeLoadedChunks()
+        local loaded = ChunkLoader.ListLoadedChunks(testOptions.worldRootName)
+        if #loaded == 0 then
+            return "<none>"
+        end
+        return table.concat(loaded, ",")
+    end
+
     local function getChunkEntry()
-        return ChunkLoader.GetChunkEntry("lod_chunk")
+        return ChunkLoader.GetChunkEntry("lod_chunk", testOptions.worldRootName)
     end
 
     local function getPrimaryLodGroup(kind)
@@ -198,11 +206,7 @@ return function()
         true,
         "expected interior visible near focal point"
     )
-    Assert.equal(
-        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
-        true,
-        "expected props visible at High LOD"
-    )
+    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), true, "expected props visible at High LOD")
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         true,
@@ -211,11 +215,7 @@ return function()
 
     -- 4. Low LOD: Focal point at 750,0,750 (outside 500, inside 1000)
     StreamingService.Update(Vector3.new(750, 0, 750))
-    Assert.equal(
-        getBuildingsCount() > 0,
-        true,
-        "expected building shells to stay resident at Low LOD"
-    )
+    Assert.equal(getBuildingsCount() > 0, true, "expected building shells to stay resident at Low LOD")
     Assert.equal(getRoadsCount() > 0, true, "expected roads to persist at Low LOD")
     Assert.equal(
         getPrimaryLodGroup("detail"):GetAttribute("ArnisLodVisible"),
@@ -227,11 +227,7 @@ return function()
         false,
         "expected interior hidden at Low LOD"
     )
-    Assert.equal(
-        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
-        false,
-        "expected props hidden at Low LOD"
-    )
+    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), false, "expected props hidden at Low LOD")
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         false,
@@ -252,11 +248,7 @@ return function()
         true,
         "expected interior to restore at High LOD"
     )
-    Assert.equal(
-        getPropsDetailGroup():GetAttribute("ArnisLodVisible"),
-        true,
-        "expected props to restore at High LOD"
-    )
+    Assert.equal(getPropsDetailGroup():GetAttribute("ArnisLodVisible"), true, "expected props to restore at High LOD")
     Assert.equal(
         getLanduseDetailGroup():GetAttribute("ArnisLodVisible"),
         true,
@@ -265,8 +257,8 @@ return function()
 
     -- 6. Unload: Focal point at 2000,0,2000
     StreamingService.Update(Vector3.new(2000, 0, 2000))
-    local loaded = ChunkLoader.ListLoadedChunks()
-    Assert.equal(#loaded, 0, "expected chunk to be unloaded")
+    local loaded = ChunkLoader.ListLoadedChunks(testOptions.worldRootName)
+    Assert.equal(#loaded, 0, "expected chunk to be unloaded; loaded=" .. describeLoadedChunks())
 
     -- Cleanup
     StreamingService.Stop()
@@ -301,11 +293,7 @@ return function()
     Assert.equal(loadCalls, 1, "expected no reload while chunk stays at same LOD")
     StreamingService.Update(Vector3.new(2000, 0, 2000))
     StreamingService.Update(Vector3.new(0, 0, 0))
-    Assert.equal(
-        loadCalls,
-        1,
-        "expected lazy source to reuse cached chunk after unload and re-entry"
-    )
+    Assert.equal(loadCalls, 1, "expected lazy source to reuse cached chunk after unload and re-entry")
 
     StreamingService.Stop()
     worldRoot = Workspace:FindFirstChild("LODTestWorld")
@@ -339,38 +327,30 @@ return function()
         StreamingService.Update(Vector3.new(620, 0, 50))
         StreamingService.Update(Vector3.new(540, 0, 50))
         StreamingService.Update(Vector3.new(620, 0, 50))
-        Assert.equal(
-            importCalls,
-            1,
-            "expected high/low jitter near boundary to avoid reimport churn"
-        )
+        Assert.equal(importCalls, 1, "expected high/low jitter near boundary to avoid reimport churn")
 
         StreamingService.Update(Vector3.new(700, 0, 50))
-        Assert.equal(
-            importCalls,
-            1,
-            "expected hysteresis-driven downgrade to stay rebuild-free for buildings"
-        )
+        Assert.equal(importCalls, 1, "expected hysteresis-driven downgrade to stay rebuild-free for buildings")
 
         StreamingService.Update(Vector3.new(1070, 0, 50))
         Assert.equal(
-            #ChunkLoader.ListLoadedChunks(),
+            #ChunkLoader.ListLoadedChunks(testOptions.worldRootName),
             1,
-            "expected low-LOD chunk to stay resident near stream radius"
+            "expected low-LOD chunk to stay resident near stream radius; loaded=" .. describeLoadedChunks()
         )
         StreamingService.Update(Vector3.new(980, 0, 50))
         Assert.equal(importCalls, 1, "expected stream-radius jitter to avoid reimport churn")
         Assert.equal(
-            #ChunkLoader.ListLoadedChunks(),
+            #ChunkLoader.ListLoadedChunks(testOptions.worldRootName),
             1,
-            "expected low-LOD chunk to remain resident within unload hysteresis band"
+            "expected low-LOD chunk to remain resident within unload hysteresis band; loaded=" .. describeLoadedChunks()
         )
 
         StreamingService.Update(Vector3.new(1250, 0, 50))
         Assert.equal(
-            #ChunkLoader.ListLoadedChunks(),
+            #ChunkLoader.ListLoadedChunks(testOptions.worldRootName),
             0,
-            "expected chunk to unload after leaving stream hysteresis band"
+            "expected chunk to unload after leaving stream hysteresis band; loaded=" .. describeLoadedChunks()
         )
     end)
 

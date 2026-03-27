@@ -18,15 +18,41 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
 local AustinSpawn = require(script.Parent.ImportService.AustinSpawn)
+local BootstrapStateMachine = require(script.Parent.ImportService.BootstrapStateMachine)
 local RunAustin = require(script.Parent.ImportService.RunAustin)
 local StreamingService = require(script.Parent.ImportService.StreamingService)
 local SubplanRollout = require(script.Parent.ImportService.SubplanRollout)
 local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
 local StreamingRuntimeConfig = require(game:GetService("ReplicatedStorage").Shared.StreamingRuntimeConfig)
+local BOOTSTRAP_STATE_ATTR = BootstrapStateMachine.STATE_ATTR
+local BOOTSTRAP_STATE_TRACE_ATTR = BootstrapStateMachine.STATE_TRACE_ATTR
+local BOOTSTRAP_DUPLICATE_COUNT_ATTR = BootstrapStateMachine.DUPLICATE_COUNT_ATTR
+local BOOTSTRAP_ENTRY_COUNT_ATTR = BootstrapStateMachine.ENTRY_COUNT_ATTR
+local BOOTSTRAP_LAST_SCRIPT_PATH_ATTR = BootstrapStateMachine.LAST_SCRIPT_PATH_ATTR
+local BOOTSTRAP_ATTEMPT_ID_ATTR = BootstrapStateMachine.ATTEMPT_ID_ATTR
 
 if not RunService:IsStudio() then
     warn("[BootstrapAustin] Refusing to auto-import Austin outside Studio.")
     return
+end
+
+local bootstrapMachine, duplicateInfo = BootstrapStateMachine.begin(Workspace, script:GetFullName())
+if bootstrapMachine == nil then
+    warn(
+        "[BootstrapAustin] Duplicate bootstrap attempt ignored. state=",
+        duplicateInfo.state,
+        " entries=",
+        duplicateInfo.entryCount,
+        " attemptId=",
+        duplicateInfo.attemptId,
+        " script=",
+        duplicateInfo.scriptPath
+    )
+    return
+end
+
+local function setBootstrapState(state)
+    BootstrapStateMachine.transition(bootstrapMachine, state)
 end
 
 Players.CharacterAutoLoads = false
@@ -58,6 +84,25 @@ local function isWalkableWorldDescendant(hitInstance, worldRoot)
     return node ~= nil and WALKABLE_WORLD_GROUPS[node.Name] == true
 end
 
+local function isDecorativeRoadDetailDescendant(hitInstance, worldRoot)
+    if not hitInstance or not worldRoot then
+        return false
+    end
+    if not hitInstance:IsDescendantOf(worldRoot) then
+        return false
+    end
+
+    local node = hitInstance
+    while node and node.Parent and node.Parent ~= worldRoot do
+        if node.Name == "Detail" and node.Parent and node.Parent.Name == "Roads" then
+            return true
+        end
+        node = node.Parent
+    end
+
+    return false
+end
+
 local function isValidGroundHit(hitInstance, worldRoot, loadingPad, spawn)
     if not hitInstance then
         return false
@@ -70,6 +115,9 @@ local function isValidGroundHit(hitInstance, worldRoot, loadingPad, spawn)
     end
     if hitInstance == Workspace.Terrain then
         return true
+    end
+    if isDecorativeRoadDetailDescendant(hitInstance, worldRoot) then
+        return false
     end
     if isWalkableWorldDescendant(hitInstance, worldRoot) then
         return true
@@ -99,7 +147,7 @@ local function findGroundYNear(worldRoot, point, loadingPad, spawn)
             break
         end
         if isValidGroundHit(hit.Instance, worldRoot, loadingPad, spawn) then
-            return hit.Position.Y + 5
+            return hit.Position.Y
         end
         table.insert(ignore, hit.Instance)
         params.FilterDescendantsInstances = ignore
@@ -113,13 +161,25 @@ local function findGroundYNear(worldRoot, point, loadingPad, spawn)
             point.Z
         )
     )
-    return point.Y + 5
+    return point.Y
+end
+
+local function getCharacterSpawnCFrame(character)
+    local extents = character:GetExtentsSize()
+    local spawnLift = math.max(6, extents.Y * 0.5 + 0.5)
+    local basePosition = spawnCFrame.Position
+    local lookVector = spawnCFrame.LookVector
+    local elevatedPosition = basePosition + Vector3.new(0, spawnLift, 0)
+    return CFrame.lookAt(elevatedPosition, elevatedPosition + lookVector)
 end
 
 local function moveCharacterToSpawn(character)
     local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
     if root and spawnCFrame then
-        character:PivotTo(spawnCFrame)
+        local characterSpawnCFrame = getCharacterSpawnCFrame(character)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        character:PivotTo(characterSpawnCFrame)
     end
 end
 
@@ -176,8 +236,11 @@ holdingPad.Parent = Workspace
 
 local runtimeWorldConfig = StreamingRuntimeConfig.Resolve(WorldConfig)
 
-local result = RunAustin.run()
+local result = RunAustin.run({
+    phaseReporter = setBootstrapState,
+})
 if result == nil then
+    BootstrapStateMachine.fail(bootstrapMachine)
     warn("[BootstrapAustin] Austin manifest unavailable; skipping bootstrap.")
     if holdingPad then
         holdingPad:Destroy()
@@ -194,18 +257,21 @@ end
 local manifest = result.manifest
 local manifestSource = result.manifestSource or manifest
 local worldRoot = Workspace:FindFirstChild("GeneratedWorld_Austin")
+setBootstrapState("world_ready")
 
 print("[BootstrapAustin] Done.")
 
-local anchor = AustinSpawn.resolveAnchor(manifestSource, RunAustin.LOAD_RADIUS, result.focusPoint)
+local anchor = AustinSpawn.resolveRuntimeAnchor(manifestSource, RunAustin.LOAD_RADIUS, result.focusPoint)
 local spawnPoint = result.spawnPoint or anchor.spawnPoint
 local spawn = Instance.new("SpawnLocation")
 spawn.Name = "CongressAveSpawn"
 spawn.Size = Vector3.new(6, 1, 6)
 spawn.Anchored = true
+spawn.CanCollide = false
 spawn.Neutral = true
 spawn.Material = Enum.Material.Concrete
 spawn.BrickColor = BrickColor.new("Medium stone grey")
+spawn.Transparency = 1
 spawn.Parent = Workspace
 
 for _, player in ipairs(Players:GetPlayers()) do
@@ -215,14 +281,15 @@ Players.PlayerAdded:Connect(function(player)
     player.RespawnLocation = spawn
 end)
 
-local spawnY = findGroundYNear(worldRoot, spawnPoint, holdingPad, spawn)
+local spawnSurfaceY = findGroundYNear(worldRoot, spawnPoint, holdingPad, spawn)
+local spawnCenterY = spawnSurfaceY + spawn.Size.Y * 0.5
 local preferredLookTarget = result.lookTarget or anchor.lookTarget
-local lookTarget = Vector3.new(preferredLookTarget.X, spawnY, preferredLookTarget.Z)
-if (lookTarget - Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z)).Magnitude < 1 then
-    lookTarget = Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z - 1)
+local lookTarget = Vector3.new(preferredLookTarget.X, spawnSurfaceY, preferredLookTarget.Z)
+if (lookTarget - Vector3.new(spawnPoint.X, spawnSurfaceY, spawnPoint.Z)).Magnitude < 1 then
+    lookTarget = Vector3.new(spawnPoint.X, spawnSurfaceY, spawnPoint.Z - 1)
 end
-spawnCFrame = CFrame.lookAt(Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z), lookTarget)
-spawn.CFrame = spawnCFrame
+spawnCFrame = CFrame.lookAt(Vector3.new(spawnPoint.X, spawnSurfaceY, spawnPoint.Z), lookTarget)
+spawn.CFrame = CFrame.new(spawnPoint.X, spawnCenterY, spawnPoint.Z)
 
 importReady = true
 Players.CharacterAutoLoads = true
@@ -251,11 +318,19 @@ if runtimeWorldConfig.StreamingEnabled then
         config = runtimeWorldConfig,
         nonBlocking = true,
         frameBudgetSeconds = runtimeWorldConfig.StreamingImportFrameBudgetSeconds,
-        preferredLookVector = lookTarget - Vector3.new(spawnPoint.X, spawnY, spawnPoint.Z),
+        preferredLookVector = lookTarget - Vector3.new(spawnPoint.X, spawnSurfaceY, spawnPoint.Z),
     })
     StreamingService.Update(spawnPoint)
+    setBootstrapState("streaming_ready")
     print("[BootstrapAustin] StreamingService started.")
+else
+    setBootstrapState("streaming_ready")
 end
+
+if runtimeWorldConfig.EnableMinimap ~= false and Workspace:GetAttribute("ArnisMinimapEnabled") ~= true then
+    warn("[BootstrapAustin] Minimap expected to be enabled before gameplay readiness, but readiness marker was absent.")
+end
+setBootstrapState("minimap_ready")
 
 holdingPad:Destroy()
 
@@ -303,3 +378,4 @@ cc.TintColor = Color3.fromRGB(255, 248, 235)
 cc.Parent = Lighting
 
 print("[BootstrapAustin] Spawn and atmosphere configured.")
+setBootstrapState("gameplay_ready")

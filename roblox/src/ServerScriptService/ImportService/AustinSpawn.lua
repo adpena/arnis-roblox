@@ -105,6 +105,22 @@ local function getAnchorCacheKey(loadRadius, loadCenter, selectionMode)
     }, "|")
 end
 
+local function shouldCacheResolvedAnchor(manifest)
+    if not manifest then
+        return false
+    end
+
+    if type(manifest.LoadChunksWithinRadius) == "function" then
+        return false
+    end
+
+    if type(manifest.GetChunk) == "function" and type(manifest.GetChunkIdsWithinRadius) == "function" then
+        return false
+    end
+
+    return true
+end
+
 local function isChunkWithinRadius(chunk, manifest, loadRadius, loadCenter)
     if not loadRadius then
         return true
@@ -154,6 +170,75 @@ local function materializeChunksForSelection(manifest, loadRadius, loadCenter)
         end)
         if ok and type(chunksOrErr) == "table" then
             return chunksOrErr
+        end
+    end
+
+    if type(manifest.GetChunk) == "function" and type(manifest.GetChunkIdsWithinRadius) == "function" then
+        local focusCenter = loadCenter or AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
+        local ok, chunkIdsOrErr = pcall(function()
+            return manifest:GetChunkIdsWithinRadius(focusCenter, loadRadius)
+        end)
+        if ok and type(chunkIdsOrErr) == "table" then
+            local chunks = table.create(#chunkIdsOrErr)
+            for _, chunkId in ipairs(chunkIdsOrErr) do
+                local chunkOk, chunkOrErr = pcall(function()
+                    return manifest:GetChunk(chunkId)
+                end)
+                if chunkOk and type(chunkOrErr) == "table" then
+                    chunks[#chunks + 1] = chunkOrErr
+                end
+            end
+            if #chunks > 0 then
+                return chunks
+            end
+        end
+    end
+
+    if loadRadius == nil and type(manifest.chunkRefs) == "table" and type(manifest.GetChunk) == "function" then
+        local chunks = table.create(#manifest.chunkRefs)
+        for _, chunkRef in ipairs(manifest.chunkRefs) do
+            local chunkId = chunkRef and chunkRef.id
+            if type(chunkId) == "string" then
+                local chunkOk, chunkOrErr = pcall(function()
+                    return manifest:GetChunk(chunkId)
+                end)
+                if chunkOk and type(chunkOrErr) == "table" then
+                    chunks[#chunks + 1] = chunkOrErr
+                end
+            end
+        end
+        if #chunks > 0 then
+            return chunks
+        end
+    end
+
+    return {}
+end
+
+local function materializeAllChunksForSelection(manifest)
+    if not manifest then
+        return {}
+    end
+
+    if type(manifest.chunks) == "table" and #manifest.chunks > 0 then
+        return manifest.chunks
+    end
+
+    if type(manifest.chunkRefs) == "table" and type(manifest.GetChunk) == "function" then
+        local chunks = table.create(#manifest.chunkRefs)
+        for _, chunkRef in ipairs(manifest.chunkRefs) do
+            local chunkId = chunkRef and chunkRef.id
+            if type(chunkId) == "string" and chunkId ~= "" then
+                local chunkOk, chunkOrErr = pcall(function()
+                    return manifest:GetChunk(chunkId)
+                end)
+                if chunkOk and type(chunkOrErr) == "table" then
+                    chunks[#chunks + 1] = chunkOrErr
+                end
+            end
+        end
+        if #chunks > 0 then
+            return chunks
         end
     end
 
@@ -263,7 +348,8 @@ local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selection
     end
 
     local cacheKey = getAnchorCacheKey(loadRadius, loadCenter, selectionMode)
-    local manifestCache = anchorCache[manifest]
+    local canCacheResolvedAnchor = shouldCacheResolvedAnchor(manifest)
+    local manifestCache = if canCacheResolvedAnchor then anchorCache[manifest] else nil
     if manifestCache and manifestCache[cacheKey] then
         return manifestCache[cacheKey]
     end
@@ -332,7 +418,9 @@ local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selection
                         local buildingUsage = string.lower(tostring(building.usage or building.kind or "unknown"))
                         footprints[#footprints + 1] = {
                             points = worldFootprint,
-                            neighborhoodWeight = if buildingUsage == "roof" then RUNTIME_ROOF_ONLY_NEIGHBORHOOD_WEIGHT else 1,
+                            neighborhoodWeight = if buildingUsage == "roof"
+                                then RUNTIME_ROOF_ONLY_NEIGHBORHOOD_WEIGHT
+                                else 1,
                         }
                     end
                 end
@@ -367,10 +455,7 @@ local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selection
             nearestDistance = math.min(nearestDistance, footprintNearestDistance)
             if footprintNearestDistance < RUNTIME_BUILDING_NEIGHBORHOOD_STUDS then
                 local neighborhoodDeficiency = RUNTIME_BUILDING_NEIGHBORHOOD_STUDS - footprintNearestDistance
-                neighborhoodPenalty += neighborhoodDeficiency
-                    * neighborhoodDeficiency
-                    * RUNTIME_BUILDING_NEIGHBORHOOD_SCORE_SCALE
-                    * neighborhoodWeight
+                neighborhoodPenalty += neighborhoodDeficiency * neighborhoodDeficiency * RUNTIME_BUILDING_NEIGHBORHOOD_SCORE_SCALE * neighborhoodWeight
             end
         end
 
@@ -426,7 +511,7 @@ local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selection
     considerChunks(chunks, loadRadius, selectionCenter, desiredSpawnPoint)
 
     if bestPoint == nil and loadCenter == nil then
-        considerChunks(materializeChunksForSelection(manifest, nil, heuristicFocusPoint), nil, nil, desiredSpawnPoint)
+        considerChunks(materializeAllChunksForSelection(manifest), nil, nil, desiredSpawnPoint)
     end
 
     local explicitCanonicalPoint = getExplicitCanonicalAnchorPosition(manifest)
@@ -447,11 +532,13 @@ local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selection
         selectedChunks = chunks,
     }
 
-    if not manifestCache then
-        manifestCache = {}
-        anchorCache[manifest] = manifestCache
+    if canCacheResolvedAnchor then
+        if not manifestCache then
+            manifestCache = {}
+            anchorCache[manifest] = manifestCache
+        end
+        manifestCache[cacheKey] = anchor
     end
-    manifestCache[cacheKey] = anchor
 
     return anchor
 end
@@ -465,7 +552,7 @@ function AustinSpawn.resolveRuntimeAnchor(manifest, loadRadius, loadCenter)
 end
 
 function AustinSpawn.resolveCanonicalAnchorValues(manifest, loadRadius, loadCenter)
-    return AustinSpawn.resolveRuntimeAnchor(manifest, loadRadius, loadCenter)
+    return AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
 end
 
 local function accumulatePoint(bounds, x, y, z)
@@ -592,12 +679,10 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
         focusZ = weightedZ / weightedCount
     end
 
-    if not sawConcreteGeometry and manifest.chunks == nil and type(manifest.LoadChunksWithinRadius) == "function" then
+    if not sawConcreteGeometry and manifest.chunks == nil then
         local provisionalFocus = Vector3.new(focusX, focusY, focusZ)
-        local ok, materializedChunks = pcall(function()
-            return manifest:LoadChunksWithinRadius(loadCenter or provisionalFocus, loadRadius)
-        end)
-        if ok and type(materializedChunks) == "table" and #materializedChunks > 0 then
+        local materializedChunks = materializeChunksForSelection(manifest, loadRadius, loadCenter or provisionalFocus)
+        if type(materializedChunks) == "table" and #materializedChunks > 0 then
             return AustinSpawn.findFocusPoint({
                 meta = manifest.meta,
                 chunks = materializedChunks,

@@ -1742,13 +1742,14 @@ fn emit_area_way(
                     .map(|l| l * 3.5)
             })
             .unwrap_or(0.0);
+        let visible_height = (height - base_y).max(0.0);
         features.push(Feature::Building(BuildingFeature {
             id: id.to_string(),
             footprint: Footprint::new(fp.to_vec()),
             holes,
             indices: None,
             base_y,
-            height: height - base_y,
+            height: visible_height,
             height_m: tags.get("height").and_then(|h| h.parse::<f64>().ok()),
             levels,
             roof_levels,
@@ -2547,6 +2548,41 @@ mod tests {
             .expect("expected building");
 
         assert_eq!(building.material_tag.as_deref(), Some("stone"));
+    }
+
+    #[test]
+    fn emit_area_way_clamps_visible_height_when_min_height_exceeds_total_height() {
+        let mut tags = HashMap::new();
+        tags.insert("building".to_string(), "yes".to_string());
+        tags.insert("height".to_string(), "5".to_string());
+        tags.insert("min_height".to_string(), "12".to_string());
+
+        let mut features = Vec::new();
+        emit_area_way(
+            "osm_clamped_building",
+            &tags,
+            &[
+                Vec2::new(0.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(10.0, 10.0),
+                Vec2::new(0.0, 10.0),
+            ],
+            vec![],
+            1.0,
+            &mut features,
+        );
+
+        let building = features
+            .into_iter()
+            .find_map(|feature| match feature {
+                Feature::Building(building) => Some(building),
+                _ => None,
+            })
+            .expect("expected building");
+
+        assert_eq!(building.base_y, 12.0);
+        assert_eq!(building.height, 0.0);
+        assert_eq!(building.min_height, Some(12.0));
     }
 
     #[test]

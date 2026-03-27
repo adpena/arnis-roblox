@@ -73,6 +73,8 @@ return function()
         :FindFirstChild("Buildings")
         :FindFirstChild("civic_limestone")
     Assert.truthy(building, "expected imported civic building")
+    local shellFolder = building:FindFirstChild("Shell")
+    Assert.truthy(shellFolder, "expected shell folder for civic shell-mesh building")
 
     local glassFacadePartCount = 0
     for _, descendant in ipairs(building:GetDescendants()) do
@@ -86,6 +88,16 @@ return function()
         0,
         "expected opaque civic shell to avoid fabricated glass facade bands"
     )
+
+    for _, descendant in ipairs(shellFolder:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            Assert.equal(
+                descendant.Transparency,
+                0,
+                "expected opaque civic shell geometry to stay non-transparent in shell-mesh mode"
+            )
+        end
+    end
 
     worldRoot:Destroy()
 end

@@ -1,0 +1,85 @@
+{
+  "name": "ArnisRoblox",
+  "servePort": 34872,
+  "vertigoSync": {
+    "builders": {
+      "roots": [
+        "src/ServerScriptService/StudioPreview/AustinPreviewBuilder.lua"
+      ],
+      "dependencyRoots": [
+        "src/ServerScriptService/StudioPreview",
+        "src/ServerScriptService/ImportService",
+        "src/ReplicatedStorage/Shared",
+        "src/ServerStorage"
+      ]
+    },
+    "editPreview": {
+      "enabled": true,
+      "builderModulePath": "ServerScriptService.StudioPreview.AustinPreviewBuilder",
+      "builderMethod": "Build",
+      "watchRoots": [
+        "ServerScriptService.StudioPreview",
+        "ServerScriptService.ImportService",
+        "ReplicatedStorage.Shared",
+        "ServerStorage"
+      ],
+      "debounceSeconds": 0.25,
+      "rootRefreshSeconds": 1.0,
+      "mode": "edit_only"
+    }
+  },
+  "globIgnorePaths": [
+    "**/*.md",
+    "**/.DS_Store",
+    "src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/**",
+    "src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinCanonicalManifestChunks/**",
+    "src/ServerStorage/SampleData/AustinCanonicalManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinHDManifestChunks/**",
+    "src/ServerStorage/SampleData/AustinHDManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinHarnessManifestChunks/**",
+    "src/ServerStorage/SampleData/AustinHarnessManifestIndex.lua",
+    "src/ServerStorage/SampleData/AustinManifestChunks/**",
+    "src/ServerStorage/SampleData/AustinManifestIndex.lua"
+  ],
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage"
+    },
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+    "ServerStorage": {
+      "$path": "src/ServerStorage"
+    },
+    "Lighting": {
+      "$className": "Lighting",
+      "$path": "src/Lighting",
+      "$properties": {
+        "Technology": "Future",
+        "GlobalShadows": true,
+        "Brightness": 2,
+        "EnvironmentDiffuseScale": 1,
+        "EnvironmentSpecularScale": 1,
+        "ShadowSoftness": 0.2
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "StreamingEnabled": false
+      },
+      "$attributes": {
+        "VertigoSyncServerUrl": "http://127.0.0.1:34872"
+      },
+      "$path": "src/Workspace"
+    }
+  }
+}

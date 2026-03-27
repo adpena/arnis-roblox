@@ -62,15 +62,8 @@ return function()
     Assert.truthy(roadsFolder, "expected roads folder")
     local detailFolder = roadsFolder:FindFirstChild("Detail")
     Assert.truthy(detailFolder, "expected shared road detail folder")
-    Assert.truthy(
-        CollectionService:HasTag(detailFolder, "LOD_DetailGroup"),
-        "expected road detail group tag"
-    )
-    Assert.equal(
-        detailFolder:GetAttribute("ArnisLodGroupKind"),
-        "detail",
-        "expected detail lod group kind"
-    )
+    Assert.truthy(CollectionService:HasTag(detailFolder, "LOD_DetailGroup"), "expected road detail group tag")
+    Assert.equal(detailFolder:GetAttribute("ArnisLodGroupKind"), "detail", "expected detail lod group kind")
 
     local hasArrow = false
     local hasCenterline = false
@@ -90,11 +83,7 @@ return function()
     for _, child in ipairs(detailFolder:GetDescendants()) do
         if
             child:IsA("Instance")
-            and (
-                child.Name == "OnewayArrow"
-                or child.Name == "StreetLightHead"
-                or child.Name == "StreetLight"
-            )
+            and (child.Name == "OnewayArrow" or child.Name == "StreetLightHead" or child.Name == "StreetLight")
         then
             Assert.falsy(
                 CollectionService:HasTag(child, "LOD_Detail"),
@@ -103,12 +92,9 @@ return function()
         end
     end
 
-    local chunkEntry = ChunkLoader.GetChunkEntry("0_0")
+    local chunkEntry = ChunkLoader.GetChunkEntry("0_0", worldRootName)
     Assert.truthy(chunkEntry, "expected chunk entry for road detail world")
-    Assert.truthy(
-        chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1,
-        "expected registered detail groups"
-    )
+    Assert.truthy(chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1, "expected registered detail groups")
     Assert.truthy(
         chunkEntry.reactives and #chunkEntry.reactives.streetLights >= 1,
         "expected registered street-light reactives"
