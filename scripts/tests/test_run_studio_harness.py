@@ -190,8 +190,8 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn("local childCount = 0", self.text)
         self.assertNotIn('status = if waitError then "timeout" else "ok"', self.text)
 
-    def test_edit_mode_embeds_host_probe_as_jsondecode_not_raw_json_table(self) -> None:
-        self.assertIn('local hostProbeSample = HttpService:JSONDecode(', self.text)
+    def test_edit_mode_embeds_host_probe_without_raw_json_table_syntax(self) -> None:
+        self.assertIn("local hostProbeSample = ", self.text)
         self.assertNotIn('local hostProbeSample = {"availableBytes":', self.text)
 
     def test_edit_mode_reuses_settled_preview_instead_of_forcing_rebuild(self) -> None:
