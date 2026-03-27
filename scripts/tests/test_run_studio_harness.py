@@ -220,6 +220,26 @@ class RunStudioHarnessTests(unittest.TestCase):
         self.assertIn('status = "skipped"', self.text)
         self.assertIn('skipReason = "spec_filter_non_preview"', self.text)
 
+    def test_play_probe_samples_bootstrap_state_attributes(self) -> None:
+        self.assertIn('payload.austinBootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")', self.text)
+        self.assertIn('payload.austinBootstrapStateOrder = Workspace:GetAttribute("ArnisAustinBootstrapStateOrder")', self.text)
+        self.assertIn('payload.austinBootstrapFailure = Workspace:GetAttribute("ArnisAustinBootstrapFailure")', self.text)
+        self.assertIn('payload.austinBootstrapEntryCount = Workspace:GetAttribute("ArnisAustinBootstrapEntryCount")', self.text)
+        self.assertIn(
+            'payload.austinBootstrapDuplicateCount = Workspace:GetAttribute("ArnisAustinBootstrapDuplicateCount")',
+            self.text,
+        )
+
+    def test_play_fallback_waits_for_explicit_bootstrap_terminal_states(self) -> None:
+        self.assertIn(
+            'wait_for_log_pattern "\\\\[BootstrapAustin\\\\] state=gameplay_ready|\\\\[BootstrapAustin\\\\] state=failed"',
+            self.text,
+        )
+        self.assertNotIn(
+            'wait_for_log_pattern "\\\\[BootstrapAustin\\\\] Starting Austin, TX import|\\\\[RunAustin\\\\]|\\\\[BootstrapAustin\\\\] Done\\\\."',
+            self.text,
+        )
+
     def test_auto_built_clean_place_uses_one_canonical_output_path(self) -> None:
         self.assertIn('local output_place="$roblox_dir/out/arnis-test-clean-$output_suffix.rbxlx"', self.text)
         self.assertIn('local output_suffix="edit"', self.text)

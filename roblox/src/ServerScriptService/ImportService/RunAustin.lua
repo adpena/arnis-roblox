@@ -151,8 +151,15 @@ function RunAustin.loadManifestSource()
     error(table.concat(loadErrors, "; "))
 end
 
-function RunAustin.run()
-    setPerfAttribute("Status", "loading")
+function RunAustin.run(options)
+    options = options or {}
+    local onBootstrapState = options.onBootstrapState
+    local importConfig = options.importConfig
+
+    if type(onBootstrapState) == "function" then
+        onBootstrapState("loading_manifest")
+    end
+    setPerfAttribute("Status", "loading_manifest")
     print(("[RunAustin] Starting run for manifest %s"):format(RunAustin.getManifestName()))
     local success, manifestOrErr, resolvedManifestName = pcall(function()
         return RunAustin.loadManifestSource()
@@ -166,6 +173,10 @@ function RunAustin.run()
 
     local manifestSource = manifestOrErr
     setPerfAttribute("ManifestName", resolvedManifestName or RunAustin.getManifestName())
+    if type(onBootstrapState) == "function" then
+        onBootstrapState("importing_startup")
+    end
+    setPerfAttribute("Status", "importing_startup")
     print(
         ("[RunAustin] Manifest source loaded from %s"):format(
             resolvedManifestName or RunAustin.getManifestName()
@@ -208,6 +219,7 @@ function RunAustin.run()
         clearFirst = true,
         worldRootName = "GeneratedWorld_Austin",
         printReport = true,
+        config = importConfig,
         loadRadius = RunAustin.LOAD_RADIUS, -- studs around the manifest focus point
         loadCenter = loadCenter,
         nonBlocking = true,

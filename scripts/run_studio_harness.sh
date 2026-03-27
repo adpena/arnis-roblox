@@ -2778,10 +2778,22 @@ local function sample()
     payload.austinSpawnX = Workspace:GetAttribute("VertigoAustinSpawnX")
     payload.austinSpawnY = Workspace:GetAttribute("VertigoAustinSpawnY")
     payload.austinSpawnZ = Workspace:GetAttribute("VertigoAustinSpawnZ")
+    payload.austinBootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")
+    payload.austinBootstrapStateOrder = Workspace:GetAttribute("ArnisAustinBootstrapStateOrder")
+    payload.austinBootstrapFailure = Workspace:GetAttribute("ArnisAustinBootstrapFailure")
+    payload.austinBootstrapEntryCount = Workspace:GetAttribute("ArnisAustinBootstrapEntryCount")
+    payload.austinBootstrapDuplicateCount = Workspace:GetAttribute("ArnisAustinBootstrapDuplicateCount")
     return payload
 end
 
-task.wait(__WAIT_SECONDS__)
+local deadline = os.clock() + __WAIT_SECONDS__
+while os.clock() < deadline do
+    local bootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")
+    if bootstrapState == "gameplay_ready" or bootstrapState == "failed" then
+        break
+    end
+    task.wait(0.25)
+end
 local firstSample = sample()
 print("ARNIS_MCP_PLAY " .. HttpService:JSONEncode(firstSample))
 emitSceneMarkers("ARNIS_SCENE_PLAY", "play", "GeneratedWorld_Austin", 1500, SceneAudit.summarizeWorld(Workspace:FindFirstChild("GeneratedWorld_Austin")))
@@ -3177,7 +3189,7 @@ elif [[ $DO_PLAY -eq 1 ]]; then
   else
     enter_play_mode || log "failed to trigger Play mode via AppleScript/menu automation"
     wait_for_playing 20 || log "Studio did not report playing state before timeout; falling back to Austin log markers"
-    if wait_for_log_pattern "\\[BootstrapAustin\\] Starting Austin, TX import|\\[RunAustin\\]|\\[BootstrapAustin\\] Done\\." "$PATTERN_WAIT_SECONDS"; then
+    if wait_for_log_pattern "\\[BootstrapAustin\\] state=gameplay_ready|\\[BootstrapAustin\\] state=failed" "$PATTERN_WAIT_SECONDS"; then
       sleep "$PLAY_WAIT_SECONDS"
     else
       log "play-mode Austin markers not observed before timeout; continuing"
