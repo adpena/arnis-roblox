@@ -15,6 +15,10 @@ local function resolveWorldRootName(worldRootName, folder)
         return worldRootName
     end
 
+    if folder ~= nil and folder.Parent == Workspace then
+        return folder.Name
+    end
+
     local parent = folder and folder.Parent
     if parent ~= nil then
         return parent.Name

@@ -472,6 +472,10 @@ local function compareWorkItemKeys(leftKey, rightKey)
         return leftKey.distanceBand < rightKey.distanceBand
     end
 
+    if leftIsWholeChunk ~= rightIsWholeChunk then
+        return not leftIsWholeChunk
+    end
+
     if bothWholeChunks and leftKey.distSq ~= rightKey.distSq then
         return leftKey.distSq < rightKey.distSq
     end
@@ -494,12 +498,20 @@ local function compareWorkItemKeys(leftKey, rightKey)
         return leftKey.layerRank < rightKey.layerRank
     end
 
-    if leftKey.chunkId == rightKey.chunkId and leftKey.sourceOrder ~= rightKey.sourceOrder then
-        return leftKey.sourceOrder < rightKey.sourceOrder
-    end
-
     if leftKey.observedCost ~= rightKey.observedCost then
         return leftKey.observedCost < rightKey.observedCost
+    end
+
+    if leftKey.streamingCost ~= rightKey.streamingCost then
+        return leftKey.streamingCost < rightKey.streamingCost
+    end
+
+    if leftKey.featureCount ~= rightKey.featureCount then
+        return leftKey.featureCount < rightKey.featureCount
+    end
+
+    if leftKey.chunkId == rightKey.chunkId and leftKey.sourceOrder ~= rightKey.sourceOrder then
+        return leftKey.sourceOrder < rightKey.sourceOrder
     end
 
     if normalizedForward then
@@ -514,14 +526,6 @@ local function compareWorkItemKeys(leftKey, rightKey)
         if leftLateral ~= rightLateral then
             return leftLateral < rightLateral
         end
-    end
-
-    if leftKey.streamingCost ~= rightKey.streamingCost then
-        return leftKey.streamingCost < rightKey.streamingCost
-    end
-
-    if leftKey.featureCount ~= rightKey.featureCount then
-        return leftKey.featureCount < rightKey.featureCount
     end
 
     if leftKey.chunkId ~= rightKey.chunkId then

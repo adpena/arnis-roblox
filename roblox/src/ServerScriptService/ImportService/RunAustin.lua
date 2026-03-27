@@ -66,7 +66,17 @@ function RunAustin.getManifestName()
 end
 
 function RunAustin.getRuntimeManifestCandidates()
-    return CanonicalWorldContract.resolveCanonicalMaterializationCandidates("play")
+    local candidates = { RunAustin.getManifestName() }
+    local seen = {
+        [RunAustin.getManifestName()] = true,
+    }
+    for _, candidate in ipairs(CanonicalWorldContract.resolveCanonicalMaterializationCandidates("play")) do
+        if not seen[candidate] then
+            seen[candidate] = true
+            candidates[#candidates + 1] = candidate
+        end
+    end
+    return candidates
 end
 
 function RunAustin.loadManifestSource()

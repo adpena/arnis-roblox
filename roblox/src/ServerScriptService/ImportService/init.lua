@@ -243,6 +243,32 @@ local function clearSubplanState(chunkId, worldRootName)
     subplanStateByChunkId[getSubplanStateKey(chunkId, worldRootName)] = nil
 end
 
+local function findExistingSubplanState(chunkId, worldRootName)
+    if type(worldRootName) == "string" and worldRootName ~= "" then
+        return subplanStateByChunkId[getSubplanStateKey(chunkId, worldRootName)]
+    end
+
+    local defaultState = subplanStateByChunkId[getSubplanStateKey(chunkId, DEFAULT_WORLD_ROOT_NAME)]
+    if defaultState ~= nil then
+        return defaultState
+    end
+
+    local suffix = "::" .. chunkId
+    local matchingKeys = {}
+    for stateKey, state in pairs(subplanStateByChunkId) do
+        if state ~= nil and string.sub(stateKey, -#suffix) == suffix then
+            matchingKeys[#matchingKeys + 1] = stateKey
+        end
+    end
+    table.sort(matchingKeys)
+
+    if #matchingKeys > 0 then
+        return subplanStateByChunkId[matchingKeys[1]]
+    end
+
+    return nil
+end
+
 local function buildImportedLayerMap(actionSet)
     local importedLayers = {}
     for _, layer in ipairs(CANONICAL_SUBPLAN_LAYERS) do
@@ -1209,11 +1235,23 @@ function ImportService.RollbackCancelledImport(chunk, options)
 end
 
 function ImportService.GetSubplanState(chunkId, worldRootName)
-    return cloneSubplanState(getSubplanState(chunkId, worldRootName))
+    local existingState = findExistingSubplanState(chunkId, worldRootName)
+    return cloneSubplanState(existingState)
 end
 
 function ImportService.ResetSubplanState(chunkId, worldRootName)
     if type(chunkId) == "string" then
+        if type(worldRootName) == "string" and worldRootName ~= "" then
+            clearSubplanState(chunkId, worldRootName)
+            return
+        end
+
+        local suffix = "::" .. chunkId
+        for stateKey in pairs(subplanStateByChunkId) do
+            if string.sub(stateKey, -#suffix) == suffix then
+                subplanStateByChunkId[stateKey] = nil
+            end
+        end
         clearSubplanState(chunkId, worldRootName)
         return
     end
