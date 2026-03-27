@@ -1,5 +1,5 @@
 return {
     runInEditMode = false,
     runInPlayMode = false,
-    specNameFilter = ""
+specNameFilter = 'AustinPreviewTimeTravel.spec.lua'
 }

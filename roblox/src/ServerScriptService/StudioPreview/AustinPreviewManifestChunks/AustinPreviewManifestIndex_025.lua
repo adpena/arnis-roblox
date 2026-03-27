@@ -1,1 +1,1 @@
-return {chunks={{id="-1_0",originStuds={x=-256,y=-0.8534,z=0},terrain={cellSizeStuds=1,width=256,depth=256,material="Grass"}}}}
+return {chunks={{id="-5_1",water={{id="osm_1317394749",kind="swimming_pool",material="Water",color={r=58,g=167,b=216},footprint={{x=177.8999,z=137.7427},{x=182.0559,z=123.6928},{x=210.7021,z=132.1571},{x=206.509,z=146.25}},indices={3,0,1,1,2,3},surfaceY=-11.1546}}}}}

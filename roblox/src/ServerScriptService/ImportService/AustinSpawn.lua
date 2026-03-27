@@ -3,7 +3,7 @@
 
 local AustinSpawn = {}
 
-local ROAD_PRIORITY = table.freeze({
+local PREVIEW_ROAD_PRIORITY = table.freeze({
     footway = 10,
     pedestrian = 12,
     path = 14,
@@ -21,8 +21,27 @@ local ROAD_PRIORITY = table.freeze({
     track = 280,
 })
 
-local function getRoadPriority(kind)
-    return ROAD_PRIORITY[kind] or 65
+local RUNTIME_SPAWN_ROAD_PRIORITY = table.freeze({
+    service = 10,
+    living_street = 12,
+    residential = 16,
+    unclassified = 20,
+    tertiary = 36,
+    secondary = 52,
+    primary = 80,
+    footway = 120,
+    pedestrian = 130,
+    cycleway = 140,
+    path = 150,
+    trunk = 220,
+    motorway_link = 260,
+    motorway = 300,
+    track = 320,
+})
+
+local function getRoadPriority(kind, selectionMode)
+    local priorities = if selectionMode == "runtime_spawn" then RUNTIME_SPAWN_ROAD_PRIORITY else PREVIEW_ROAD_PRIORITY
+    return priorities[kind] or 65
 end
 
 local EXCLUDED_SPAWN_KINDS = table.freeze({
@@ -37,6 +56,12 @@ local AUSTIN_CANONICAL_WORLD_NAMES = table.freeze({
 })
 
 local AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS = -256
+local RUNTIME_BUILDING_CLEARANCE_STUDS = 72
+local RUNTIME_BUILDING_CLEARANCE_SCORE_SCALE = 1000
+local RUNTIME_BUILDING_NEIGHBORHOOD_STUDS = 140
+local RUNTIME_BUILDING_NEIGHBORHOOD_SCORE_SCALE = 10
+local RUNTIME_ROOF_ONLY_NEIGHBORHOOD_WEIGHT = 20
+local RUNTIME_BUILDING_INSIDE_FOOTPRINT_PENALTY = 1000000000
 local anchorCache = setmetatable({}, { __mode = "k" })
 
 local function getLoadCenter(loadCenter)
@@ -51,7 +76,19 @@ local function getLoadCenter(loadCenter)
     return 0, 0
 end
 
-local function getAnchorCacheKey(loadRadius, loadCenter)
+local function getLoadCenterVector(loadCenter, fallbackY)
+    if typeof(loadCenter) == "Vector3" then
+        return loadCenter
+    end
+
+    if type(loadCenter) == "table" then
+        return Vector3.new(loadCenter.x or 0, loadCenter.y or fallbackY or 0, loadCenter.z or 0)
+    end
+
+    return nil
+end
+
+local function getAnchorCacheKey(loadRadius, loadCenter, selectionMode)
     local centerX, centerZ = getLoadCenter(loadCenter)
     local centerY = 0
     if typeof(loadCenter) == "Vector3" then
@@ -64,6 +101,7 @@ local function getAnchorCacheKey(loadRadius, loadCenter)
         tostring(centerX),
         tostring(centerY),
         tostring(centerZ),
+        tostring(selectionMode or "preview"),
     }, "|")
 end
 
@@ -137,14 +175,23 @@ local function getCanonicalAnchor(manifest)
     return canonicalAnchor
 end
 
-local function applyCanonicalAnchor(manifest, fallbackPoint)
+local function getExplicitCanonicalAnchorPosition(manifest)
+    local canonicalAnchor = getCanonicalAnchor(manifest)
+    if type(canonicalAnchor) ~= "table" then
+        return nil
+    end
+
+    local positionStuds = canonicalAnchor.positionStuds
+    if type(positionStuds) == "table" then
+        return Vector3.new(positionStuds.x or 0, positionStuds.y or 0, positionStuds.z or 0)
+    end
+
+    return nil
+end
+
+local function applyRelativeCanonicalSpawnOffset(manifest, fallbackPoint)
     local canonicalAnchor = getCanonicalAnchor(manifest)
     if type(canonicalAnchor) == "table" then
-        local positionStuds = canonicalAnchor.positionStuds
-        if type(positionStuds) == "table" then
-            return Vector3.new(positionStuds.x or 0, positionStuds.y or 0, positionStuds.z or 0)
-        end
-
         local offsetStuds = canonicalAnchor.positionOffsetFromHeuristicStuds
         if fallbackPoint and type(offsetStuds) == "table" then
             return Vector3.new(
@@ -155,13 +202,27 @@ local function applyCanonicalAnchor(manifest, fallbackPoint)
         end
     end
 
-    return nil
+    return fallbackPoint
 end
 
-local function applyAustinCanonicalAnchorOverride(manifest, point)
-    local canonicalPoint = applyCanonicalAnchor(manifest, point)
-    if canonicalPoint then
-        return canonicalPoint
+local function hasRelativeCanonicalSpawnOffset(manifest)
+    local canonicalAnchor = getCanonicalAnchor(manifest)
+    if type(canonicalAnchor) ~= "table" then
+        return false
+    end
+
+    return type(canonicalAnchor.positionOffsetFromHeuristicStuds) == "table"
+end
+
+local function getDesiredSpawnPoint(manifest, point)
+    local explicitCanonicalPoint = getExplicitCanonicalAnchorPosition(manifest)
+    if explicitCanonicalPoint then
+        return explicitCanonicalPoint
+    end
+
+    local relativeCanonicalPoint = applyRelativeCanonicalSpawnOffset(manifest, point)
+    if relativeCanonicalPoint ~= point then
+        return relativeCanonicalPoint
     end
 
     if not point or not isAustinCanonicalWorld(manifest) then
@@ -169,7 +230,7 @@ local function applyAustinCanonicalAnchorOverride(manifest, point)
     end
 
     -- In this Austin projection, moving to the south side of the Capitol requires
-    -- shifting the heuristic anchor in the negative Z direction.
+    -- biasing the target road search in the negative Z direction.
     return Vector3.new(point.X, point.Y, point.Z + AUSTIN_SOUTH_OF_CAPITOL_OFFSET_STUDS)
 end
 
@@ -191,7 +252,7 @@ function AustinSpawn.getPreferredLookTarget(manifest, spawnPoint, fallbackFocusP
     return fallbackFocusPoint or spawnPoint or Vector3.new(0, 0, 1)
 end
 
-function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
+local function resolveAnchorInternal(manifest, loadRadius, loadCenter, selectionMode)
     if not manifest then
         local origin = Vector3.new(0, 0, 0)
         return {
@@ -201,17 +262,127 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
         }
     end
 
-    local cacheKey = getAnchorCacheKey(loadRadius, loadCenter)
+    local cacheKey = getAnchorCacheKey(loadRadius, loadCenter, selectionMode)
     local manifestCache = anchorCache[manifest]
     if manifestCache and manifestCache[cacheKey] then
         return manifestCache[cacheKey]
     end
 
     local heuristicFocusPoint = AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
+    local desiredSpawnPoint = getDesiredSpawnPoint(manifest, heuristicFocusPoint)
     local bestPoint
     local bestScore
 
-    local function considerChunks(chunksToScan, radiusLimit, centerPoint)
+    local function pointInPolygon2D(x, z, polygon)
+        local inside = false
+        local count = #polygon
+        if count < 3 then
+            return false
+        end
+
+        for i = 1, count do
+            local current = polygon[i]
+            local nextPoint = polygon[(i % count) + 1]
+            local currentZAbove = current.Z > z
+            local nextZAbove = nextPoint.Z > z
+            if currentZAbove ~= nextZAbove then
+                local edgeCrossX = current.X + (nextPoint.X - current.X) * ((z - current.Z) / (nextPoint.Z - current.Z))
+                if x < edgeCrossX then
+                    inside = not inside
+                end
+            end
+        end
+
+        return inside
+    end
+
+    local function distanceToSegment2D(px, pz, ax, az, bx, bz)
+        local abX = bx - ax
+        local abZ = bz - az
+        local apX = px - ax
+        local apZ = pz - az
+        local denom = abX * abX + abZ * abZ
+        local t = 0
+        if denom > 0 then
+            t = math.clamp((apX * abX + apZ * abZ) / denom, 0, 1)
+        end
+        local closestX = ax + abX * t
+        local closestZ = az + abZ * t
+        local dx = px - closestX
+        local dz = pz - closestZ
+        return math.sqrt(dx * dx + dz * dz)
+    end
+
+    local function collectBuildingFootprints(chunksToScan, radiusLimit, centerPoint)
+        if selectionMode ~= "runtime_spawn" then
+            return nil
+        end
+
+        local footprints = {}
+        for _, chunk in ipairs(chunksToScan) do
+            if isChunkWithinRadius(chunk, manifest, radiusLimit, centerPoint) then
+                local origin = chunk.originStuds or { x = 0, y = 0, z = 0 }
+                for _, building in ipairs(chunk.buildings or {}) do
+                    local footprint = building.footprint
+                    if type(footprint) == "table" and #footprint >= 3 then
+                        local worldFootprint = table.create(#footprint)
+                        for pointIndex, point in ipairs(footprint) do
+                            worldFootprint[pointIndex] = Vector3.new(origin.x + point.x, 0, origin.z + point.z)
+                        end
+                        local buildingUsage = string.lower(tostring(building.usage or building.kind or "unknown"))
+                        footprints[#footprints + 1] = {
+                            points = worldFootprint,
+                            neighborhoodWeight = if buildingUsage == "roof"
+                                then RUNTIME_ROOF_ONLY_NEIGHBORHOOD_WEIGHT
+                                else 1,
+                        }
+                    end
+                end
+            end
+        end
+
+        return footprints
+    end
+
+    local function getRuntimeBuildingPenalty(px, pz, buildingFootprints)
+        if not buildingFootprints or #buildingFootprints == 0 then
+            return 0
+        end
+
+        local nearestDistance = math.huge
+        local neighborhoodPenalty = 0
+        for _, footprintEntry in ipairs(buildingFootprints) do
+            local footprint = footprintEntry.points
+            local neighborhoodWeight = footprintEntry.neighborhoodWeight or 1
+            if pointInPolygon2D(px, pz, footprint) then
+                return RUNTIME_BUILDING_INSIDE_FOOTPRINT_PENALTY
+            end
+
+            local footprintNearestDistance = math.huge
+            for i = 1, #footprint do
+                local pointA = footprint[i]
+                local pointB = footprint[(i % #footprint) + 1]
+                local edgeDistance = distanceToSegment2D(px, pz, pointA.X, pointA.Z, pointB.X, pointB.Z)
+                footprintNearestDistance = math.min(footprintNearestDistance, edgeDistance)
+            end
+
+            nearestDistance = math.min(nearestDistance, footprintNearestDistance)
+            if footprintNearestDistance < RUNTIME_BUILDING_NEIGHBORHOOD_STUDS then
+                local neighborhoodDeficiency = RUNTIME_BUILDING_NEIGHBORHOOD_STUDS - footprintNearestDistance
+                neighborhoodPenalty += neighborhoodDeficiency * neighborhoodDeficiency * RUNTIME_BUILDING_NEIGHBORHOOD_SCORE_SCALE * neighborhoodWeight
+            end
+        end
+
+        if nearestDistance >= RUNTIME_BUILDING_CLEARANCE_STUDS then
+            return neighborhoodPenalty
+        end
+
+        local deficiency = RUNTIME_BUILDING_CLEARANCE_STUDS - nearestDistance
+        return deficiency * deficiency * RUNTIME_BUILDING_CLEARANCE_SCORE_SCALE + neighborhoodPenalty
+    end
+
+    local function considerChunks(chunksToScan, radiusLimit, centerPoint, scoringTarget)
+        local buildingFootprints = collectBuildingFootprints(chunksToScan, radiusLimit, centerPoint)
         for _, chunk in ipairs(chunksToScan) do
             if isChunkWithinRadius(chunk, manifest, radiusLimit, centerPoint) then
                 local origin = chunk.originStuds or { x = 0, y = 0, z = 0 }
@@ -219,7 +390,7 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
                     if EXCLUDED_SPAWN_KINDS[road.kind] then
                         continue
                     end
-                    local priority = getRoadPriority(road.kind)
+                    local priority = getRoadPriority(road.kind, selectionMode)
                     local points = road.points or {}
 
                     for i = 1, #points - 1 do
@@ -228,13 +399,16 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
                         local midX = origin.x + (p1.x + p2.x) * 0.5
                         local midY = origin.y + (p1.y + p2.y) * 0.5
                         local midZ = origin.z + (p1.z + p2.z) * 0.5
-                        local dx = midX - heuristicFocusPoint.X
-                        local dz = midZ - heuristicFocusPoint.Z
+                        local targetPoint = scoringTarget or heuristicFocusPoint
+                        local dx = midX - targetPoint.X
+                        local dz = midZ - targetPoint.Z
                         local distSq = dx * dx + dz * dz
-                        if math.abs(midY - heuristicFocusPoint.Y) > 18 then
+                        if math.abs(midY - targetPoint.Y) > 18 then
                             continue
                         end
-                        local score = priority * 100000000 + distSq
+                        local score = priority * 100000000
+                            + distSq
+                            + getRuntimeBuildingPenalty(midX, midZ, buildingFootprints)
 
                         if not bestScore or score < bestScore then
                             bestScore = score
@@ -248,18 +422,27 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
 
     local selectionCenter = loadCenter or heuristicFocusPoint
     local chunks = materializeChunksForSelection(manifest, loadRadius, heuristicFocusPoint)
-    considerChunks(chunks, loadRadius, selectionCenter)
+    considerChunks(chunks, loadRadius, selectionCenter, desiredSpawnPoint)
 
     if bestPoint == nil and loadCenter == nil then
-        considerChunks(materializeChunksForSelection(manifest, nil, heuristicFocusPoint), nil, nil)
+        considerChunks(materializeChunksForSelection(manifest, nil, heuristicFocusPoint), nil, nil, desiredSpawnPoint)
     end
 
-    local spawnPoint = applyAustinCanonicalAnchorOverride(manifest, bestPoint or heuristicFocusPoint)
+    local explicitCanonicalPoint = getExplicitCanonicalAnchorPosition(manifest)
+    local spawnPoint = if explicitCanonicalPoint then explicitCanonicalPoint else (bestPoint or desiredSpawnPoint)
+    local focusPoint = heuristicFocusPoint
+    if explicitCanonicalPoint then
+        focusPoint = explicitCanonicalPoint
+    elseif selectionMode == "preview" and loadCenter ~= nil then
+        focusPoint = getLoadCenterVector(loadCenter, heuristicFocusPoint.Y) or heuristicFocusPoint
+    elseif selectionMode == "preview" and loadCenter == nil and not hasRelativeCanonicalSpawnOffset(manifest) then
+        focusPoint = spawnPoint
+    end
     local anchor = {
         heuristicFocusPoint = heuristicFocusPoint,
-        focusPoint = spawnPoint,
+        focusPoint = focusPoint,
         spawnPoint = spawnPoint,
-        lookTarget = AustinSpawn.getPreferredLookTarget(manifest, spawnPoint, heuristicFocusPoint),
+        lookTarget = AustinSpawn.getPreferredLookTarget(manifest, spawnPoint, focusPoint),
         selectedChunks = chunks,
     }
 
@@ -270,6 +453,18 @@ function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
     manifestCache[cacheKey] = anchor
 
     return anchor
+end
+
+function AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter)
+    return resolveAnchorInternal(manifest, loadRadius, loadCenter, "preview")
+end
+
+function AustinSpawn.resolveRuntimeAnchor(manifest, loadRadius, loadCenter)
+    return resolveAnchorInternal(manifest, loadRadius, loadCenter, "runtime_spawn")
+end
+
+function AustinSpawn.resolveCanonicalAnchorValues(manifest, loadRadius, loadCenter)
+    return AustinSpawn.resolveRuntimeAnchor(manifest, loadRadius, loadCenter)
 end
 
 local function accumulatePoint(bounds, x, y, z)
@@ -313,6 +508,7 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
     local weightedX = 0
     local weightedZ = 0
     local weightedCount = 0
+    local sawConcreteGeometry = false
 
     local function accumulateFocusPoint(x, z)
         weightedX += x
@@ -333,12 +529,14 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
 
             local terrain = chunk.terrain
             if terrain and terrain.heights then
+                sawConcreteGeometry = true
                 for _, height in ipairs(terrain.heights) do
                     accumulateGroundY(bounds, origin.y + (height or 0))
                 end
             end
 
             for _, road in ipairs(chunk.roads or {}) do
+                sawConcreteGeometry = true
                 for _, point in ipairs(road.points or {}) do
                     local worldX = origin.x + point.x
                     local worldY = origin.y + point.y
@@ -350,6 +548,7 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
             end
 
             for _, building in ipairs(chunk.buildings or {}) do
+                sawConcreteGeometry = true
                 local baseY = origin.y + (building.baseY or 0)
                 for _, point in ipairs(building.footprint or {}) do
                     local worldX = origin.x + point.x
@@ -361,6 +560,7 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
             end
 
             for _, prop in ipairs(chunk.props or {}) do
+                sawConcreteGeometry = true
                 local position = prop.position
                 if position then
                     local worldX = origin.x + position.x
@@ -391,6 +591,19 @@ function AustinSpawn.findFocusPoint(manifest, loadRadius, loadCenter)
         focusZ = weightedZ / weightedCount
     end
 
+    if not sawConcreteGeometry and manifest.chunks == nil and type(manifest.LoadChunksWithinRadius) == "function" then
+        local provisionalFocus = Vector3.new(focusX, focusY, focusZ)
+        local ok, materializedChunks = pcall(function()
+            return manifest:LoadChunksWithinRadius(loadCenter or provisionalFocus, loadRadius)
+        end)
+        if ok and type(materializedChunks) == "table" and #materializedChunks > 0 then
+            return AustinSpawn.findFocusPoint({
+                meta = manifest.meta,
+                chunks = materializedChunks,
+            }, loadRadius, loadCenter)
+        end
+    end
+
     return Vector3.new(focusX, focusY, focusZ)
 end
 
@@ -399,7 +612,7 @@ function AustinSpawn.findPreviewFocusPoint(manifest, loadRadius, loadCenter)
 end
 
 function AustinSpawn.findSpawnPoint(manifest, loadRadius, loadCenter)
-    return AustinSpawn.resolveAnchor(manifest, loadRadius, loadCenter).spawnPoint
+    return AustinSpawn.resolveRuntimeAnchor(manifest, loadRadius, loadCenter).spawnPoint
 end
 
 return AustinSpawn

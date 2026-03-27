@@ -1,0 +1,1 @@
+return {chunks={{id="2_1",landuse={{id="osm_1317145916",kind="parking",material="Asphalt",footprint={{x=141.0743,z=82.5313},{x=203.2648,z=101.7801},{x=181.0009,z=173.7482},{x=118.8104,z=154.5424}}}}}}}
