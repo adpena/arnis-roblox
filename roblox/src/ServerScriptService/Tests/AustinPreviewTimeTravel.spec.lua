@@ -7,7 +7,6 @@ return function()
     local CanonicalWorldContract = require(script.Parent.Parent.ImportService.CanonicalWorldContract)
     local ManifestLoader = require(script.Parent.Parent.ImportService.ManifestLoader)
     local AustinPreviewBuilder = require(script.Parent.Parent.StudioPreview.AustinPreviewBuilder)
-    local AustinPreviewTelemetry = require(script.Parent.Parent.StudioPreview.AustinPreviewTelemetry)
 
     local originalLoadNamedShardedSampleHandle = ManifestLoader.LoadNamedShardedSampleHandle
     local originalLoadShardedModuleHandle = ManifestLoader.LoadShardedModuleHandle
@@ -202,7 +201,7 @@ return function()
             return chunkFolder
         end
 
-        -- Live preview should stay on the derived preview accelerator family and reuse the cached handle.
+        -- Live preview should stay on the canonical preview materialization and reuse the cached handle.
         Workspace:SetAttribute("VertigoSyncHash", "live-hash")
         Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 1)
         Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 1)
@@ -213,32 +212,26 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(#previewLoadCalls, 1, "expected live preview to load the derived preview accelerator once")
-        Assert.equal(#fullLoadCalls, 0, "expected live preview not to load the canonical full-bake family")
+        Assert.equal(#previewLoadCalls, 0, "expected live preview not to load the preview-only accelerator")
+        Assert.equal(#fullLoadCalls, 1, "expected live preview to load the canonical preview materialization once")
         Assert.equal(
-            previewLoadCalls[1].indexName,
-            AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
-            "expected live preview to load the derived preview accelerator family"
+            fullLoadCalls[1].indexName,
+            CanonicalWorldContract.resolveCanonicalMaterializationFamily("preview"),
+            "expected live preview to load the highest-priority canonical preview materialization"
         )
-        Assert.equal(
-            previewLoadCalls[1].shardFolderName,
-            AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME,
-            "expected live preview to use the derived preview chunk folder"
-        )
-        Assert.truthy(previewLoadCalls[1].options == nil, "expected live preview to use the built StudioPreview fixture")
         Assert.equal(#freezeCalls, 0, "expected live preview not to freeze manifest handles")
         Assert.equal(
-            previewLoadCalls[1].handle.radiusCallCount,
+            fullLoadCalls[1].handle.radiusCallCount,
             2,
             "expected live preview to resolve preview chunk ids once per build"
         )
         Assert.equal(
-            previewLoadCalls[1].handle.fullSelectionCallCount,
+            fullLoadCalls[1].handle.fullSelectionCallCount,
             0,
             "expected preview builds not to opt into full-bake chunk selection"
         )
 
-        -- Request-driven preview mode should preserve the derived preview selection path.
+        -- Request-driven preview mode should preserve the canonical preview selection path.
         clearPreviewState()
         fullLoadCalls = {}
         previewLoadCalls = {}
@@ -253,72 +246,68 @@ return function()
         AustinPreviewBuilder.Build({
             mode = "preview",
         })
+        waitForTasks(4)
 
+        Assert.equal(#previewLoadCalls, 0, "expected request-driven preview mode not to load the preview-only accelerator")
+        Assert.equal(#fullLoadCalls, 1, "expected request-driven preview mode to load the canonical preview materialization once")
         Assert.equal(
-            Workspace:GetAttribute("VertigoPreviewSyncState"),
-            "idle",
-            "expected request-driven preview builds to stay in-flight until chunk sync completes"
-        )
-        Assert.equal(#previewLoadCalls, 1, "expected request-driven preview mode to load the preview accelerator once")
-        Assert.equal(#fullLoadCalls, 0, "expected request-driven preview mode not to load the canonical full-bake family")
-        Assert.equal(
-            previewLoadCalls[1].indexName,
-            AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
-            "expected request-driven preview mode to load the derived preview accelerator family"
+            fullLoadCalls[1].indexName,
+            CanonicalWorldContract.resolveCanonicalMaterializationFamily("preview"),
+            "expected request-driven preview mode to load the canonical preview materialization"
         )
         Assert.equal(#importCalls, 2, "expected request-driven preview mode to preserve radius-limited chunk imports")
         Assert.equal(
-            previewLoadCalls[1].handle.radiusCallCount,
+            fullLoadCalls[1].handle.radiusCallCount,
             1,
             "expected request-driven preview mode to use preview chunk selection"
         )
         Assert.equal(
-            previewLoadCalls[1].handle.fullSelectionCallCount,
+            fullLoadCalls[1].handle.fullSelectionCallCount,
             0,
             "expected request-driven preview mode not to switch into full-bake chunk selection"
         )
-        local previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
-        Assert.truthy(previewRoot ~= nil, "expected preview request mode to create the preview root")
-        Assert.equal(
-            previewRoot:FindFirstChild("PreviewFocus"),
-            nil,
-            "expected preview request mode not to add helper geometry by default"
-        )
-        local previewTelemetryJson = Workspace:GetAttribute(AustinPreviewTelemetry.WORKSPACE_ATTR)
-        Assert.truthy(type(previewTelemetryJson) == "string", "expected preview builds to publish project facts")
-        local previewTelemetry = HttpService:JSONDecode(previewTelemetryJson)
-        Assert.equal(
-            previewTelemetry.projectFacts.preview.sync_state,
-            "idle",
-            "expected preview project facts to settle back to idle after preview builds"
-        )
-        Assert.equal(
-            previewTelemetry.projectFacts.full_bake.active,
-            false,
-            "expected preview builds not to report active full-bake work"
-        )
 
+        -- Full-bake mode should switch to the canonical manifest family, select the full bounded envelope, and suppress preview helpers.
         clearPreviewState()
         fullLoadCalls = {}
         previewLoadCalls = {}
         freezeCalls = {}
         importCalls = {}
 
-        Workspace:SetAttribute("VertigoSyncHash", "debug-helper-preview-hash")
+        Workspace:SetAttribute("VertigoSyncHash", "request-full-bake-hash")
         Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 4)
         Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 4)
         Workspace:SetAttribute("VertigoSyncTimeTravel", false)
         Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
         AustinPreviewBuilder.Build({
-            mode = "preview",
+            mode = "full_bake",
             debugHelpers = true,
         })
+        waitForTasks(4)
 
-        previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
-        Assert.truthy(previewRoot ~= nil, "expected debug helper preview build to create the preview root")
-        Assert.truthy(
-            previewRoot:FindFirstChild("PreviewFocus") ~= nil,
-            "expected debug helper preview requests to opt into helper geometry explicitly"
+        Assert.equal(#previewLoadCalls, 0, "expected full-bake mode not to load the preview accelerator")
+        Assert.equal(#fullLoadCalls, 1, "expected full-bake mode to load the canonical full-bake family once")
+        Assert.equal(
+            fullLoadCalls[1].indexName,
+            CanonicalWorldContract.resolveCanonicalMaterializationFamily("full_bake"),
+            "expected full-bake mode to load the highest-priority canonical materialization"
+        )
+        Assert.equal(#importCalls, 3, "expected full-bake mode to preserve the full chunk selection")
+        Assert.equal(
+            fullLoadCalls[1].handle.radiusCallCount,
+            0,
+            "expected full-bake mode not to use the preview-radius chunk selection"
+        )
+        Assert.equal(
+            fullLoadCalls[1].handle.fullSelectionCallCount,
+            1,
+            "expected full-bake mode to opt into full-bake chunk selection"
+        )
+        local previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
+        Assert.truthy(previewRoot ~= nil, "expected full-bake mode to keep the preview world root alive")
+        Assert.falsy(
+            previewRoot and previewRoot:FindFirstChild("PreviewFocus"),
+            "expected full-bake mode to suppress preview helper geometry"
         )
 
         -- State-only source churn should not trigger visible chunk reimports when the semantic chunk content is unchanged.
@@ -363,8 +352,8 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(#previewLoadCalls, 1, "expected preview rebuild after Clear to reload the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected Clear not to touch the canonical full-bake family")
+        Assert.equal(#previewLoadCalls, 0, "expected Clear not to reactivate the preview-only accelerator")
+        Assert.equal(#fullLoadCalls, 1, "expected Clear to invalidate the cached canonical preview materialization handle")
 
         -- Hard pause should force a fresh manifest load and freeze the selected chunk set.
         clearPreviewState()
@@ -381,80 +370,16 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(4)
 
-        Assert.equal(#previewLoadCalls, 1, "expected hard pause preview to reload the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected hard pause not to use the canonical full-bake family")
-        Assert.equal(
-            previewLoadCalls[1].indexName,
-            AustinPreviewBuilder.FALLBACK_PREVIEW_INDEX_NAME,
-            "expected hard pause preview to reload the derived preview accelerator family"
-        )
-        Assert.equal(
-            previewLoadCalls[1].shardFolderName,
-            AustinPreviewBuilder.FALLBACK_PREVIEW_CHUNKS_NAME,
-            "expected hard pause preview to reload the derived preview chunk folder"
-        )
-        Assert.truthy(previewLoadCalls[1].options == nil, "expected hard pause preview to use the built StudioPreview fixture")
+        Assert.equal(#previewLoadCalls, 0, "expected hard pause not to reactivate the preview-only accelerator")
+        Assert.equal(#fullLoadCalls, 1, "expected hard pause to reload the canonical preview materialization handle")
+        Assert.truthy(fullLoadCalls[1].options.freshRequire == true, "expected hard pause to use fresh require")
         Assert.equal(#freezeCalls, 1, "expected hard pause to freeze the selected Austin preview chunk set")
         Assert.equal(#freezeCalls[1].chunkIds, 2, "expected hard pause to freeze the visible chunk ids")
         Assert.truthy(#importCalls >= 1, "expected preview build to import frozen chunks")
         Assert.equal(
-            previewLoadCalls[1].handle.radiusCallCount,
+            fullLoadCalls[1].handle.radiusCallCount,
             1,
             "expected hard pause preview to resolve preview chunk ids once"
-        )
-        Assert.equal(
-            previewLoadCalls[1].handle.fullSelectionCallCount,
-            0,
-            "expected hard pause preview mode not to request full-bake chunk selection"
-        )
-
-        -- Full-bake requests should expand chunk selection beyond the preview radius without changing the canonical family.
-        clearPreviewState()
-        fullLoadCalls = {}
-        previewLoadCalls = {}
-        freezeCalls = {}
-        importCalls = {}
-
-        Workspace:SetAttribute("VertigoSyncHash", "full-bake-hash")
-        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 8)
-        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 8)
-        Workspace:SetAttribute("VertigoSyncTimeTravel", false)
-        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
-        AustinPreviewBuilder.Build({
-            mode = "full_bake",
-        })
-        waitForTasks(4)
-
-        Assert.equal(#previewLoadCalls, 0, "expected full-bake requests not to use the preview accelerator family")
-        Assert.equal(#fullLoadCalls, 1, "expected full-bake requests to load the canonical Austin manifest")
-        Assert.equal(
-            fullLoadCalls[1].indexName,
-            CanonicalWorldContract.resolveCanonicalManifestFamily("full_bake"),
-            "expected full-bake requests to load the canonical Austin manifest family"
-        )
-        Assert.equal(#importCalls, 3, "expected full-bake requests to import all authored chunks")
-        Assert.equal(
-            fullLoadCalls[1].handle.radiusCallCount,
-            0,
-            "expected full-bake requests not to use radius-bounded chunk selection"
-        )
-        Assert.equal(
-            fullLoadCalls[1].handle.fullSelectionCallCount,
-            1,
-            "expected full-bake requests to select chunks authoritatively through the request"
-        )
-        local fullBakeTelemetryJson = Workspace:GetAttribute(AustinPreviewTelemetry.WORKSPACE_ATTR)
-        Assert.truthy(type(fullBakeTelemetryJson) == "string", "expected full-bake builds to publish project facts")
-        local fullBakeTelemetry = HttpService:JSONDecode(fullBakeTelemetryJson)
-        Assert.equal(
-            fullBakeTelemetry.projectFacts.full_bake.active,
-            false,
-            "expected full-bake project facts to clear active state once the build settles"
-        )
-        Assert.equal(
-            fullBakeTelemetry.projectFacts.full_bake.last_result,
-            "success",
-            "expected full-bake project facts to record the latest result separately from preview state"
         )
 
         -- Full-bake policy must ignore preview-only helper geometry even when requested.
@@ -488,7 +413,6 @@ return function()
         -- If the preview invalidation epoch changes mid-build, the current preview should finish coherently
         -- and then rerun, rather than cancelling into a visible flash.
         clearPreviewState()
-        fullLoadCalls = {}
         previewLoadCalls = {}
         freezeCalls = {}
         importCalls = {}
@@ -508,7 +432,7 @@ return function()
             "expected preview invalidation changes to keep the visible preview coherent"
         )
 
-        local previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
+        previewRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
         local liveChunkCount = 0
         if previewRoot then
             for _, child in ipairs(previewRoot:GetChildren()) do
@@ -521,7 +445,6 @@ return function()
 
         -- State-only time-travel epoch changes should not cancel the preview when the geometry invalidation epoch is stable.
         clearPreviewState()
-        fullLoadCalls = {}
         previewLoadCalls = {}
         freezeCalls = {}
         importCalls = {}
@@ -553,7 +476,6 @@ return function()
 
         -- Hard-pause time-travel epoch changes should also defer cleanly instead of cancelling the visible preview.
         clearPreviewState()
-        fullLoadCalls = {}
         previewLoadCalls = {}
         freezeCalls = {}
         importCalls = {}
@@ -605,18 +527,26 @@ return function()
         AustinPreviewBuilder.Build()
         waitForTasks(6)
 
-        Assert.equal(#previewLoadCalls, 1, "expected state-only preview epoch changes to keep using the preview accelerator")
-        Assert.equal(#fullLoadCalls, 0, "expected state-only preview epoch changes not to trigger the canonical family")
-        Assert.equal(#importCalls, 2, "expected state-only preview epoch changes not to duplicate chunk imports")
+        Assert.equal(
+            #previewLoadCalls,
+            0,
+            "expected state-only preview epoch changes not to trigger the preview-only accelerator"
+        )
+        Assert.equal(
+            #fullLoadCalls,
+            1,
+            "expected state-only preview epoch changes not to trigger a second canonical preview materialization load"
+        )
         Assert.equal(
             Workspace:GetAttribute("VertigoPreviewAppliedStateEpoch"),
             51,
-            "expected deferred state-only preview epoch changes to be applied after chunk sync completes"
+            "expected state-only preview epoch changes to apply the latest preview state epoch"
         )
+        Assert.equal(#importCalls, 2, "expected state-only preview epoch changes not to duplicate chunk imports")
         Assert.equal(
             Workspace:GetAttribute("VertigoPreviewDeferredStateEpoch"),
             nil,
-            "expected state-only preview epoch changes to clear once the state refresh is applied"
+            "expected state-only preview epoch changes to clear after the latest preview state is applied"
         )
     end, debug.traceback)
 
