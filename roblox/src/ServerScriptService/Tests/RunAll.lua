@@ -4,7 +4,7 @@ local Logger = require(ReplicatedStorage.Shared.Logger)
 local TestEZ = require(ReplicatedStorage.Testing.TestEZ)
 
 local RunAll = {}
-RunAll.SUITE_ACTIVE_ATTR = "VertigoSyncRunAllActive"
+RunAll.SUITE_ACTIVE_ATTR = "ArnisRunAllSuiteActive"
 
 local function normalizeSpecNameFilter(specNameFilter)
     if type(specNameFilter) ~= "string" then
@@ -84,7 +84,6 @@ function RunAll.run(options)
             else
                 local results
                 if type(testBlockOrFn) == "function" then
-                    -- Old-style test module that returns a function
                     local fnOk, fnErr = pcall(testBlockOrFn)
                     if fnOk then
                         allResults.passed = allResults.passed + 1
@@ -95,7 +94,6 @@ function RunAll.run(options)
                     end
                     allResults.total = allResults.total + 1
                 else
-                    -- TestEZ-style test block
                     results = TestEZ.run(testBlockOrFn, { reporter = "silent" })
                     allResults.passed = allResults.passed + results.passed
                     allResults.failed = allResults.failed + results.failed
