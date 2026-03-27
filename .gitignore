@@ -1,12 +1,21 @@
 # Rust
 /target
 **/target
+out/
+**/out/
+build/
+**/build/
+dist/
+**/dist/
 
 # Python
 __pycache__/
 *.pyc
 .venv/
+**/.venv/
 venv/
+node_modules/
+**/node_modules/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -35,8 +44,13 @@ worktrees/
 
 # Generated outputs / temp
 out/
+**/out/
 exports/
 tmp/
+build/
+**/build/
+dist/
+**/dist/
 rust/out/
 rust/fuzz/artifacts/
 rust/fuzz/corpus/
