@@ -9,6 +9,14 @@ Kodex should read `AGENTS.md` first.
 - reduce per-chunk instance count
 - prefer simple systems that can be benchmarked
 - leave clean seams for future Arnis adapter work
+- avoid catastrophic memory spikes; prefer bounded-memory inspection and generation paths for large manifests and exports
+
+## Large artifact guardrails
+
+- Never eagerly read known large manifests or exports with `Path.read_text()`, `json.load()`, `json.loads()`, or similar whole-file APIs when a streaming or indexed path is possible.
+- Prefer shard/index metadata, streaming parsers, mmap-backed extraction, and bounded shell reads over whole-file scans.
+- When introducing new large derived artifacts, prefer queryable/indexed formats such as SQLite or Parquet, or chunked text/binary layouts, instead of monolithic JSON.
+- Add telemetry and fail-fast guardrails before a dev/test workflow can drift toward multi-GB resident memory; avoid OOMs by design, not by recovery.
 
 ## Convergence guardrails
 

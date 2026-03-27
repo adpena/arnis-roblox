@@ -66,6 +66,10 @@ For every meaningful code change:
 - treat `primary` and `tertiary` as local profile aliases only; direct development may happen on either machine, and the committed repo must not depend on a specific hostname or pre-seeded sibling clones
 - avoid introducing new dependencies without a concrete payoff
 - prefer small, reviewable steps over giant speculative rewrites
+- never eagerly load known large artifacts into memory; avoid `Path.read_text()`, `json.load()`, `json.loads()`, or whole-file slurps on multi-MB/GB manifests when a bounded-memory path exists
+- for large-file inspection, prefer shard/index metadata, streaming parsers, mmap-backed extraction, `rg -m`, `head`, `tail`, or other bounded reads over full scans that materialize the entire file
+- when defining new large intermediate/export formats, prefer chunked/indexed layouts and queryable containers such as SQLite or Parquet over monolithic JSON blobs
+- add telemetry or explicit guardrails before any dev/test workflow can plausibly exceed roughly 4 GB resident memory; fail early with a clear error instead of risking OOM
 - zero per-frame allocations in render loops
 - all lerps must be dt-scaled (frame-rate independent)
 - all sounds must fade (no audio pops)
