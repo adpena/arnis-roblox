@@ -26,17 +26,17 @@ class PlayRenderTruthTests(unittest.TestCase):
         self.assertIn("ImportSignatures", streaming_source)
         self.assertRegex(
             import_service_source,
-            r"configSignature\\s*=\\s*.*configSignature",
+            r"configSignature\s*=\s*.*configSignature",
             "expected ImportService to register startup chunks with shared config signatures",
         )
         self.assertRegex(
             import_service_source,
-            r"layerSignatures\\s*=\\s*.*layerSignatures",
+            r"layerSignatures\s*=\s*.*layerSignatures",
             "expected ImportService to register startup chunks with shared layer signatures",
         )
         self.assertRegex(
             streaming_source,
-            r"ImportSignatures\\.[A-Za-z_]+\\(",
+            r"ImportSignatures\.[A-Za-z_]+\(",
             "expected StreamingService to derive signatures from the shared ImportSignatures helper",
         )
 

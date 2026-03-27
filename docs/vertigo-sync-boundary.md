@@ -27,6 +27,7 @@ This boundary is not a rejection of VertigoSync. It remains a high-value develop
 - Roblox importer/builders
 - edit-mode and play-mode runtime behavior
 - harnesses and regression tests proving runtime correctness
+- canonical world truth, manifest semantics, and scene extraction adapters
 
 `vertigo-sync` owns:
 
@@ -35,6 +36,7 @@ This boundary is not a rejection of VertigoSync. It remains a high-value develop
 - source/module syncing ergonomics
 - edit-time automation glue
 - edit-preview integration paths that are specific to synced source workflows
+- edit/full-bake orchestration and export-3d user-facing orchestration
 
 ## Rules
 
@@ -44,6 +46,9 @@ This boundary is not a rejection of VertigoSync. It remains a high-value develop
 4. If a bug can be reproduced from a built place without VertigoSync, fix it here.
 5. If a bug is specific to source syncing, plugin packaging, or Studio transport, fix it in the adjacent `vertigo-sync` repo.
 6. Supporting VertigoSync is part of the development workflow, but it must remain an optional integration path rather than the sole proof of world correctness.
+7. `arnis-roblox` is the sole owner of canonical world truth, manifest semantics, and scene extraction adapters.
+8. `vertigo-sync` is the sole owner of edit/full-bake orchestration and export-3d user-facing orchestration.
+9. Do not add a second preview/play/full-bake world-definition path in `RunAustin.lua`, `AustinPreviewBuilder.lua`, `BootstrapAustin.server.lua`, or `AustinSpawn.lua`.
 
 ## Practical implication
 
