@@ -6,7 +6,7 @@ return function()
     local manifest = {
         schemaVersion = "0.4.0",
         meta = {
-            worldName = "OpaqueCivicFacadeTruth",
+            worldName = "RoofOnlyRooftopAttachment",
             generator = "test",
             source = "unit",
             metersPerStud = 0.3,
@@ -28,20 +28,20 @@ return function()
                 rails = {},
                 buildings = {
                     {
-                        id = "civic_limestone",
-                        name = "State Capitol Annex",
+                        id = "rooftop_canopy",
                         footprint = {
                             { x = 0, z = 0 },
-                            { x = 36, z = 0 },
-                            { x = 36, z = 28 },
-                            { x = 0, z = 28 },
+                            { x = 20, z = 0 },
+                            { x = 20, z = 12 },
+                            { x = 0, z = 12 },
+                            { x = 0, z = 0 },
                         },
                         baseY = 0,
-                        height = 28,
-                        levels = 6,
+                        minHeight = 12,
+                        height = 16,
                         roof = "flat",
-                        usage = "government",
-                        material = "Limestone",
+                        usage = "roof",
+                        material = "Concrete",
                     },
                 },
                 water = {},
@@ -52,7 +52,7 @@ return function()
         },
     }
 
-    local worldRootName = "GeneratedWorld_OpaqueCivicFacadeTruth"
+    local worldRootName = "GeneratedWorld_RoofOnlyRooftopAttachment"
     ImportService.ImportManifest(manifest, {
         clearFirst = true,
         worldRootName = worldRootName,
@@ -66,37 +66,37 @@ return function()
     })
 
     local worldRoot = Workspace:FindFirstChild(worldRootName)
-    Assert.truthy(worldRoot, "expected civic facade truth world root")
+    Assert.truthy(worldRoot, "expected roof-only rooftop attachment world root")
 
-    local building = worldRoot
+    local canopy = worldRoot
         :FindFirstChild("0_0")
         :FindFirstChild("Buildings")
-        :FindFirstChild("civic_limestone")
-    Assert.truthy(building, "expected imported civic building")
-    local shellFolder = building:FindFirstChild("Shell")
-    Assert.truthy(shellFolder, "expected shell folder for civic shell-mesh building")
+        :FindFirstChild("rooftop_canopy")
+    Assert.truthy(canopy, "expected roof-only rooftop canopy model")
 
-    local glassFacadePartCount = 0
-    for _, descendant in ipairs(building:GetDescendants()) do
-        if descendant:IsA("BasePart") and descendant.Material == Enum.Material.Glass then
-            glassFacadePartCount += 1
+    local supportPosts = {}
+    local roofParts = {}
+    for _, descendant in ipairs(canopy:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            if descendant.Name == "SupportPost" then
+                supportPosts[#supportPosts + 1] = descendant
+            elseif string.find(descendant.Name, "_roof", 1, true) then
+                roofParts[#roofParts + 1] = descendant
+            end
         end
     end
 
-    Assert.equal(
-        glassFacadePartCount,
-        0,
-        "expected opaque civic shell to avoid fabricated glass facade bands"
-    )
+    Assert.equal(#supportPosts, 4, "expected rectangular rooftop canopy to emit four support posts")
+    Assert.truthy(#roofParts >= 1, "expected rooftop canopy to keep direct roof geometry")
 
-    for _, descendant in ipairs(shellFolder:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            Assert.equal(
-                descendant.Transparency,
-                0,
-                "expected opaque civic shell geometry to stay non-transparent in shell-mesh mode"
-            )
-        end
+    for _, supportPost in ipairs(supportPosts) do
+        local supportTopY = supportPost.Position.Y + supportPost.Size.Y * 0.5
+        Assert.near(
+            supportTopY,
+            manifest.chunks[1].buildings[1].minHeight,
+            0.05,
+            "expected roof-only supports to terminate at the known rooftop base instead of full roof height"
+        )
     end
 
     worldRoot:Destroy()
