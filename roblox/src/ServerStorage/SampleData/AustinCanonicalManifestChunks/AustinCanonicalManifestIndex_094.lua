@@ -1,0 +1,1 @@
+return {chunks={{id="-3_-3",water={{id="osm_974175333",kind="water",material="Water",color={r=0,g=100,b=200},footprint={{x=223.1653,z=92.0894},{x=236.8205,z=96.515},{x=271.6635,z=-10.7741},{x=258.0454,z=-15.2427}},indices={},surfaceY=6.7318}}}}}

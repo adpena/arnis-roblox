@@ -14,6 +14,7 @@ return function()
     local originalImportChunkSubplan = ImportService.ImportChunkSubplan
     local originalUnloadChunk = ChunkLoader.UnloadChunk
     local originalLoadNamedShardedSampleHandle = ManifestLoader.LoadNamedShardedSampleHandle
+    local originalLoadShardedModuleHandle = ManifestLoader.LoadShardedModuleHandle
     local originalSubplanRollout = table.clone(DefaultWorldConfig.SubplanRollout)
 
     local function makeChunk(chunkId, originX, subplans)
@@ -257,7 +258,7 @@ return function()
             previewOrder[#previewOrder + 1] = "unload:" .. tostring(chunkId)
         end
 
-        ManifestLoader.LoadNamedShardedSampleHandle = function()
+        local function makePreviewHandle()
             local handle = {
                 schemaVersion = "0.4.0",
                 meta = {
@@ -296,6 +297,13 @@ return function()
             return handle
         end
 
+        ManifestLoader.LoadNamedShardedSampleHandle = function()
+            return makePreviewHandle()
+        end
+        ManifestLoader.LoadShardedModuleHandle = function()
+            return makePreviewHandle()
+        end
+
         clearPreviewState()
         local previewRoot = Instance.new("Folder")
         previewRoot.Name = AustinPreviewBuilder.WORLD_ROOT_NAME
@@ -325,6 +333,7 @@ return function()
     ImportService.ImportChunkSubplan = originalImportChunkSubplan
     ChunkLoader.UnloadChunk = originalUnloadChunk
     ManifestLoader.LoadNamedShardedSampleHandle = originalLoadNamedShardedSampleHandle
+    ManifestLoader.LoadShardedModuleHandle = originalLoadShardedModuleHandle
     DefaultWorldConfig.SubplanRollout.Enabled = originalSubplanRollout.Enabled
     DefaultWorldConfig.SubplanRollout.AllowedLayers = originalSubplanRollout.AllowedLayers
     DefaultWorldConfig.SubplanRollout.AllowedChunkIds = originalSubplanRollout.AllowedChunkIds

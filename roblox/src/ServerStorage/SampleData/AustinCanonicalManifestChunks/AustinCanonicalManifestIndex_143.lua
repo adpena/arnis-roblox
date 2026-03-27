@@ -1,0 +1,1 @@
+return {chunks={{id="-2_-5",landuse={{id="osm_516187638",kind="construction",material="Ground",footprint={{x=317.7104,z=-90.5231},{x=206.8362,z=244.6247},{x=-154.7295,z=118.429},{x=-42.3711,z=-210.2317}}}}}}}

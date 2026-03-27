@@ -457,6 +457,34 @@ return function()
             "expected full-bake project facts to record the latest result separately from preview state"
         )
 
+        -- Full-bake policy must ignore preview-only helper geometry even when requested.
+        clearPreviewState()
+        fullLoadCalls = {}
+        previewLoadCalls = {}
+        freezeCalls = {}
+        importCalls = {}
+
+        Workspace:SetAttribute("VertigoSyncHash", "full-bake-debug-hash")
+        Workspace:SetAttribute(AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR, 18)
+        Workspace:SetAttribute(AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR, 18)
+        Workspace:SetAttribute("VertigoSyncTimeTravel", false)
+        Workspace:SetAttribute("VertigoSyncTimeTravelHardPause", false)
+        AustinPreviewBuilder.Build({
+            mode = "full_bake",
+            debugHelpers = true,
+        })
+        waitForTasks(4)
+
+        Assert.equal(#previewLoadCalls, 0, "expected full-bake requests not to use the preview accelerator family")
+        Assert.equal(#fullLoadCalls, 1, "expected full-bake requests to keep using the canonical Austin manifest")
+        local fullBakeRoot = Workspace:FindFirstChild(AustinPreviewBuilder.WORLD_ROOT_NAME)
+        Assert.truthy(fullBakeRoot ~= nil, "expected full-bake requests to create the preview root")
+        Assert.equal(
+            fullBakeRoot:FindFirstChild("PreviewFocus"),
+            nil,
+            "expected full-bake requests not to render preview-only helper geometry"
+        )
+
         -- If the preview invalidation epoch changes mid-build, the current preview should finish coherently
         -- and then rerun, rather than cancelling into a visible flash.
         clearPreviewState()

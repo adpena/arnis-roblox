@@ -198,7 +198,7 @@
         "hasSidewalk": { "type": "boolean" },
         "elevated": { "type": "boolean", "default": false },
         "tunnel": { "type": "boolean", "default": false },
-        "sidewalk": { "type": "string", "enum": ["both", "left", "right", "no"] },
+        "sidewalk": { "type": "string", "enum": ["both", "left", "right", "no", "separate"] },
         "surface": { "type": "string" },
         "maxspeed": { "type": "integer", "minimum": 0 },
         "lit": { "type": "boolean" },

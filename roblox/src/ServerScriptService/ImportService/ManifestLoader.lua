@@ -110,6 +110,29 @@ local function newManifest(index, chunkRefs)
     return manifest
 end
 
+local function mergeTableValue(target, value)
+    local isArray = #value > 0
+    if isArray then
+        for _, item in ipairs(value) do
+            table.insert(target, item)
+        end
+        return
+    end
+
+    for nestedKey, nestedValue in pairs(value) do
+        if type(nestedValue) == "table" then
+            local nestedTarget = target[nestedKey]
+            if type(nestedTarget) ~= "table" then
+                nestedTarget = {}
+                target[nestedKey] = nestedTarget
+            end
+            mergeTableValue(nestedTarget, nestedValue)
+        elseif target[nestedKey] == nil then
+            target[nestedKey] = nestedValue
+        end
+    end
+end
+
 local function mergeChunkFragment(chunksById, chunkOrder, chunk)
     local existing = chunksById[chunk.id]
     if not existing then
@@ -126,16 +149,7 @@ local function mergeChunkFragment(chunksById, chunkOrder, chunk)
                 existing[key] = target
             end
 
-            local isArray = #value > 0
-            if isArray then
-                for _, item in ipairs(value) do
-                    table.insert(target, item)
-                end
-            else
-                for nestedKey, nestedValue in pairs(value) do
-                    target[nestedKey] = nestedValue
-                end
-            end
+            mergeTableValue(target, value)
         elseif existing[key] == nil then
             existing[key] = value
         end

@@ -16,25 +16,25 @@ local player = Players.LocalPlayer
 local AMBIENT_SOUNDS = {
     -- City background hum (always playing, volume varies with density)
     cityHum = {
-        id = "rbxassetid://9112858785",
+        id = nil,
         volume = 0.15,
         looped = true,
     },
     -- Wind (always playing, volume varies with altitude)
     wind = {
-        id = "rbxassetid://9113543029",
+        id = "rbxasset://sounds/action_falling.ogg",
         volume = 0.0,
         looped = true,
     },
     -- Birds (near parks/trees)
     birds = {
-        id = "rbxassetid://9113088613",
+        id = nil,
         volume = 0.0,
         looped = true,
     },
     -- Water (near rivers/lakes)
     water = {
-        id = "rbxassetid://9113586364",
+        id = "rbxasset://sounds/impact_water.mp3",
         volume = 0.0,
         looped = true,
     },
@@ -45,15 +45,17 @@ local sounds = {}
 
 local function createSounds()
     for name, config in pairs(AMBIENT_SOUNDS) do
-        local sound = Instance.new("Sound")
-        sound.Name = "Ambient_" .. name
-        sound.SoundId = config.id
-        sound.Volume = config.volume
-        sound.Looped = config.looped
-        sound.RollOffMode = Enum.RollOffMode.Linear
-        sound.Parent = SoundService
-        sound:Play()
-        sounds[name] = { instance = sound, baseVolume = config.volume }
+        if config.id and config.id ~= "" then
+            local sound = Instance.new("Sound")
+            sound.Name = "Ambient_" .. name
+            sound.SoundId = config.id
+            sound.Volume = config.volume
+            sound.Looped = config.looped
+            sound.RollOffMode = Enum.RollOffMode.Linear
+            sound.Parent = SoundService
+            sound:Play()
+            sounds[name] = { instance = sound, baseVolume = config.volume }
+        end
     end
 end
 
@@ -76,6 +78,9 @@ local function updateAmbience()
 
     -- Smooth volume helper: lerp toward target to prevent audio pops
     local function smoothVol(sound, target)
+        if not sound or not sound.instance then
+            return
+        end
         sound.instance.Volume = sound.instance.Volume + (target - sound.instance.Volume) * 0.15
     end
 
@@ -103,10 +108,7 @@ local function updateAmbience()
     local nearNature = false
     local rayResult = workspace:Raycast(pos, Vector3.new(0, -100, 0))
     if rayResult and rayResult.Material then
-        if
-            rayResult.Material == Enum.Material.Grass
-            or rayResult.Material == Enum.Material.LeafyGrass
-        then
+        if rayResult.Material == Enum.Material.Grass or rayResult.Material == Enum.Material.LeafyGrass then
             nearNature = true
         end
     end
@@ -129,16 +131,16 @@ end
 -- ---------------------------------------------------------------------------
 
 local FOOTSTEP_SOUNDS = {
-    [Enum.Material.Asphalt] = "rbxassetid://9114105209", -- hard step
-    [Enum.Material.Concrete] = "rbxassetid://9114105209", -- hard step
-    [Enum.Material.Cobblestone] = "rbxassetid://9114105209", -- hard step
-    [Enum.Material.Brick] = "rbxassetid://9114105209", -- hard step
+    [Enum.Material.Asphalt] = "rbxassetid://9114077935", -- hard step fallback
+    [Enum.Material.Concrete] = "rbxassetid://9114077935", -- hard step fallback
+    [Enum.Material.Cobblestone] = "rbxassetid://9114077935", -- hard step fallback
+    [Enum.Material.Brick] = "rbxassetid://9114077935", -- hard step fallback
     [Enum.Material.Grass] = "rbxassetid://9114077935", -- soft grass
     [Enum.Material.LeafyGrass] = "rbxassetid://9114077935", -- soft grass
     [Enum.Material.Sand] = "rbxassetid://9114077935", -- soft step
     [Enum.Material.Ground] = "rbxassetid://9114077935", -- earth step
-    [Enum.Material.WoodPlanks] = "rbxassetid://9114119441", -- wood creak
-    [Enum.Material.Metal] = "rbxassetid://9114119441", -- metal clang
+    [Enum.Material.WoodPlanks] = "rbxassetid://9114077935", -- wood fallback
+    [Enum.Material.Metal] = "rbxassetid://9114077935", -- metal fallback
 }
 
 local FOOTSTEP_DEFAULT = FOOTSTEP_SOUNDS[Enum.Material.Concrete]
@@ -157,8 +159,7 @@ local function updateFootsteps()
         return
     end
 
-    local walking = humanoid.MoveDirection.Magnitude > 0.1
-        and humanoid:GetState() == Enum.HumanoidStateType.Running
+    local walking = humanoid.MoveDirection.Magnitude > 0.1 and humanoid:GetState() == Enum.HumanoidStateType.Running
 
     if walking then
         -- Raycast down from hip height to find what we're walking on.

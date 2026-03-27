@@ -1,0 +1,1 @@
+return {chunks={{id="-33_13",props={{id="tree_10077961463",kind="tree",position={x=2.5242,y=-7.4264,z=75.45},yawDegrees=0,scale=1},{id="tree_10077961464",kind="tree",position={x=57.6644,y=-2.2214,z=26.687},yawDegrees=0,scale=1}}}}}

@@ -87,24 +87,14 @@ return function()
     Assert.truthy(waterFolder, "expected water folder")
     local detailFolder = waterFolder:FindFirstChild("Detail")
     Assert.truthy(detailFolder, "expected water detail folder")
-    Assert.truthy(
-        CollectionService:HasTag(detailFolder, "LOD_DetailGroup"),
-        "expected water detail group tag"
-    )
-    Assert.equal(
-        detailFolder:GetAttribute("ArnisLodGroupKind"),
-        "detail",
-        "expected water detail lod group kind"
-    )
+    Assert.truthy(CollectionService:HasTag(detailFolder, "LOD_DetailGroup"), "expected water detail group tag")
+    Assert.equal(detailFolder:GetAttribute("ArnisLodGroupKind"), "detail", "expected water detail lod group kind")
 
     local surfaceCount = 0
     for _, child in ipairs(detailFolder:GetChildren()) do
         if child:IsA("Part") and string.find(child.Name, "WaterSurface", 1, true) then
             surfaceCount += 1
-            Assert.truthy(
-                CollectionService:HasTag(child, "LOD_Detail"),
-                "expected grouped water detail tag"
-            )
+            Assert.truthy(CollectionService:HasTag(child, "LOD_Detail"), "expected grouped water detail tag")
             Assert.near(
                 child:GetAttribute("ArnisBaseTransparency"),
                 0.4,
@@ -126,26 +116,17 @@ return function()
     for _, child in ipairs(detailFolder:GetChildren()) do
         if child:IsA("Part") and string.find(child.Name, "PolygonWaterSurface", 1, true) then
             local localPoint = child.CFrame:PointToObjectSpace(holeCenter)
-            if
-                math.abs(localPoint.X) <= child.Size.X * 0.5
-                and math.abs(localPoint.Z) <= child.Size.Z * 0.5
-            then
+            if math.abs(localPoint.X) <= child.Size.X * 0.5 and math.abs(localPoint.Z) <= child.Size.Z * 0.5 then
                 holeCoveredByWaterSurface = true
                 break
             end
         end
     end
-    Assert.falsy(
-        holeCoveredByWaterSurface,
-        "expected polygon water detail surfaces to respect water holes"
-    )
+    Assert.falsy(holeCoveredByWaterSurface, "expected polygon water detail surfaces to respect water holes")
 
-    local chunkEntry = ChunkLoader.GetChunkEntry("0_0")
+    local chunkEntry = ChunkLoader.GetChunkEntry("0_0", worldRootName)
     Assert.truthy(chunkEntry, "expected water detail chunk entry")
-    Assert.truthy(
-        chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1,
-        "expected registered water detail group"
-    )
+    Assert.truthy(chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1, "expected registered water detail group")
 
     worldRoot:Destroy()
 end

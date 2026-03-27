@@ -1641,7 +1641,10 @@ function AustinPreviewBuilder.Build(request)
         return { worldRoot }
     end
 
-    if normalizedRequest.debugHelpers then
+    local shouldRenderPreviewHelpers =
+        normalizedRequest.mode == AustinPreviewRequest.MODE_PREVIEW and normalizedRequest.debugHelpers
+
+    if shouldRenderPreviewHelpers then
         addPreviewBeacon(liveWorldRoot, manifestSource, previewChunkIds, focusPoint)
     else
         local existingPreviewFocus = liveWorldRoot:FindFirstChild("PreviewFocus")

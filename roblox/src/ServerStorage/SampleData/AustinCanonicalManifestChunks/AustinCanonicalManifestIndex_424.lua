@@ -1,0 +1,1 @@
+return {chunks={{id="2_-2",props={{id="crossing_2167161217",kind="crossing",position={x=0.4778,y=1.5608,z=250.5483},yawDegrees=0,scale=1},{id="crossing_5835834882",kind="crossing",position={x=98.8472,y=-1.8434,z=136.9872},yawDegrees=0,scale=1}}}}}

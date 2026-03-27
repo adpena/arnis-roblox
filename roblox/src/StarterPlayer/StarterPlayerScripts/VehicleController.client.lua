@@ -33,11 +33,12 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local camera = workspace.CurrentCamera
 
 --------------------------------------------------------------------------------
 -- Constants
@@ -188,6 +189,7 @@ local transitionLock = false
 
 -- Shared per-frame cached input
 local frameGamepad = nil
+local lastPublishedClientTelemetry = {}
 
 --------------------------------------------------------------------------------
 -- Utility
@@ -208,6 +210,10 @@ end
 
 local function lerpVector3(a, b, t)
     return a:Lerp(b, math.clamp(t, 0, 1))
+end
+
+local function getCamera()
+    return Workspace.CurrentCamera
 end
 
 local function tweenProperty(obj, props, duration, style, direction)
@@ -252,14 +258,74 @@ local function disableDOF()
     end
 end
 
+local function restoreDefaultCamera(humanoid)
+    local camera = getCamera()
+    if not camera then
+        return
+    end
+
+    camera.CameraType = Enum.CameraType.Custom
+    if humanoid then
+        camera.CameraSubject = humanoid
+    end
+    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4)
+end
+
+local function setPlayerAttributeIfChanged(name, nextValue)
+    if player:GetAttribute(name) == nextValue then
+        return
+    end
+    player:SetAttribute(name, nextValue)
+end
+
+local function publishClientCameraTelemetry(humanoid)
+    local camera = getCamera()
+    local subject = camera and camera.CameraSubject or nil
+    local telemetry = {
+        ArnisClientCameraType = camera and tostring(camera.CameraType) or nil,
+        ArnisClientCameraSubject = subject and subject:GetFullName() or nil,
+        ArnisClientCameraSubjectClass = subject and subject.ClassName or nil,
+        ArnisClientCameraMode = mode,
+    }
+    local telemetryChanged = false
+
+    player:SetAttribute("ArnisVehicleControllerReady", true)
+
+    for attributeName, nextValue in pairs(telemetry) do
+        if lastPublishedClientTelemetry[attributeName] ~= nextValue then
+            setPlayerAttributeIfChanged(attributeName, nextValue)
+            lastPublishedClientTelemetry[attributeName] = nextValue
+            telemetryChanged = true
+        end
+    end
+
+    local humanoidState = humanoid and tostring(humanoid:GetState()) or nil
+    if lastPublishedClientTelemetry.ArnisClientHumanoidState ~= humanoidState then
+        local nextValue = humanoidState
+        setPlayerAttributeIfChanged("ArnisClientHumanoidState", nextValue)
+        lastPublishedClientTelemetry.ArnisClientHumanoidState = nextValue
+        telemetryChanged = true
+    end
+
+    if telemetryChanged then
+        print("ARNIS_CLIENT_CAMERA " .. HttpService:JSONEncode({
+            mode = telemetry.ArnisClientCameraMode,
+            cameraType = telemetry.ArnisClientCameraType,
+            cameraSubject = telemetry.ArnisClientCameraSubject,
+            cameraSubjectClass = telemetry.ArnisClientCameraSubjectClass,
+            humanoidState = humanoidState,
+        }))
+    end
+end
+
 -- Sound assets from Roblox library
 local SOUND_ENGINE_LOOP = "rbxassetid://9112854440"
 local SOUND_TIRE_SCREECH = "rbxassetid://9114368685"
 local SOUND_HORN = "rbxassetid://9113651830"
-local SOUND_JET_THRUST = "rbxassetid://9112798601"
-local SOUND_WIND_RUSH = "rbxassetid://9113543029"
+local SOUND_JET_THRUST = "rbxasset://sounds/action_falling.ogg"
+local SOUND_WIND_RUSH = "rbxasset://sounds/action_falling.ogg"
 local SOUND_CHUTE_DEPLOY = "rbxassetid://9113636898"
-local SOUND_CHUTE_FLUTTER = "rbxassetid://9113543029"
+local SOUND_CHUTE_FLUTTER = "rbxasset://sounds/action_falling.ogg"
 
 local function makeSound(parent, name, looped, volume, soundId)
     local s = Instance.new("Sound")
@@ -1023,8 +1089,7 @@ local function exitCar()
     camCurrentPos = nil -- fix #11: reset here, not in render loop
     prevBraking = false
     prevTurnState = 0
-    camera.CameraType = Enum.CameraType.Custom
-    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
+    restoreDefaultCamera(hum)
     setHUDMode("none")
 end
 
@@ -1129,8 +1194,7 @@ local function updateCar(dt)
     -- Engine idle vibration
     if carIdleVibration then
         local vibAmt = ENGINE_IDLE_VIBRATION * (1 + speed * 0.005)
-        carIdleVibration.Position = carBody.Position
-            + Vector3.new(0, math.sin(tick() * 30) * vibAmt, 0)
+        carIdleVibration.Position = carBody.Position + Vector3.new(0, math.sin(tick() * 30) * vibAmt, 0)
     end
 
     -- G-force camera shake: measure velocity delta since last frame
@@ -1142,6 +1206,10 @@ local function updateCar(dt)
 
     -- Chase camera
     if customCamActive then
+        local camera = getCamera()
+        if not camera then
+            return
+        end
         local carCF = carBody.CFrame
         local targetPos = (carCF * CFrame.new(
             -steer * 2, -- slight offset into turn
@@ -1166,8 +1234,7 @@ local function updateCar(dt)
         local shakeOffset = Vector3.new(shakeX, shakeY, 0)
 
         camera.CameraType = Enum.CameraType.Scriptable
-        camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget)
-            * CFrame.Angles(0, 0, tiltAngle)
+        camera.CFrame = CFrame.new(camCurrentPos + shakeOffset, lookTarget) * CFrame.Angles(0, 0, tiltAngle)
 
         -- Speed-based FOV (fix #7: dt-scaled lerp)
         local fovTarget = CAR_FOV_MIN + (speed / CAR_FOV_SPEED_RANGE) * (CAR_FOV_MAX - CAR_FOV_MIN)
@@ -1364,8 +1431,7 @@ local function cleanupJetpack()
         mode = "none"
         customCamActive = false
         camCurrentPos = nil -- fix #11: reset here, not in render loop
-        camera.CameraType = Enum.CameraType.Custom
-        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
+        restoreDefaultCamera(getHumanoid())
         setHUDMode("none")
     end
 end
@@ -1483,8 +1549,7 @@ local function updateJetpack(dt)
         horizontalForce = thrustDir.Unit * JETPACK_MAX_THRUST * jetpackThrustLevel
     end
 
-    local verticalForce =
-        Vector3.new(0, verticalThrust * JETPACK_MAX_THRUST * jetpackThrustLevel, 0)
+    local verticalForce = Vector3.new(0, verticalThrust * JETPACK_MAX_THRUST * jetpackThrustLevel, 0)
 
     -- Hover when idle (counteract gravity + small oscillation)
     local hoverForce = Vector3.new(0, 0, 0)
@@ -1533,6 +1598,10 @@ local function updateJetpack(dt)
 
     -- Camera
     if customCamActive then
+        local camera = getCamera()
+        if not camera then
+            return
+        end
         local targetPos = (hrp.CFrame * CFrame.new(0, JETPACK_CAM_OFFSET.Y, JETPACK_CAM_OFFSET.Z)).Position
 
         if camCurrentPos then
@@ -1546,8 +1615,7 @@ local function updateJetpack(dt)
         if jetpackThrustLevel > 0.7 then
             local shakeAmt = (jetpackThrustLevel - 0.7) / 0.3 * JETPACK_CAM_SHAKE_INTENSITY
             local t = tick()
-            shake =
-                Vector3.new(math.noise(t * 12, 0) * shakeAmt, math.noise(t * 12, 100) * shakeAmt, 0)
+            shake = Vector3.new(math.noise(t * 12, 0) * shakeAmt, math.noise(t * 12, 100) * shakeAmt, 0)
         end
 
         camera.CameraType = Enum.CameraType.Scriptable
@@ -1596,11 +1664,8 @@ local function deployParachute()
     chuteHeading = select(2, hrp.CFrame:ToEulerAnglesYXZ())
 
     -- Random wind offset
-    chuteWindOffset = Vector3.new(
-        (math.random() - 0.5) * CHUTE_WIND_STRENGTH * 2,
-        0,
-        (math.random() - 0.5) * CHUTE_WIND_STRENGTH * 2
-    )
+    chuteWindOffset =
+        Vector3.new((math.random() - 0.5) * CHUTE_WIND_STRENGTH * 2, 0, (math.random() - 0.5) * CHUTE_WIND_STRENGTH * 2)
 
     -- Rectangular canopy from multiple panels
     local canopyRoot = Instance.new("Part")
@@ -1740,10 +1805,7 @@ local function deployParachute()
 
     -- Auto-retract on landing
     chuteLandedConn = hum.StateChanged:Connect(function(_, newState)
-        if
-            newState == Enum.HumanoidStateType.Landed
-            or newState == Enum.HumanoidStateType.Running
-        then
+        if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
             retractParachute()
         end
     end)
@@ -1801,8 +1863,7 @@ retractParachute = function()
         mode = "none"
         customCamActive = false
         camCurrentPos = nil -- fix #11: reset here, not in render loop
-        camera.CameraType = Enum.CameraType.Custom
-        tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
+        restoreDefaultCamera(getHumanoid())
         setHUDMode("none")
     end
 end
@@ -1926,8 +1987,11 @@ local function updateParachute(dt)
 
     -- Camera: wide FOV, above and behind, looking down slightly
     if customCamActive then
-        local behindOffset = -headingDir * CHUTE_CAM_OFFSET.Z
-            + Vector3.new(0, CHUTE_CAM_OFFSET.Y, 0)
+        local camera = getCamera()
+        if not camera then
+            return
+        end
+        local behindOffset = -headingDir * CHUTE_CAM_OFFSET.Z + Vector3.new(0, CHUTE_CAM_OFFSET.Y, 0)
         local targetPos = hrp.Position + behindOffset
 
         if camCurrentPos then
@@ -2102,8 +2166,7 @@ local function fullCleanup()
 
     disableDOF()
 
-    camera.CameraType = Enum.CameraType.Custom
-    tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween, not hard-set
+    restoreDefaultCamera(getHumanoid())
 
     setHUDMode("none")
 end
@@ -2113,6 +2176,8 @@ local function onCharacterAdded(character)
 
     local hum = character:WaitForChild("Humanoid", 10)
     if hum then
+        restoreDefaultCamera(hum)
+        publishClientCameraTelemetry(hum)
         hum.Died:Connect(function()
             fullCleanup()
         end)
@@ -2165,16 +2230,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             controlHintTimer = HUD_FADE_DELAY
             if not controlHintsVisible then
                 controlHintsVisible = true
-                tweenProperty(
-                    controlHints,
-                    { TextTransparency = 0, BackgroundTransparency = 0.4 },
-                    0.3
-                )
+                tweenProperty(controlHints, { TextTransparency = 0, BackgroundTransparency = 0.4 }, 0.3)
             end
         else
             disableDOF()
-            camera.CameraType = Enum.CameraType.Custom
-            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4: tween
+            restoreDefaultCamera(getHumanoid())
             setHUDMode(mode)
         end
     elseif keyCode == Enum.KeyCode.ButtonB then
@@ -2226,8 +2286,7 @@ RunService.RenderStepped:Connect(function(dt)
             mode = "none"
             customCamActive = false
             camCurrentPos = nil -- fix #11
-            camera.CameraType = Enum.CameraType.Custom
-            tweenProperty(camera, { FieldOfView = DEFAULT_FOV }, 0.4) -- fix #4
+            restoreDefaultCamera(hum)
             setHUDMode("none")
         end
     end
@@ -2245,19 +2304,28 @@ RunService.RenderStepped:Connect(function(dt)
 
     -- Cinematic orbit camera (fix #8: lerp FOV instead of hard-set 60)
     if cinematicMode then
+        local camera = getCamera()
+        if not camera then
+            return
+        end
         cinematicAngle = cinematicAngle + dt * 0.3
         local radius = 150
         local height = 80
         local target = hrp.Position
         local camPos = target
-            + Vector3.new(
-                math.cos(cinematicAngle) * radius,
-                height,
-                math.sin(cinematicAngle) * radius
-            )
+            + Vector3.new(math.cos(cinematicAngle) * radius, height, math.sin(cinematicAngle) * radius)
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.lookAt(camPos, target)
         camera.FieldOfView = lerp(camera.FieldOfView, 60, math.min(1, 4 * dt))
+    elseif mode == "none" and not customCamActive and hum then
+        local camera = getCamera()
+        if camera and (camera.CameraType == Enum.CameraType.Fixed or camera.CameraSubject ~= hum) then
+            restoreDefaultCamera(hum)
+        end
+    end
+
+    if hum then
+        publishClientCameraTelemetry(hum)
     end
 
     -- Fix #11: removed prevMode comparison; camCurrentPos is now reset in exit functions

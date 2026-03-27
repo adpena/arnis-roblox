@@ -2,7 +2,7 @@ local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local CollectionService = game:GetService("CollectionService")
 
-local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
+local WorldStateConfig = require(game:GetService("ReplicatedStorage").Shared.WorldStateConfig)
 local ChunkLoader = require(script.Parent.ChunkLoader)
 
 local DayNightCycle = {}
@@ -226,7 +226,7 @@ local function updateLighting(hour, forceReactiveRefresh)
 end
 
 function DayNightCycle.Start(speed)
-    CYCLE_SPEED = speed or WorldConfig.DayNightSpeed or 60
+    CYCLE_SPEED = speed or WorldStateConfig.DayNightSpeed or 60
     if CYCLE_SPEED == 0 then
         return
     end -- frozen time
@@ -279,7 +279,11 @@ function DayNightCycle.Configure(latitude, longitude, datetime)
         -- Parse "YYYY-MM-DDTHH:MM" format
         local h, m = datetime:match("T(%d+):(%d+)")
         if h and m then
-            hour = tonumber(h) + tonumber(m) / 60
+            local parsedHour = tonumber(h)
+            local parsedMinute = tonumber(m)
+            if parsedHour ~= nil and parsedMinute ~= nil then
+                hour = parsedHour + parsedMinute / 60
+            end
         end
     elseif datetime == "auto" or datetime == nil then
         -- Use system time converted to local solar time

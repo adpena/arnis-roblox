@@ -58,11 +58,13 @@ class GenerateHarnessProjectsTests(unittest.TestCase):
 
         self.assertIn("src/ServerStorage/SampleData/AustinManifestIndex.lua", ignores)
         self.assertIn("src/ServerStorage/SampleData/AustinManifestChunks/**", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinHarnessManifestIndex.lua", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinHarnessManifestChunks/**", ignores)
         self.assertNotIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua", ignores)
         self.assertNotIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/**", ignores)
         self.assertNotIn("vertigoSync", build_data)
 
-    def test_play_build_keeps_runtime_sample_data_visible(self) -> None:
+    def test_play_build_keeps_bounded_runtime_harness_sample_data_visible(self) -> None:
         module = _import_generator_module()
 
         module.generate_harness_projects(
@@ -75,8 +77,10 @@ class GenerateHarnessProjectsTests(unittest.TestCase):
         build_data = json.loads(self.build_project_path.read_text(encoding="utf-8"))
         ignores = set(build_data["globIgnorePaths"])
 
-        self.assertNotIn("src/ServerStorage/SampleData/AustinManifestIndex.lua", ignores)
-        self.assertNotIn("src/ServerStorage/SampleData/AustinManifestChunks/**", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinManifestIndex.lua", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinManifestChunks/**", ignores)
+        self.assertNotIn("src/ServerStorage/SampleData/AustinHarnessManifestIndex.lua", ignores)
+        self.assertNotIn("src/ServerStorage/SampleData/AustinHarnessManifestChunks/**", ignores)
         self.assertNotIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua", ignores)
         self.assertNotIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/**", ignores)
 
@@ -95,8 +99,42 @@ class GenerateHarnessProjectsTests(unittest.TestCase):
 
         self.assertIn("src/ServerStorage/SampleData/AustinManifestIndex.lua", ignores)
         self.assertIn("src/ServerStorage/SampleData/AustinManifestChunks/**", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinHarnessManifestIndex.lua", ignores)
+        self.assertIn("src/ServerStorage/SampleData/AustinHarnessManifestChunks/**", ignores)
         self.assertIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua", ignores)
         self.assertIn("src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/**", ignores)
+
+    def test_edit_serve_project_keeps_edit_preview_enabled(self) -> None:
+        module = _import_generator_module()
+
+        module.generate_harness_projects(
+            default_project=self.default_project_path,
+            build_project=self.build_project_path,
+            serve_project=self.serve_project_path,
+            include_runtime_sample_data=False,
+        )
+
+        serve_data = json.loads(self.serve_project_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            serve_data.get("vertigoSync", {}).get("editPreview"),
+            {"enabled": True},
+        )
+
+    def test_play_serve_project_disables_edit_preview(self) -> None:
+        module = _import_generator_module()
+
+        module.generate_harness_projects(
+            default_project=self.default_project_path,
+            build_project=self.build_project_path,
+            serve_project=self.serve_project_path,
+            include_runtime_sample_data=True,
+        )
+
+        serve_data = json.loads(self.serve_project_path.read_text(encoding="utf-8"))
+        self.assertNotIn(
+            "editPreview",
+            serve_data.get("vertigoSync", {}),
+        )
 
 
 if __name__ == "__main__":

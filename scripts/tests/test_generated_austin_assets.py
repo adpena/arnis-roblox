@@ -228,6 +228,7 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                     [
                         "return {",
                         '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 1 },",
                         '    shardFolder = "AustinManifestChunks",',
                         '    shards = { "AustinManifestIndex_001" },',
                         "    chunkRefs = {",
@@ -293,6 +294,7 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                     [
                         "return {",
                         '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 1 },",
                         '    shardFolder = "AustinManifestChunks",',
                         '    shards = { "AustinManifestIndex_001" },',
                         "    chunkRefs = {",
@@ -339,6 +341,213 @@ class GeneratedAustinAssetsVerifierTests(unittest.TestCase):
                 any('chunk -1_-1 is missing streamingCost' in error for error in errors),
                 f"expected per-chunk preview scheduling metadata error, got {errors}",
             )
+
+    def test_collect_errors_rejects_preview_index_without_total_features(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 1 },",
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    meta = {",
+                        '        worldName = "AustinPreviewDowntown",',
+                        "    },",
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 13, streamingCost = 62, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 10, streamingCost = 20, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 9, streamingCost = 18, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 8, streamingCost = 16, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("preview index meta is missing totalFeatures" in error for error in errors),
+                f"expected preview totalFeatures error, got {errors}",
+            )
+
+    def test_collect_errors_rejects_preview_terrain_fragments_missing_heights(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 4 },",
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 1,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0},terrain={cellSizeStuds=4,width=2,depth=2,material="Grass"}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertTrue(
+                any("terrain is missing heights after shard merge" in error for error in errors),
+                f"expected preview terrain heights error, got {errors}",
+            )
+
+    def test_collect_errors_accepts_split_preview_terrain_fragments(self) -> None:
+        verifier = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_dir = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+            preview_dir = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
+            runtime_index = root / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
+            preview_index = root / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
+
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
+            runtime_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 1 },",
+                        '    shardFolder = "AustinManifestChunks",',
+                        '    shards = { "AustinManifestIndex_001" },',
+                        "    chunkRefs = {",
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinManifestIndex_001" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (runtime_dir / "AustinManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0}}}}\n',
+                encoding="utf-8",
+            )
+
+            preview_index.write_text(
+                "\n".join(
+                    [
+                        "return {",
+                        '    schemaVersion = "0.4.0",',
+                        "    meta = { totalFeatures = 4 },",
+                        "    chunkCount = 4,",
+                        "    fragmentCount = 3,",
+                        "    chunkRefs = {",
+                        '        { id = "-1_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_-1", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "-1_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001" } },',
+                        '        { id = "0_0", originStuds = { x = 0, y = 0, z = 0 }, featureCount = 1, streamingCost = 8, shards = { "AustinPreviewManifestIndex_001", "AustinPreviewManifestIndex_002", "AustinPreviewManifestIndex_003" } },',
+                        "    },",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_001.lua").write_text(
+                'return {chunks={{id="0_0",originStuds={x=0,y=0,z=0},terrain={cellSizeStuds=4,width=2,depth=2,material="Grass"}}}}\n',
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_002.lua").write_text(
+                'return {chunks={{id="0_0",terrain={heights={1,2},materials={"Grass","Grass"}}}}}\n',
+                encoding="utf-8",
+            )
+            (preview_dir / "AustinPreviewManifestIndex_003.lua").write_text(
+                'return {chunks={{id="0_0",terrain={heights={3,4},materials={"Rock","Rock"}}}}}\n',
+                encoding="utf-8",
+            )
+
+            errors = verifier.collect_errors(root)
+
+            self.assertEqual(errors, [], f"expected split preview terrain fragments to verify cleanly, got {errors}")
 
     def test_collect_errors_rejects_partial_runtime_chunk_scheduling_metadata(self) -> None:
         verifier = load_module()

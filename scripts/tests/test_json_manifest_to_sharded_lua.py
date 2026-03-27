@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -444,6 +445,124 @@ class JsonManifestToShardedLuaTests(unittest.TestCase):
             self.assertIn("streamingCost=8", index_text)
             self.assertNotIn('partitionVersion="subplans.v1"', shard_text)
             self.assertNotIn("subplans={{", shard_text)
+
+    def test_script_accepts_sqlite_manifest_store(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            sqlite_path = temp_root / "manifest.sqlite"
+            out_dir = temp_root / "out"
+
+            connection = sqlite3.connect(sqlite_path)
+            connection.executescript(
+                """
+                CREATE TABLE manifest_meta (
+                    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                    schema_version TEXT NOT NULL,
+                    world_name TEXT NOT NULL,
+                    generator TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    meters_per_stud REAL NOT NULL,
+                    chunk_size_studs INTEGER NOT NULL,
+                    bbox_min_lat REAL NOT NULL,
+                    bbox_min_lon REAL NOT NULL,
+                    bbox_max_lat REAL NOT NULL,
+                    bbox_max_lon REAL NOT NULL,
+                    total_features INTEGER NOT NULL,
+                    notes_json TEXT NOT NULL
+                );
+                CREATE TABLE manifest_chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    origin_x REAL NOT NULL,
+                    origin_y REAL NOT NULL,
+                    origin_z REAL NOT NULL,
+                    feature_count INTEGER NOT NULL,
+                    streaming_cost REAL NOT NULL,
+                    partition_version TEXT NOT NULL,
+                    subplans_json TEXT NOT NULL,
+                    chunk_json TEXT NOT NULL
+                );
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO manifest_meta (
+                    singleton_id, schema_version, world_name, generator, source,
+                    meters_per_stud, chunk_size_studs,
+                    bbox_min_lat, bbox_min_lon, bbox_max_lat, bbox_max_lon,
+                    total_features, notes_json
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "0.4.0",
+                    "SqliteSharder",
+                    "test",
+                    "test",
+                    0.3,
+                    256,
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    2,
+                    "[]",
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO manifest_chunks (
+                    chunk_id, origin_x, origin_y, origin_z,
+                    feature_count, streaming_cost, partition_version,
+                    subplans_json, chunk_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "0_0",
+                    0.0,
+                    0.0,
+                    0.0,
+                    2,
+                    20.0,
+                    "subplans.v1",
+                    json.dumps([{"id": "roads", "layer": "roads", "featureCount": 2, "streamingCost": 8.0}]),
+                    json.dumps(
+                        {
+                            "id": "0_0",
+                            "originStuds": {"x": 0, "y": 0, "z": 0},
+                            "roads": [{}, {}],
+                            "rails": [],
+                            "buildings": [],
+                            "water": [],
+                            "props": [],
+                            "landuse": [],
+                            "barriers": [],
+                        }
+                    ),
+                ),
+            )
+            connection.commit()
+            connection.close()
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "--sqlite",
+                    str(sqlite_path),
+                    "--output-dir",
+                    str(out_dir),
+                    "--index-name",
+                    "TestManifestIndex",
+                    "--shard-folder",
+                    "TestManifestChunks",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            index_text = (out_dir / "TestManifestIndex.lua").read_text(encoding="utf-8")
+            self.assertIn('schemaVersion="0.4.0"', index_text)
+            self.assertIn("featureCount=2", index_text)
+            self.assertIn('partitionVersion="subplans.v1"', index_text)
 
 
 if __name__ == "__main__":

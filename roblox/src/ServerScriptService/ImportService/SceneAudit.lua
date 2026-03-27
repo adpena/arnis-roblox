@@ -74,6 +74,20 @@ local function incrementInstanceBucket(container, bucket, sourceId)
     appendSourceIds(row, sourceId)
 end
 
+local function incrementRailBucket(container, bucket, sourceId)
+    local row = container[bucket]
+    if row == nil then
+        row = {
+            instanceCount = 0,
+            sourceIds = {},
+            _sourceIdSet = {},
+        }
+        container[bucket] = row
+    end
+    row.instanceCount += 1
+    appendSourceIds(row, sourceId)
+end
+
 local function incrementBuildingMaterialBucket(container, bucket, sourceId)
     local row = container[bucket]
     if row == nil then
@@ -181,6 +195,8 @@ local function newSummary()
         waterSurfacePartCount = 0,
         waterSurfacePartCountByType = {},
         waterSurfacePartCountByKind = {},
+        railReceiptCount = 0,
+        railReceiptCountByKind = {},
         roadCrosswalkStripeCount = 0,
         roadTunnelWallCount = 0,
         roadBridgeSupportCount = 0,
@@ -193,6 +209,7 @@ local function newSummary()
         chunksWithVegetation = 0,
         chunksWithAmbientProps = 0,
         chunksWithWaterGeometry = 0,
+        chunksWithRailGeometry = 0,
     }
 end
 
@@ -239,8 +256,7 @@ local function inferPropKind(instance)
 end
 
 local function isNamedTreePart(instance, token)
-    return instance:IsA("BasePart")
-        and string.find(string.lower(instance.Name), token, 1, true) ~= nil
+    return instance:IsA("BasePart") and string.find(string.lower(instance.Name), token, 1, true) ~= nil
 end
 
 local function collectTreeParts(treeRoot)
@@ -281,10 +297,7 @@ local function classifyTreeConnectivity(treeRoot)
     for _, trunk in ipairs(trunks) do
         local trunkTopY = getPartTopY(trunk)
         for _, canopy in ipairs(canopies) do
-            if
-                partsOverlapXZ(trunk, canopy, 0.75)
-                and getPartBottomY(canopy) - trunkTopY <= 1.5
-            then
+            if partsOverlapXZ(trunk, canopy, 0.75) and getPartBottomY(canopy) - trunkTopY <= 1.5 then
                 return "connected"
             end
         end
@@ -401,24 +414,19 @@ function SceneAudit.summarizeWorld(worldRoot)
         local chunkVegetationInstances = 0
         local chunkAmbientPropInstances = 0
         local chunkWaterSurfaceParts = 0
+        local chunkRailReceipts = 0
 
         local buildingsFolder = child:FindFirstChild("Buildings")
         if buildingsFolder then
             local mergedMeshes = buildingsFolder:FindFirstChild("MergedMeshes")
             if mergedMeshes then
-                scene.mergedBuildingMeshPartCount += countDescendants(
-                    mergedMeshes,
-                    function(descendant)
-                        return descendant:IsA("BasePart")
-                    end
-                )
+                scene.mergedBuildingMeshPartCount += countDescendants(mergedMeshes, function(descendant)
+                    return descendant:IsA("BasePart")
+                end)
             end
 
             for _, building in ipairs(buildingsFolder:GetChildren()) do
-                if
-                    building:IsA("Model")
-                    and building:GetAttribute("ArnisImportBuildingHeight") ~= nil
-                then
+                if building:IsA("Model") and building:GetAttribute("ArnisImportBuildingHeight") ~= nil then
                     chunkBuildingModels += 1
                     local shellFolder = building:FindFirstChild("Shell")
                     local detailFolder = building:FindFirstChild("Detail")
@@ -433,17 +441,13 @@ function SceneAudit.summarizeWorld(worldRoot)
                             end)
                         or 0
                     local roofParts = shellFolder and countDescendants(shellFolder, isRoofPart) or 0
-                    local roofClosureParts = shellFolder
-                            and countDescendants(shellFolder, isRoofClosurePart)
-                        or 0
+                    local roofClosureParts = shellFolder and countDescendants(shellFolder, isRoofClosurePart) or 0
                     local detailParts = detailFolder
                             and countDescendants(detailFolder, function(descendant)
                                 return descendant:IsA("BasePart")
                             end)
                         or 0
-                    local facadeParts = detailFolder
-                            and countDescendants(detailFolder, isFacadePart)
-                        or 0
+                    local facadeParts = detailFolder and countDescendants(detailFolder, isFacadePart) or 0
 
                     scene.buildingShellPartCount += shellParts
                     scene.buildingShellMeshPartCount += shellMeshParts
@@ -456,36 +460,20 @@ function SceneAudit.summarizeWorld(worldRoot)
                     elseif building:GetAttribute("ArnisImportHasMergedRoofGeometry") == true then
                         evidenceKind = "merged_only"
                     end
-                    local usageBucket = normalizeBucketValue(
-                        building:GetAttribute("ArnisImportBuildingUsage"),
-                        "unknown"
-                    )
-                    local roofShapeBucket = normalizeBucketValue(
-                        building:GetAttribute("ArnisImportRoofShape"),
-                        "unknown"
-                    )
-                    local wallMaterialBucket = normalizeBucketValue(
-                        building:GetAttribute("ArnisImportWallMaterial"),
-                        "unknown"
-                    )
-                    local roofMaterialBucket = normalizeBucketValue(
-                        building:GetAttribute("ArnisImportRoofMaterial"),
-                        "unknown"
-                    )
+                    local usageBucket =
+                        normalizeBucketValue(building:GetAttribute("ArnisImportBuildingUsage"), "unknown")
+                    local roofShapeBucket =
+                        normalizeBucketValue(building:GetAttribute("ArnisImportRoofShape"), "unknown")
+                    local wallMaterialBucket =
+                        normalizeBucketValue(building:GetAttribute("ArnisImportWallMaterial"), "unknown")
+                    local roofMaterialBucket =
+                        normalizeBucketValue(building:GetAttribute("ArnisImportRoofMaterial"), "unknown")
                     local buildingSourceId = building:GetAttribute("ArnisImportSourceId")
                     if type(buildingSourceId) ~= "string" or buildingSourceId == "" then
                         buildingSourceId = building.Name
                     end
-                    incrementRoofEvidenceBucket(
-                        scene.buildingRoofCoverageByUsage,
-                        usageBucket,
-                        evidenceKind
-                    )
-                    incrementRoofEvidenceBucket(
-                        scene.buildingRoofCoverageByShape,
-                        roofShapeBucket,
-                        evidenceKind
-                    )
+                    incrementRoofEvidenceBucket(scene.buildingRoofCoverageByUsage, usageBucket, evidenceKind)
+                    incrementRoofEvidenceBucket(scene.buildingRoofCoverageByShape, roofShapeBucket, evidenceKind)
                     incrementBuildingMaterialBucket(
                         scene.buildingModelCountByWallMaterial,
                         wallMaterialBucket,
@@ -499,10 +487,7 @@ function SceneAudit.summarizeWorld(worldRoot)
                     if roofClosureParts > 0 then
                         scene.buildingModelsWithRoofClosureDeck += 1
                         incrementRoofClosureBucket(scene.buildingRoofCoverageByUsage, usageBucket)
-                        incrementRoofClosureBucket(
-                            scene.buildingRoofCoverageByShape,
-                            roofShapeBucket
-                        )
+                        incrementRoofClosureBucket(scene.buildingRoofCoverageByShape, roofShapeBucket)
                     end
                     if evidenceKind == "direct" then
                         scene.buildingModelsWithDirectRoof += 1
@@ -548,29 +533,14 @@ function SceneAudit.summarizeWorld(worldRoot)
                         scene.curbSurfacePartCount += 1
                         chunkCurbSurfaceParts += 1
                     end
-                    if
-                        role == "road"
-                        or role == "sidewalk"
-                        or role == "crossing"
-                        or role == "curb"
-                    then
-                        local kindBucket = normalizeBucketValue(
-                            roadDescendant:GetAttribute("ArnisRoadKind"),
-                            "unknown"
-                        )
+                    if role == "road" or role == "sidewalk" or role == "crossing" or role == "curb" then
+                        local kindBucket = normalizeBucketValue(roadDescendant:GetAttribute("ArnisRoadKind"), "unknown")
                         local subkindFallback = role == "road" and "none" or role
-                        local subkindBucket = normalizeBucketValue(
-                            roadDescendant:GetAttribute("ArnisRoadSubkind"),
-                            subkindFallback
-                        )
+                        local subkindBucket =
+                            normalizeBucketValue(roadDescendant:GetAttribute("ArnisRoadSubkind"), subkindFallback)
                         local sourceCount = roadDescendant:GetAttribute("ArnisRoadSourceCount")
                         local sourceIds = roadDescendant:GetAttribute("ArnisRoadSourceIds")
-                        incrementRoadSurfaceBucket(
-                            scene.roadSurfacePartCountByKind,
-                            kindBucket,
-                            sourceCount,
-                            sourceIds
-                        )
+                        incrementRoadSurfaceBucket(scene.roadSurfacePartCountByKind, kindBucket, sourceCount, sourceIds)
                         incrementRoadSurfaceBucket(
                             scene.roadSurfacePartCountBySubkind,
                             subkindBucket,
@@ -579,10 +549,7 @@ function SceneAudit.summarizeWorld(worldRoot)
                         )
                     end
                 end
-                if
-                    roadDescendant:IsA("BasePart")
-                    and CollectionService:HasTag(roadDescendant, "Road")
-                then
+                if roadDescendant:IsA("BasePart") and CollectionService:HasTag(roadDescendant, "Road") then
                     chunkRoadParts += 1
                     if roadDescendant:IsA("MeshPart") then
                         scene.roadMeshPartCount += 1
@@ -592,9 +559,7 @@ function SceneAudit.summarizeWorld(worldRoot)
                     scene.roadCrosswalkStripeCount += 1
                 elseif roadDescendant:IsA("BasePart") and roadDescendant.Name == "TunnelWall" then
                     scene.roadTunnelWallCount += 1
-                elseif
-                    roadDescendant:IsA("BasePart") and roadDescendant.Name == "BridgeSupport"
-                then
+                elseif roadDescendant:IsA("BasePart") and roadDescendant.Name == "BridgeSupport" then
                     scene.roadBridgeSupportCount += 1
                 end
             end
@@ -606,9 +571,7 @@ function SceneAudit.summarizeWorld(worldRoot)
                 if waterDescendant:IsA("BasePart") then
                     local waterSurfaceType = waterDescendant:GetAttribute("ArnisWaterSurfaceType")
                     if type(waterSurfaceType) ~= "string" or waterSurfaceType == "" then
-                        if
-                            string.find(waterDescendant.Name, "PolygonWaterSurface", 1, true) == 1
-                        then
+                        if string.find(waterDescendant.Name, "PolygonWaterSurface", 1, true) == 1 then
                             waterSurfaceType = "polygon"
                         elseif waterDescendant.Name == "RibbonWaterSurface" then
                             waterSurfaceType = "ribbon"
@@ -635,6 +598,24 @@ function SceneAudit.summarizeWorld(worldRoot)
             end
         end
 
+        local railsFolder = child:FindFirstChild("Rails")
+        if railsFolder then
+            for _, railDescendant in ipairs(railsFolder:GetDescendants()) do
+                if
+                    railDescendant:IsA("Configuration")
+                    and railDescendant:GetAttribute("ArnisRailAuditRecord") == true
+                then
+                    scene.railReceiptCount += 1
+                    chunkRailReceipts += 1
+                    incrementRailBucket(
+                        scene.railReceiptCountByKind,
+                        normalizeBucketValue(railDescendant:GetAttribute("ArnisRailKind"), "unknown"),
+                        railDescendant:GetAttribute("ArnisRailSourceId")
+                    )
+                end
+            end
+        end
+
         local propsFolder = child:FindFirstChild("Props")
         if propsFolder then
             local authoredPropRoots, ambientPropRoots = iterPropRoots(propsFolder)
@@ -648,20 +629,11 @@ function SceneAudit.summarizeWorld(worldRoot)
                     chunkVegetationInstances += 1
                     scene.vegetationInstanceCount += 1
                     scene.treeInstanceCount += 1
-                    incrementInstanceBucket(
-                        scene.vegetationInstanceCountByKind,
-                        propKind,
-                        propSourceId
-                    )
-                    local species =
-                        normalizeBucketValue(propRoot:GetAttribute("ArnisPropSpecies"), "unknown")
+                    incrementInstanceBucket(scene.vegetationInstanceCountByKind, propKind, propSourceId)
+                    local species = normalizeBucketValue(propRoot:GetAttribute("ArnisPropSpecies"), "unknown")
                     incrementInstanceBucket(scene.treeInstanceCountBySpecies, species, propSourceId)
                     local connectivityKind = classifyTreeConnectivity(propRoot)
-                    incrementTreeConnectivityBucket(
-                        scene.treeConnectivityBySpecies,
-                        species,
-                        connectivityKind
-                    )
+                    incrementTreeConnectivityBucket(scene.treeConnectivityBySpecies, species, connectivityKind)
                     if connectivityKind == "connected" then
                         scene.treeModelsWithConnectedTrunkCanopy += 1
                     elseif connectivityKind == "missing_trunk" then
@@ -674,20 +646,13 @@ function SceneAudit.summarizeWorld(worldRoot)
                 elseif propKind == "hedge" or propKind == "shrub" then
                     chunkVegetationInstances += 1
                     scene.vegetationInstanceCount += 1
-                    incrementInstanceBucket(
-                        scene.vegetationInstanceCountByKind,
-                        propKind,
-                        propSourceId
-                    )
+                    incrementInstanceBucket(scene.vegetationInstanceCountByKind, propKind, propSourceId)
                 end
             end
             for _, propRoot in ipairs(ambientPropRoots) do
                 chunkAmbientPropInstances += 1
                 scene.ambientPropInstanceCount += 1
-                incrementInstanceBucket(
-                    scene.ambientPropInstanceCountByKind,
-                    inferPropKind(propRoot)
-                )
+                incrementInstanceBucket(scene.ambientPropInstanceCountByKind, inferPropKind(propRoot))
             end
         end
 
@@ -749,6 +714,9 @@ function SceneAudit.summarizeWorld(worldRoot)
         end
         if chunkWaterSurfaceParts > 0 then
             scene.chunksWithWaterGeometry += 1
+        end
+        if chunkRailReceipts > 0 then
+            scene.chunksWithRailGeometry += 1
         end
     end
 

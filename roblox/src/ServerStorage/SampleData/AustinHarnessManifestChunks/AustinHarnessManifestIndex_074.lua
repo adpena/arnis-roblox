@@ -1,0 +1,1 @@
+return {chunks={{id="-35_8",roads={{id="osm_1231262867",kind="path",material="Asphalt",color={r=51,g=51,b=51},widthStuds=3,hasSidewalk=false,surface="unpaved",points={{x=0,y=-3.4617,z=224.0723},{x=14.0689,y=-3.434,z=227.9574},{x=77.3408,y=-3.4685,z=256}}}}}}}

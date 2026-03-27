@@ -40,14 +40,8 @@ return function()
     Assert.truthy(importManifestActivity, "expected ImportManifest activity")
     Assert.truthy(importChunkActivity, "expected ImportChunk activity")
     Assert.truthy(importChunkActivity.extra.instanceCount > 0, "expected non-zero instance count")
-    Assert.truthy(
-        importManifestActivity.extra.totalInstances > 0,
-        "expected non-zero total instances"
-    )
-    Assert.truthy(
-        summary.byLabel[1].totalMs >= summary.byLabel[1].avgMs,
-        "expected valid aggregated timings"
-    )
+    Assert.truthy(importManifestActivity.extra.totalInstances > 0, "expected non-zero total instances")
+    Assert.truthy(summary.byLabel[1].totalMs >= summary.byLabel[1].avgMs, "expected valid aggregated timings")
 
     local cacheStats = ImportPlanCache.GetStats()
     Assert.truthy(cacheStats.misses > 0, "expected manifest import to populate import plan cache")
@@ -55,15 +49,9 @@ return function()
     local firstPassSize = cacheStats.size
     local firstPassHits = cacheStats.hits
     local firstPassImportManifestMs = importManifestActivity.elapsedMs
-    local firstChunkEntry = ChunkLoader.GetChunkEntry("0_0")
-    Assert.truthy(
-        firstChunkEntry,
-        "expected SampleManifest chunk to be registered after first import"
-    )
-    Assert.truthy(
-        firstChunkEntry.planKey,
-        "expected registered SampleManifest chunk to expose a plan key"
-    )
+    local firstChunkEntry = ChunkLoader.GetChunkEntry("0_0", "GeneratedWorld_PerfTest")
+    Assert.truthy(firstChunkEntry, "expected SampleManifest chunk to be registered after first import")
+    Assert.truthy(firstChunkEntry.planKey, "expected registered SampleManifest chunk to expose a plan key")
 
     ImportService.ImportManifest(manifest, {
         clearFirst = false,
@@ -71,15 +59,9 @@ return function()
         printReport = false,
     })
     local warmedCacheStats = ImportPlanCache.GetStats()
-    local warmedChunkEntry = ChunkLoader.GetChunkEntry("0_0")
-    Assert.truthy(
-        warmedChunkEntry,
-        "expected SampleManifest chunk to stay registered after repeated import"
-    )
-    Assert.truthy(
-        warmedCacheStats.hits > firstPassHits,
-        "expected repeated manifest import to hit import plan cache"
-    )
+    local warmedChunkEntry = ChunkLoader.GetChunkEntry("0_0", "GeneratedWorld_PerfTest")
+    Assert.truthy(warmedChunkEntry, "expected SampleManifest chunk to stay registered after repeated import")
+    Assert.truthy(warmedCacheStats.hits > firstPassHits, "expected repeated manifest import to hit import plan cache")
     print(
         ("[ArnisRoblox] Performance.spec cache firstSize=%d warmedSize=%d firstHits=%d warmedHits=%d warmedMisses=%d"):format(
             firstPassSize,
@@ -106,12 +88,8 @@ return function()
             warmedImportManifestActivity = activity
         end
     end
-    Assert.truthy(
-        warmedImportManifestActivity,
-        "expected repeated import manifest profiler activity"
-    )
-    local warmedPerfCeiling =
-        math.max(firstPassImportManifestMs * 1.2, firstPassImportManifestMs + 35)
+    Assert.truthy(warmedImportManifestActivity, "expected repeated import manifest profiler activity")
+    local warmedPerfCeiling = math.max(firstPassImportManifestMs * 1.2, firstPassImportManifestMs + 35)
     print(
         ("[ArnisRoblox] Performance.spec firstImportMs=%.2f warmedImportMs=%.2f ceilingMs=%.2f"):format(
             firstPassImportManifestMs,

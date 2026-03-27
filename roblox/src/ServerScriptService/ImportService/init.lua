@@ -5,8 +5,8 @@ local ChunkSchema = require(ReplicatedStorage.Shared.ChunkSchema)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local DefaultWorldConfig = require(ReplicatedStorage.Shared.WorldConfig)
 
-local DayNightCycle = require(script.DayNightCycle)
 local LoadingScreen = require(script.LoadingScreen)
+local WorldStateApplier = require(script.WorldStateApplier)
 
 local Profiler = require(script.Profiler)
 local ChunkLoader = require(script.ChunkLoader)
@@ -23,6 +23,7 @@ local LanduseBuilder = require(script.Builders.LanduseBuilder)
 local BarrierBuilder = require(script.Builders.BarrierBuilder)
 local AmbientLife = require(script.AmbientLife)
 local MinimapService = require(script.MinimapService)
+local ImportSignatures = require(script.ImportSignatures)
 
 local ImportService = {}
 local subplanStateByChunkId = {}
@@ -48,63 +49,6 @@ local CANONICAL_SUBPLAN_LAYER_INDEX = table.freeze({
     water = 7,
     props = 8,
 })
-
--- Set up atmospheric and cinematic lighting effects.
--- Called once after all chunks have been imported.
-local function setupAtmosphere(_manifest)
-    local Lighting = game:GetService("Lighting")
-
-    -- Atmosphere
-    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
-    if not atmosphere then
-        atmosphere = Instance.new("Atmosphere")
-        atmosphere.Parent = Lighting
-    end
-
-    atmosphere.Density = 0.3
-    atmosphere.Offset = 0.25
-    atmosphere.Glare = 0
-    atmosphere.Haze = 1
-    atmosphere.Color = Color3.fromRGB(199, 210, 225) -- cool blue-grey
-    atmosphere.Decay = Color3.fromRGB(106, 112, 125) -- distance fade
-
-    -- Sky / sun position (ClockTime and GeographicLatitude are set by DayNightCycle.Configure)
-    Lighting.Brightness = 2
-    Lighting.EnvironmentDiffuseScale = 1
-    Lighting.EnvironmentSpecularScale = 1
-    Lighting.GlobalShadows = true
-    Lighting.ShadowSoftness = 0.2
-
-    -- Bloom for a cinematic look
-    local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
-    if not bloom then
-        bloom = Instance.new("BloomEffect")
-        bloom.Parent = Lighting
-    end
-    bloom.Intensity = 0.5
-    bloom.Size = 24
-    bloom.Threshold = 2
-
-    -- Color correction for warmth
-    local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
-    if not cc then
-        cc = Instance.new("ColorCorrectionEffect")
-        cc.Parent = Lighting
-    end
-    cc.Brightness = 0.02
-    cc.Contrast = 0.05
-    cc.Saturation = 0.1
-    cc.TintColor = Color3.fromRGB(255, 248, 240) -- warm white
-
-    -- Sun rays for god rays through buildings
-    local sunRays = Lighting:FindFirstChildOfClass("SunRaysEffect")
-    if not sunRays then
-        sunRays = Instance.new("SunRaysEffect")
-        sunRays.Parent = Lighting
-    end
-    sunRays.Intensity = 0.15
-    sunRays.Spread = 0.8
-end
 
 local function normalizePositiveNumber(value)
     if type(value) ~= "number" or value <= 0 then
@@ -270,25 +214,33 @@ local function cloneSubplanState(state)
     }
 end
 
-local function getSubplanState(chunkId)
-    local state = subplanStateByChunkId[chunkId]
+local function getSubplanStateKey(chunkId, worldRootName)
+    local resolvedWorldRootName = if type(worldRootName) == "string" and worldRootName ~= ""
+        then worldRootName
+        else DEFAULT_WORLD_ROOT_NAME
+    return ("%s::%s"):format(resolvedWorldRootName, chunkId)
+end
+
+local function getSubplanState(chunkId, worldRootName)
+    local stateKey = getSubplanStateKey(chunkId, worldRootName)
+    local state = subplanStateByChunkId[stateKey]
     if state == nil then
         state = {
             importedLayers = {},
             completedWorkItems = {},
             failedWorkItems = {},
         }
-        subplanStateByChunkId[chunkId] = state
+        subplanStateByChunkId[stateKey] = state
     end
     return state
 end
 
-local function setSubplanState(chunkId, state)
-    subplanStateByChunkId[chunkId] = state
+local function setSubplanState(chunkId, state, worldRootName)
+    subplanStateByChunkId[getSubplanStateKey(chunkId, worldRootName)] = state
 end
 
-local function clearSubplanState(chunkId)
-    subplanStateByChunkId[chunkId] = nil
+local function clearSubplanState(chunkId, worldRootName)
+    subplanStateByChunkId[getSubplanStateKey(chunkId, worldRootName)] = nil
 end
 
 local function buildImportedLayerMap(actionSet)
@@ -602,11 +554,11 @@ local function layerHasCompleteSubplans(chunk, state, layer)
     return foundSubplan
 end
 
-local function validateSubplanPrerequisites(chunk, subplan, config)
+local function validateSubplanPrerequisites(chunk, subplan, config, worldRootName)
     local targetLayer = getSubplanLayer(subplan)
     local targetLayerIndex = CANONICAL_SUBPLAN_LAYER_INDEX[targetLayer]
     local actionSet = getChunkActionSet(chunk, config)
-    local state = getSubplanState(chunk.id)
+    local state = getSubplanState(chunk.id, worldRootName)
     local missing = {}
 
     for _, layer in ipairs(CANONICAL_SUBPLAN_LAYERS) do
@@ -714,6 +666,8 @@ function ImportService.ImportChunk(chunk, options)
         subplanId = subplan and subplan.id or nil,
         subplanLayer = subplan and getSubplanLayer(subplan) or nil,
     }
+    local mutationStarted = false
+    local profile = nil
 
     local function emitChunkProfile(report)
         if onChunkProfile then
@@ -724,6 +678,26 @@ function ImportService.ImportChunk(chunk, options)
                 )
             end
         end
+    end
+
+    local function cancelImport()
+        chunkProfile.cancelled = true
+        if mutationStarted then
+            ImportService.RollbackCancelledImport(registrationChunk, {
+                config = config,
+                worldRootName = options.worldRootName,
+                layers = layers,
+                subplan = subplan,
+                configSignature = options.configSignature,
+                layerSignatures = options.layerSignatures,
+            })
+        end
+        Profiler.finish(profile, {
+            chunkId = chunk.id,
+            cancelled = true,
+        })
+        emitChunkProfile(chunkProfile)
+        return nil
     end
 
     local function checkpoint(forceYield)
@@ -738,30 +712,19 @@ function ImportService.ImportChunk(chunk, options)
     end
 
     -- PERFORMANCE: Capture instance count for delta tracking
-    local profile = Profiler.begin("ImportChunk", true)
+    profile = Profiler.begin("ImportChunk", true)
 
     -- Authoritative overwrite: ensure any existing version of this chunk is unloaded first.
     -- This prevents duplicate content on re-import.
     if shouldCancel and shouldCancel() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
     if not selectiveLayers then
-        clearSubplanState(chunk.id)
-        ChunkLoader.UnloadChunk(chunk.id, true)
+        clearSubplanState(chunk.id, options.worldRootName)
+        ChunkLoader.UnloadChunk(chunk.id, true, options.worldRootName)
+        mutationStarted = true
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -770,14 +733,9 @@ function ImportService.ImportChunk(chunk, options)
     local chunkFolder = if selectiveLayers
         then getOrCreateNamedFolder(worldRoot, chunk.id)
         else ensureChunkFolder(worldRoot, chunk.id)
+    mutationStarted = true
     if checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local function prepareLayerFolder(name, clearChildrenFirst)
@@ -820,13 +778,7 @@ function ImportService.ImportChunk(chunk, options)
         terrainFolder = prepareLayerFolder(plan.folderSpecs.terrain.name, plan.folderSpecs.terrain.clearChildren)
     end
     if terrainFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local roadsFolder = nil
@@ -834,13 +786,7 @@ function ImportService.ImportChunk(chunk, options)
         roadsFolder = prepareLayerFolder(plan.folderSpecs.roads.name, plan.folderSpecs.roads.clearChildren)
     end
     if roadsFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local railsFolder = nil
@@ -848,13 +794,7 @@ function ImportService.ImportChunk(chunk, options)
         railsFolder = prepareLayerFolder(plan.folderSpecs.rails.name, plan.folderSpecs.rails.clearChildren)
     end
     if railsFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local buildingsFolder = nil
@@ -862,13 +802,7 @@ function ImportService.ImportChunk(chunk, options)
         buildingsFolder = prepareLayerFolder(plan.folderSpecs.buildings.name, plan.folderSpecs.buildings.clearChildren)
     end
     if buildingsFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local waterFolder = nil
@@ -876,13 +810,7 @@ function ImportService.ImportChunk(chunk, options)
         waterFolder = prepareLayerFolder(plan.folderSpecs.water.name, plan.folderSpecs.water.clearChildren)
     end
     if waterFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local propsFolder = nil
@@ -890,13 +818,7 @@ function ImportService.ImportChunk(chunk, options)
         propsFolder = prepareLayerFolder(plan.folderSpecs.props.name, plan.folderSpecs.props.clearChildren)
     end
     if propsFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local landuseFolder = nil
@@ -904,13 +826,7 @@ function ImportService.ImportChunk(chunk, options)
         landuseFolder = prepareLayerFolder(plan.folderSpecs.landuse.name, plan.folderSpecs.landuse.clearChildren)
     end
     if landuseFolder and checkpoint() then
-        chunkProfile.cancelled = true
-        Profiler.finish(profile, {
-            chunkId = chunk.id,
-            cancelled = true,
-        })
-        emitChunkProfile(chunkProfile)
-        return nil
+        return cancelImport()
     end
 
     local barriersFolder = nil
@@ -928,13 +844,7 @@ function ImportService.ImportChunk(chunk, options)
         TerrainBuilder.Build(terrainFolder, chunk, terrainPlan)
         chunkProfile.terrainMs = Profiler.finish(p).elapsedMs
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -952,13 +862,7 @@ function ImportService.ImportChunk(chunk, options)
         chunkProfile.landuseRectCount = tonumber(landuseStats.rectCount) or 0
         chunkProfile.landuseDetailInstanceCount = tonumber(landuseStats.detailInstances) or 0
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -1011,13 +915,7 @@ function ImportService.ImportChunk(chunk, options)
             chunkProfile.roadsSurfaceMs = chunkProfile.roadsMs
         end
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
 
         -- Imprint road surfaces into terrain voxels so slopes are flattened
@@ -1027,13 +925,7 @@ function ImportService.ImportChunk(chunk, options)
             TerrainBuilder.ImprintRoads(roadChunkPlan.roads, chunk.originStuds, chunk)
             chunkProfile.roadImprintMs = Profiler.finish(pImprint).elapsedMs
             if checkpoint() then
-                chunkProfile.cancelled = true
-                Profiler.finish(profile, {
-                    chunkId = chunk.id,
-                    cancelled = true,
-                })
-                emitChunkProfile(chunkProfile)
-                return nil
+                return cancelImport()
             end
         end
     end
@@ -1043,13 +935,7 @@ function ImportService.ImportChunk(chunk, options)
         BarrierBuilder.BuildAll(chunk, barriersFolder)
         chunkProfile.barriersMs = Profiler.finish(pBarriers).elapsedMs
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -1094,13 +980,7 @@ function ImportService.ImportChunk(chunk, options)
 
         chunkProfile.buildingsMs = Profiler.finish(pBldgs).elapsedMs
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -1118,13 +998,7 @@ function ImportService.ImportChunk(chunk, options)
         end
         chunkProfile.waterMs = Profiler.finish(pWater).elapsedMs
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -1173,13 +1047,7 @@ function ImportService.ImportChunk(chunk, options)
             chunkProfile[("propTopKind%dMs"):format(index)] = summary and math.floor(summary.elapsedMs + 0.5) or 0
         end
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
@@ -1189,27 +1057,23 @@ function ImportService.ImportChunk(chunk, options)
         AmbientLife.SpawnNPCs(propsFolder, chunk.roads, chunk.originStuds)
         chunkProfile.ambientMs = Profiler.finish(pAmbient).elapsedMs
         if checkpoint() then
-            chunkProfile.cancelled = true
-            Profiler.finish(profile, {
-                chunkId = chunk.id,
-                cancelled = true,
-            })
-            emitChunkProfile(chunkProfile)
-            return nil
+            return cancelImport()
         end
     end
 
     ChunkLoader.RegisterChunk(chunk.id, chunkFolder, registrationChunk, {
         planKey = plan.key,
         configSignature = options.configSignature,
+        chunkSignature = options.chunkSignature,
         layerSignatures = options.layerSignatures,
+        worldRootName = options.worldRootName,
     })
     if not selectiveLayers then
         setSubplanState(chunk.id, {
             importedLayers = buildImportedLayerMap(plan.actionSet),
             completedWorkItems = buildCompletedWorkItemMap(registrationChunk),
             failedWorkItems = {},
-        })
+        }, options.worldRootName)
     end
 
     local artifactCount = countChunkArtifactNodes(chunkFolder)
@@ -1234,9 +1098,10 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
     local workId = getSubplanWorkId(chunk.id, subplan)
     local registrationChunk = if type(options.registrationChunk) == "table" then options.registrationChunk else chunk
     local profile = Profiler.begin("ImportChunkSubplan", true)
-    local previousState = cloneSubplanState(getSubplanState(chunk.id))
+    local previousState = cloneSubplanState(getSubplanState(chunk.id, options.worldRootName))
 
-    local prerequisitesOk, prerequisitesErr = pcall(validateSubplanPrerequisites, registrationChunk, subplan, config)
+    local prerequisitesOk, prerequisitesErr =
+        pcall(validateSubplanPrerequisites, registrationChunk, subplan, config, options.worldRootName)
     if not prerequisitesOk then
         finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "failed")
         error(prerequisitesErr, 0)
@@ -1263,13 +1128,13 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
             layer = layer,
             message = tostring(chunkFolder),
         }
-        setSubplanState(chunk.id, failedState)
+        setSubplanState(chunk.id, failedState, options.worldRootName)
         finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "failed")
         error(chunkFolder, 0)
     end
 
     if chunkFolder == nil then
-        setSubplanState(chunk.id, previousState)
+        setSubplanState(chunk.id, previousState, options.worldRootName)
         finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "cancelled")
         return nil
     end
@@ -1280,24 +1145,91 @@ function ImportService.ImportChunkSubplan(chunk, subplanOrId, options)
         mergedState.importedLayers[layer] = true
     end
     mergedState.failedWorkItems[workId] = nil
-    setSubplanState(chunk.id, mergedState)
+    setSubplanState(chunk.id, mergedState, options.worldRootName)
     finishSubplanImportProfile(profile, chunk.id, subplan, workId, layer, "completed", artifactCount)
 
     return chunkFolder, artifactCount
 end
 
-function ImportService.GetSubplanState(chunkId)
-    return cloneSubplanState(getSubplanState(chunkId))
-end
+function ImportService.RollbackCancelledImport(chunk, options)
+    options = options or {}
+    local config = options.config or DefaultWorldConfig
+    local subplan = options.subplan
+    local cleanupChunk = if type(subplan) == "table" then buildChunkForSubplan(chunk, subplan) else chunk
+    local plan = ImportPlanCache.GetOrCreatePlan(cleanupChunk, {
+        config = config,
+        configSignature = options.configSignature,
+        layerSignatures = options.layerSignatures,
+        layers = options.layers,
+    })
+    local selectiveLayers = plan.selectiveLayers
+    local prepared = plan.prepared or {}
+    local worldRoot = Workspace:FindFirstChild(options.worldRootName or DEFAULT_WORLD_ROOT_NAME)
+    local chunkFolder = worldRoot and worldRoot:FindFirstChild(cleanupChunk.id) or nil
 
-function ImportService.ResetSubplanState(chunkId)
-    if type(chunkId) == "string" then
-        clearSubplanState(chunkId)
+    if plan.actionSet.terrain then
+        local terrainPlan = prepared.terrain or TerrainBuilder.PrepareChunk(cleanupChunk)
+        TerrainBuilder.Clear(cleanupChunk, terrainPlan)
+    end
+
+    local function clearImportFolder(folder, releaseProps)
+        if folder == nil then
+            return
+        end
+        if releaseProps then
+            PropBuilder.ReleaseAll(folder)
+        end
+        clearResidualChildren(folder)
+    end
+
+    if chunkFolder == nil then
         return
     end
 
-    for existingChunkId in pairs(subplanStateByChunkId) do
-        subplanStateByChunkId[existingChunkId] = nil
+    if selectiveLayers then
+        for _, folderSpec in pairs(plan.folderSpecs or {}) do
+            local layerFolder = chunkFolder:FindFirstChild(folderSpec.name)
+            if layerFolder ~= nil then
+                local targetFolder = layerFolder
+                local boundedSubplan = type(subplan) == "table" and getSubplanBounds(subplan) ~= nil
+                if boundedSubplan then
+                    targetFolder = layerFolder:FindFirstChild(subplan.id or getSubplanLayer(subplan))
+                end
+                clearImportFolder(targetFolder, folderSpec.name == "Props")
+            end
+        end
+        return
+    end
+
+    local propsFolder = chunkFolder:FindFirstChild("Props")
+    if propsFolder ~= nil then
+        PropBuilder.ReleaseAll(propsFolder)
+    end
+    clearResidualChildren(chunkFolder)
+end
+
+function ImportService.GetSubplanState(chunkId, worldRootName)
+    return cloneSubplanState(getSubplanState(chunkId, worldRootName))
+end
+
+function ImportService.ResetSubplanState(chunkId, worldRootName)
+    if type(chunkId) == "string" then
+        clearSubplanState(chunkId, worldRootName)
+        return
+    end
+
+    if type(worldRootName) == "string" and worldRootName ~= "" then
+        local prefix = worldRootName .. "::"
+        for stateKey in pairs(subplanStateByChunkId) do
+            if string.sub(stateKey, 1, #prefix) == prefix then
+                subplanStateByChunkId[stateKey] = nil
+            end
+        end
+        return
+    end
+
+    for stateKey in pairs(subplanStateByChunkId) do
+        subplanStateByChunkId[stateKey] = nil
     end
 end
 
@@ -1315,7 +1247,7 @@ function ImportService.ImportManifest(manifest, options)
     LoadingScreen.Show(validated.meta and validated.meta.worldName or "World")
 
     if options.clearFirst then
-        ChunkLoader.Clear() -- This now handles folder destruction and prop releasing
+        ChunkLoader.Clear(worldRootName) -- This now handles folder destruction and prop releasing
         clearResidualChildren(worldRoot)
         maybeYield(true)
     elseif options.sync then
@@ -1325,9 +1257,9 @@ function ImportService.ImportManifest(manifest, options)
             manifestChunkIds[chunk.id] = true
         end
 
-        for _, loadedChunkId in ipairs(ChunkLoader.ListLoadedChunks()) do
+        for _, loadedChunkId in ipairs(ChunkLoader.ListLoadedChunks(worldRootName)) do
             if not manifestChunkIds[loadedChunkId] then
-                ChunkLoader.UnloadChunk(loadedChunkId)
+                ChunkLoader.UnloadChunk(loadedChunkId, nil, worldRootName)
                 maybeYield(false)
             end
         end
@@ -1369,11 +1301,22 @@ function ImportService.ImportManifest(manifest, options)
     end
 
     local startupChunkCount = math.max(0, math.floor(options.startupChunkCount or 0))
+    local registrationChunksById = options.registrationChunksById
 
     local chunkOptions = makeImportChunkOptions(options, config)
+    if chunkOptions.configSignature == nil then
+        chunkOptions.configSignature = ImportSignatures.GetConfigSignature(config)
+    end
+    if chunkOptions.layerSignatures == nil then
+        chunkOptions.layerSignatures = ImportSignatures.GetLayerSignatures(config)
+    end
 
     for chunkIndex, chunk in ipairs(chunksToImport) do
-        local _chunkFolder, artifactCount = ImportService.ImportChunk(chunk, chunkOptions)
+        local perChunkOptions = table.clone(chunkOptions)
+        local registrationChunk = registrationChunksById and registrationChunksById[chunk.id] or nil
+        perChunkOptions.registrationChunk = registrationChunk
+        perChunkOptions.chunkSignature = ImportSignatures.GetChunkSignature(registrationChunk or chunk)
+        local chunkFolder, artifactCount = ImportService.ImportChunk(chunk, perChunkOptions)
 
         stats.chunksImported += 1
         stats.roadsImported += #(chunk.roads or {})
@@ -1385,7 +1328,7 @@ function ImportService.ImportManifest(manifest, options)
         stats.barriersImported += #(chunk.barriers or {})
         stats.totalInstances += artifactCount or 0
 
-        MinimapService.RegisterChunk(chunk)
+        MinimapService.RegisterChunk(chunkFolder, chunk)
 
         LoadingScreen.UpdateProgress(
             chunkIndex / #chunksToImport,
@@ -1421,26 +1364,11 @@ function ImportService.ImportManifest(manifest, options)
         Profiler.printReport()
     end
 
-    if config.EnableAtmosphere ~= false then
-        setupAtmosphere(validated)
-    end
-
-    if manifest.meta and manifest.meta.bbox then
-        local lat = (manifest.meta.bbox.minLat + manifest.meta.bbox.maxLat) / 2
-        local lon = (manifest.meta.bbox.minLon + manifest.meta.bbox.maxLon) / 2
-        local datetime = config.DateTime or "auto"
-        DayNightCycle.Configure(lat, lon, datetime)
-    end
-
-    if config.EnableDayNightCycle ~= false then
-        DayNightCycle.Start()
-    end
-
-    if config.EnableMinimap ~= false then
-        MinimapService.Start()
-    end
-
-    LoadingScreen.Hide()
+    WorldStateApplier.Apply(validated, config, {
+        startMinimap = true,
+        hideLoadingScreen = true,
+        worldRootName = worldRootName,
+    })
 
     return stats
 end

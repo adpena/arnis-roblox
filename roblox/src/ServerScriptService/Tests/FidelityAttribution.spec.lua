@@ -4,12 +4,12 @@ return function()
     local Assert = require(script.Parent.Assert)
 
     local manifest = {
-        schemaVersion = "0.2.0",
+        schemaVersion = "0.4.0",
         meta = {
             worldName = "FidelityAttribution",
             generator = "test",
             source = "unit",
-            metersPerStud = 1.0,
+            metersPerStud = 0.3,
             chunkSizeStuds = 256,
             totalFeatures = 1,
         },
@@ -69,7 +69,8 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected fidelity attribution world root")
 
-    local building = worldRoot:FindFirstChild("attrib_chunk"):FindFirstChild("Buildings"):FindFirstChild("attrib_building")
+    local building =
+        worldRoot:FindFirstChild("attrib_chunk"):FindFirstChild("Buildings"):FindFirstChild("attrib_building")
     Assert.truthy(building, "expected attributed building model")
     Assert.equal(
         building:GetAttribute("ArnisSourceId"),

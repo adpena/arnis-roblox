@@ -235,6 +235,70 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _normalize_source_pedestrian_signal(signal: str) -> str:
+    if not signal.startswith("sidewalk:"):
+        return signal
+    sidewalk_value = signal.split(":", 1)[1].strip().lower()
+    if sidewalk_value in {"both", "left", "right", "yes"}:
+        return "sidewalk:present"
+    if sidewalk_value in {"none", "no"}:
+        return "sidewalk:no"
+    if sidewalk_value == "separate":
+        return "sidewalk:separate"
+    return f"sidewalk:{sidewalk_value}" if sidewalk_value else signal
+
+
+def _manifest_pedestrian_signals(road: dict[str, Any]) -> list[str]:
+    signals: list[str] = []
+    road_kind = str(road.get("kind") or "").strip()
+    if road_kind in PEDESTRIAN_ROAD_KINDS:
+        signals.append(f"highway:{road_kind}")
+
+    sidewalk_value = str(road.get("sidewalk") or "").strip().lower()
+    has_sidewalk = bool(road.get("hasSidewalk"))
+    if sidewalk_value in {"both", "left", "right"} or has_sidewalk:
+        signals.append("sidewalk:present")
+    elif sidewalk_value == "separate":
+        signals.append("sidewalk:separate")
+    elif sidewalk_value in {"no", "none"}:
+        signals.append("sidewalk:no")
+
+    return signals
+
+
+def _normalized_pedestrian_signal_distribution(raw_distribution: dict[str, Any] | Counter[str]) -> Counter[str]:
+    normalized: Counter[str] = Counter()
+    for signal, count in Counter(raw_distribution or {}).items():
+        normalized[_normalize_source_pedestrian_signal(str(signal))] += int(count)
+    return normalized
+
+
+def _manifest_rail_signal(rail: dict[str, Any]) -> str | None:
+    kind = str(rail.get("kind") or rail.get("railway") or "").strip().lower()
+    if not kind:
+        return None
+    return f"railway:{kind}"
+
+
+def _classify_osm_tree_species(tags: dict[str, Any]) -> str | None:
+    direct = (
+        str(tags.get("species") or "").strip().lower()
+        or str(tags.get("genus") or "").strip().lower()
+        or str(tags.get("taxon") or "").strip().lower()
+    )
+    if direct:
+        return direct
+    leaf_type = str(tags.get("leaf_type") or "").strip().lower()
+    leaf_cycle = str(tags.get("leaf_cycle") or "").strip().lower()
+    if leaf_type == "needleleaved":
+        return "conifer"
+    if leaf_type == "broadleaved" and leaf_cycle == "evergreen":
+        return "broadleaved_evergreen"
+    if leaf_type == "broadleaved":
+        return "broadleaved_deciduous"
+    return None
+
+
 def _polygon_area(points: list[dict[str, Any]]) -> float:
     if len(points) < 3:
         return 0.0
@@ -1145,9 +1209,11 @@ def _build_osm_summary(source_paths: list[Path]) -> dict[str, Any]:
         "standalone_building_part_way_count": 0,
         "building_surface_geometry_count": 0,
         "highway_way_count": 0,
+        "railway_way_count": 0,
         "landuse_element_count": 0,
         "water_element_count": 0,
         "source_highway_signal_distribution": {},
+        "source_rail_signal_distribution": {},
         "source_pedestrian_signal_distribution": {},
         "source_vegetation_signal_distribution": {},
         "source_water_signal_distribution": {},
@@ -1176,9 +1242,11 @@ def _build_osm_summary(source_paths: list[Path]) -> dict[str, Any]:
         standalone_building_way_count = 0
         standalone_building_part_way_count = 0
         highway_way_count = 0
+        railway_way_count = 0
         landuse_element_count = 0
         water_element_count = 0
         source_highway_signal_distribution: Counter[str] = Counter()
+        source_rail_signal_distribution: Counter[str] = Counter()
         source_pedestrian_signal_distribution: Counter[str] = Counter()
         source_vegetation_signal_distribution: Counter[str] = Counter()
         source_water_signal_distribution: Counter[str] = Counter()
@@ -1224,6 +1292,11 @@ def _build_osm_summary(source_paths: list[Path]) -> dict[str, Any]:
                         source_highway_signal_distribution[f"highway:{highway}"] += 1
                         if highway in PEDESTRIAN_ROAD_KINDS:
                             source_pedestrian_signal_distribution[f"highway:{highway}"] += 1
+                if "railway" in tags and element_type == "way":
+                    railway_way_count += 1
+                    railway = str(tags.get("railway") or "").strip()
+                    if railway:
+                        source_rail_signal_distribution[f"railway:{railway}"] += 1
                 sidewalk = str(tags.get("sidewalk") or "").strip()
                 if sidewalk:
                     source_pedestrian_signal_distribution[f"sidewalk:{sidewalk}"] += 1
@@ -1290,10 +1363,14 @@ def _build_osm_summary(source_paths: list[Path]) -> dict[str, Any]:
             + building_relation_outer_member_count
         )
         summary["highway_way_count"] += highway_way_count
+        summary["railway_way_count"] += railway_way_count
         summary["landuse_element_count"] += landuse_element_count
         summary["water_element_count"] += water_element_count
         summary["source_highway_signal_distribution"] = dict(
             (Counter(summary["source_highway_signal_distribution"]) + source_highway_signal_distribution).most_common(40)
+        )
+        summary["source_rail_signal_distribution"] = dict(
+            (Counter(summary["source_rail_signal_distribution"]) + source_rail_signal_distribution).most_common(40)
         )
         summary["source_pedestrian_signal_distribution"] = dict(
             (Counter(summary["source_pedestrian_signal_distribution"]) + source_pedestrian_signal_distribution).most_common(
@@ -1329,6 +1406,10 @@ def _build_source_summary(
     bounded_bounds = _new_bounds()
     bounds_bbox = bounds_bbox or bbox
     source_buildings: list[dict[str, Any]] = []
+    source_rail_records: list[dict[str, Any]] = []
+    osm_rail_signal_distribution_total: Counter[str] = Counter()
+    source_tree_records: list[dict[str, Any]] = []
+    osm_tree_species_distribution_total: Counter[str] = Counter()
     osm_source_usage_signal_distribution: Counter[str] = Counter()
     osm_source_material_signal_distribution: Counter[str] = Counter()
 
@@ -1389,6 +1470,8 @@ def _build_source_summary(
             osm_building_footprint_area = 0.0
             osm_road_geometry_count = 0
             osm_building_relation_with_inner_count = 0
+            osm_rail_signal_distribution: Counter[str] = Counter()
+            osm_tree_species_distribution: Counter[str] = Counter()
 
             node_coords: dict[int, tuple[float, float]] = {}
             way_coords: dict[int, list[tuple[float, float]]] = {}
@@ -1406,9 +1489,10 @@ def _build_source_summary(
                     or "amenity" in tags
                     or "barrier" in tags
                     or tags.get("natural") == "water"
+                    or tags.get("natural") == "tree"
                     or "water" in tags
                     or "waterway" in tags
-                    or "tree" in tags
+                    or tags.get("amenity") == "tree"
                 )
 
             def is_area_osm_geometry(tags: dict[str, Any]) -> bool:
@@ -1515,6 +1599,26 @@ def _build_source_summary(
                     if isinstance(element_id, int) and element_id in node_coords:
                         lat, lon = node_coords[element_id]
                         add_projected_point(lat, lon)
+                        if (
+                            center_lat is not None
+                            and center_lon is not None
+                            and _bbox_contains_latlon(bbox, lat, lon)
+                        ):
+                            x, z = _project_latlon_to_studs(lat, lon, center_lat, center_lon, meters_per_stud)
+                            if _point_in_zone(x, z, focus_x=focus_x, focus_z=focus_z, radius=radius) and (
+                                tags.get("natural") == "tree" or tags.get("amenity") == "tree"
+                            ):
+                                source_species = _classify_osm_tree_species(tags)
+                                source_tree_records.append(
+                                    {
+                                        "source": "osm",
+                                        "source_id": f"tree_{element_id}",
+                                        "source_species": source_species,
+                                    }
+                                )
+                                if source_species:
+                                    osm_tree_species_distribution[source_species] += 1
+                                    osm_tree_species_distribution_total[source_species] += 1
                     continue
 
                 if element_type == "way":
@@ -1573,6 +1677,18 @@ def _build_source_summary(
                             osm_source_material_signal_distribution[material_signal["family"]] += 1
                     if "highway" in tags and coords_bbox_intersects_bbox(coords) and coords_bbox_intersects_zone(coords):
                         osm_road_geometry_count += 1
+                    if "railway" in tags and coords_bbox_intersects_bbox(coords) and coords_bbox_intersects_zone(coords):
+                        rail_signal = _manifest_rail_signal(tags)
+                        if rail_signal:
+                            source_rail_records.append(
+                                {
+                                    "source": "osm",
+                                    "source_id": f"osm_rail_{element.get('id')}",
+                                    "source_rail_signal": rail_signal,
+                                }
+                            )
+                            osm_rail_signal_distribution[rail_signal] += 1
+                            osm_rail_signal_distribution_total[rail_signal] += 1
                     if is_area_osm_geometry(tags):
                         coord_iterable = coords if coords_bbox_intersects_bbox(coords) else []
                     else:
@@ -1696,6 +1812,16 @@ def _build_source_summary(
                 "source_material_signal_distribution": dict(
                     osm_source_material_signal_distribution.most_common(30)
                 ),
+            }
+            source_summary["osm_trees"] = {
+                "tree_count": len(source_tree_records),
+                "source_tree_species_distribution": dict(osm_tree_species_distribution_total.most_common(30)),
+                "records": source_tree_records,
+            }
+            source_summary["osm_rails"] = {
+                "rail_count": len(source_rail_records),
+                "source_rail_signal_distribution": dict(osm_rail_signal_distribution_total.most_common(30)),
+                "records": source_rail_records,
             }
             continue
 
@@ -1942,6 +2068,8 @@ def build_report(
     road_kind_distribution: Counter[str | None] = Counter()
     road_subkind_distribution: Counter[str | None] = Counter()
     pedestrian_way_distribution: Counter[str | None] = Counter()
+    manifest_pedestrian_signal_distribution: Counter[str] = Counter()
+    manifest_rail_signal_distribution: Counter[str] = Counter()
     road_surface_distribution: Counter[str | None] = Counter()
     terrain_material_distribution: Counter[str | None] = Counter()
     landuse_distribution: Counter[str | None] = Counter()
@@ -1975,6 +2103,8 @@ def build_report(
     suspicious_material_assignment_by_signal: Counter[str] = Counter()
     glass_material_by_usage: Counter[str | None] = Counter()
     manifest_water_records: list[dict[str, Any]] = []
+    manifest_rail_records: list[dict[str, Any]] = []
+    manifest_tree_records: list[dict[str, Any]] = []
     manifest_building_records: list[dict[str, Any]] = []
     global_manifest_record_ids: set[str] = set()
     chunk_rows: list[dict[str, Any]] = []
@@ -2072,12 +2202,30 @@ def build_report(
                 pedestrian_way_distribution[road_kind] += 1
             elif road_subkind in {"crossing", "sidewalk", "trail"}:
                 pedestrian_way_distribution[road_subkind] += 1
+            manifest_pedestrian_signal_distribution.update(_manifest_pedestrian_signals(road))
             road_surface = road.get("surface")
             road_surface_distribution[str(road_surface)] += 1
             if road_surface in (None, "", "None"):
                 roads_missing_surface_count += 1
             if road.get("widthStuds") in (8, 10):
                 roads_default_width_count += 1
+
+        for rail in chunk.get("rails", []) or []:
+            origin = chunk.get("originStuds") if isinstance(chunk.get("originStuds"), dict) else {}
+            if not point_dicts_in_zone(origin, rail.get("points", []) or []):
+                continue
+            rail_id = str(rail.get("id") or "")
+            rail_signal = _manifest_rail_signal(rail)
+            if rail_signal:
+                manifest_rail_signal_distribution[rail_signal] += 1
+            if rail_id:
+                manifest_rail_records.append(
+                    {
+                        "id": rail_id,
+                        "rail_signal": rail_signal or "",
+                        "chunk_id": chunk_id,
+                    }
+                )
 
         for building in chunk.get("buildings", []) or []:
             origin = chunk.get("originStuds") if isinstance(chunk.get("originStuds"), dict) else {}
@@ -2175,12 +2323,21 @@ def build_report(
             if not point_dicts_in_zone(origin, [position]):
                 continue
             prop_kind = str(prop.get("kind") or "unknown")
+            prop_id = str(prop.get("id") or "")
             prop_kind_distribution[prop_kind] += 1
             if prop_kind in {"tree", "tree_row", "hedge", "shrub", "fountain"}:
                 vegetation_signal_distribution[prop_kind] += 1
             species = str(prop.get("species") or "").strip()
             if prop_kind == "tree" and species:
                 tree_species_distribution[species] += 1
+            if prop_kind == "tree" and prop_id:
+                manifest_tree_records.append(
+                    {
+                        "id": prop_id,
+                        "species": species.lower() if species else "",
+                        "chunk_id": chunk_id,
+                    }
+                )
 
         for water in chunk.get("water", []) or []:
             origin = chunk.get("originStuds") if isinstance(chunk.get("originStuds"), dict) else {}
@@ -2521,9 +2678,118 @@ def build_report(
         for record in source_identity_transform_records
         for reason in (record.get("identity_reasons") or [])
     )
+    source_tree_records_by_id = {
+        str(record.get("source_id") or ""): record
+        for record in ((source_summary.get("osm_trees") or {}).get("records") or [])
+        if isinstance(record, dict) and str(record.get("source_id") or "")
+    }
+    source_tree_species_distribution = Counter(
+        (source_summary.get("osm_trees") or {}).get("source_tree_species_distribution") or {}
+    )
+    tree_species_mismatches: list[dict[str, Any]] = []
+    for tree_record in manifest_tree_records:
+        source_record = source_tree_records_by_id.get(str(tree_record.get("id") or ""))
+        if source_record is None:
+            continue
+        source_species = str(source_record.get("source_species") or "").strip().lower()
+        if not source_species:
+            continue
+        manifest_species = str(tree_record.get("species") or "").strip().lower()
+        if manifest_species == source_species:
+            continue
+        tree_species_mismatches.append(
+            {
+                "id": str(tree_record.get("id") or ""),
+                "source_species": source_species,
+                "manifest_species": manifest_species,
+                "chunk_id": str(tree_record.get("chunk_id") or ""),
+            }
+        )
     source_water_signal_distribution = Counter(
         (source_summary.get("osm") or {}).get("source_water_signal_distribution") or {}
     )
+    source_rail_records_by_id = {
+        str(record.get("source_id") or ""): record
+        for record in ((source_summary.get("osm_rails") or {}).get("records") or [])
+        if isinstance(record, dict) and str(record.get("source_id") or "")
+    }
+    source_rail_signal_distribution = Counter(
+        (source_summary.get("osm") or {}).get("source_rail_signal_distribution") or {}
+    )
+    manifest_rail_records_by_id = {
+        str(record.get("id") or ""): record
+        for record in manifest_rail_records
+        if str(record.get("id") or "")
+    }
+    normalized_source_pedestrian_signal_distribution = _normalized_pedestrian_signal_distribution(
+        (source_summary.get("osm") or {}).get("source_pedestrian_signal_distribution") or {}
+    )
+    rail_signal_mismatches: list[dict[str, Any]] = []
+    rail_signal_mismatch_count = 0
+    for rail_signal in sorted(
+        set(source_rail_signal_distribution) | set(manifest_rail_signal_distribution),
+        key=lambda signal: (
+            -abs(
+                int(source_rail_signal_distribution.get(signal, 0))
+                - int(manifest_rail_signal_distribution.get(signal, 0))
+            ),
+            signal,
+        ),
+    ):
+        source_count = int(source_rail_signal_distribution.get(rail_signal, 0))
+        manifest_count = int(manifest_rail_signal_distribution.get(rail_signal, 0))
+        if source_count == manifest_count:
+            continue
+        rail_signal_mismatches.append(
+            {
+                "rail_signal": rail_signal,
+                "source_count": source_count,
+                "manifest_count": manifest_count,
+            }
+        )
+        rail_signal_mismatch_count += abs(source_count - manifest_count)
+    rail_signal_record_mismatches: list[dict[str, Any]] = []
+    for source_id, source_record in sorted(source_rail_records_by_id.items()):
+        source_rail_signal = str(source_record.get("source_rail_signal") or "").strip().lower()
+        if not source_rail_signal:
+            continue
+        manifest_record = manifest_rail_records_by_id.get(source_id)
+        manifest_rail_signal = ""
+        if manifest_record is not None:
+            manifest_rail_signal = str(manifest_record.get("rail_signal") or "").strip().lower()
+        if manifest_rail_signal == source_rail_signal:
+            continue
+        rail_signal_record_mismatches.append(
+            {
+                "id": source_id,
+                "source_rail_signal": source_rail_signal,
+                "manifest_rail_signal": manifest_rail_signal,
+            }
+        )
+    pedestrian_signal_mismatches: list[dict[str, Any]] = []
+    pedestrian_signal_mismatch_count = 0
+    for pedestrian_signal in sorted(
+        set(normalized_source_pedestrian_signal_distribution) | set(manifest_pedestrian_signal_distribution),
+        key=lambda signal: (
+            -abs(
+                int(normalized_source_pedestrian_signal_distribution.get(signal, 0))
+                - int(manifest_pedestrian_signal_distribution.get(signal, 0))
+            ),
+            signal,
+        ),
+    ):
+        source_count = int(normalized_source_pedestrian_signal_distribution.get(pedestrian_signal, 0))
+        manifest_count = int(manifest_pedestrian_signal_distribution.get(pedestrian_signal, 0))
+        if source_count == manifest_count:
+            continue
+        pedestrian_signal_mismatches.append(
+            {
+                "pedestrian_signal": pedestrian_signal,
+                "source_count": source_count,
+                "manifest_count": manifest_count,
+            }
+        )
+        pedestrian_signal_mismatch_count += abs(source_count - manifest_count)
     source_water_geometry_type_distribution: Counter[str] = Counter()
     for source_signal, count in source_water_signal_distribution.items():
         source_water_geometry_type_distribution[_water_geometry_type_for_signal(str(source_signal))] += int(count)
@@ -2724,7 +2990,16 @@ def build_report(
         "roads_default_width_ratio": roads_default_width_ratio,
         "road_kind_distribution": dict(road_kind_distribution.most_common(20)),
         "road_subkind_distribution": dict(road_subkind_distribution.most_common(20)),
+        "manifest_rail_signal_distribution": dict(manifest_rail_signal_distribution.most_common(20)),
+        "source_rail_signal_distribution": dict(source_rail_signal_distribution.most_common(20)),
+        "rail_signal_mismatch_count": rail_signal_mismatch_count,
+        "rail_signal_mismatches": rail_signal_mismatches[:HOTSPOT_LIMIT],
+        "rail_signal_record_mismatch_count": len(rail_signal_record_mismatches),
+        "rail_signal_record_mismatches": rail_signal_record_mismatches[:HOTSPOT_LIMIT],
         "pedestrian_way_distribution": dict(pedestrian_way_distribution.most_common(20)),
+        "manifest_pedestrian_signal_distribution": dict(manifest_pedestrian_signal_distribution.most_common(20)),
+        "pedestrian_signal_mismatch_count": pedestrian_signal_mismatch_count,
+        "pedestrian_signal_mismatches": pedestrian_signal_mismatches[:HOTSPOT_LIMIT],
         "road_surface_distribution": dict(road_surface_distribution.most_common(20)),
         "road_surface_diversity_score": road_surface_diversity_score,
         "terrain_chunk_count": chunks_with_terrain,
@@ -2776,6 +3051,9 @@ def build_report(
                 20
             )
         ),
+        "source_tree_species_distribution": dict(source_tree_species_distribution.most_common(20)),
+        "tree_species_mismatch_count": len(tree_species_mismatches),
+        "tree_species_mismatches": tree_species_mismatches[:HOTSPOT_LIMIT],
         "stats": {
             "building_height": _numeric_stats(building_heights),
             "building_footprint_area": _numeric_stats(building_areas),
@@ -2979,6 +3257,36 @@ def build_report(
             message="Manifest building materials diverged from explicit source wall-material tags for a non-trivial set of OSM buildings.",
             metric="source_material_mismatch_count",
             value=len(source_material_mismatches),
+            threshold="== 0",
+        )
+    if pedestrian_signal_mismatches:
+        _add_finding(
+            findings,
+            severity="warning",
+            code="source_to_manifest_pedestrian_drift",
+            message="Manifest pedestrian and attached-sidewalk signals diverged from the source pedestrian signal mix.",
+            metric="pedestrian_signal_mismatch_count",
+            value=pedestrian_signal_mismatch_count,
+            threshold="== 0",
+        )
+    if rail_signal_mismatches:
+        _add_finding(
+            findings,
+            severity="warning",
+            code="source_to_manifest_rail_drift",
+            message="Manifest rail signals diverged from the source railway signal mix.",
+            metric="rail_signal_mismatch_count",
+            value=rail_signal_mismatch_count,
+            threshold="== 0",
+        )
+    if tree_species_mismatches:
+        _add_finding(
+            findings,
+            severity="warning",
+            code="source_to_manifest_tree_species_drift",
+            message="Manifest tree species diverged from explicit source-authored tree species for one or more trees.",
+            metric="tree_species_mismatch_count",
+            value=len(tree_species_mismatches),
             threshold="== 0",
         )
     if water_signal_mismatches:
@@ -3187,8 +3495,20 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
                 for key, value in list((summary.get("source_highway_signal_distribution") or {}).items())[:8]
             ],
             *[
+                render_distribution_item("source rail", str(key), value)
+                for key, value in list((summary.get("source_rail_signal_distribution") or {}).items())[:8]
+            ],
+            *[
+                render_distribution_item("manifest rail", str(key), value)
+                for key, value in list((summary.get("manifest_rail_signal_distribution") or {}).items())[:8]
+            ],
+            *[
                 render_distribution_item("source pedestrian", str(key), value)
                 for key, value in list((summary.get("source_pedestrian_signal_distribution") or {}).items())[:8]
+            ],
+            *[
+                render_distribution_item("manifest pedestrian signal", str(key), value)
+                for key, value in list((summary.get("manifest_pedestrian_signal_distribution") or {}).items())[:8]
             ],
             *[
                 render_distribution_item("manifest pedestrian", str(key), value)
@@ -3205,6 +3525,10 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
             *[
                 render_distribution_item("source vegetation", str(key), value)
                 for key, value in list((summary.get("source_vegetation_signal_distribution") or {}).items())[:8]
+            ],
+            *[
+                render_distribution_item("source tree species", str(key), value)
+                for key, value in list((summary.get("source_tree_species_distribution") or {}).items())[:8]
             ],
             *[
                 render_distribution_item("manifest vegetation", str(key), value)
@@ -3566,7 +3890,9 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
       const sourceWaterGeometry = Object.entries(report.summary.source_water_geometry_type_distribution || {{}}).slice(0, 8);
       const sourceHighwaySignals = Object.entries(report.summary.source_highway_signal_distribution || {{}}).slice(0, 8);
       const sourcePedestrianSignals = Object.entries(report.summary.source_pedestrian_signal_distribution || {{}}).slice(0, 8);
+      const manifestPedestrianSignals = Object.entries(report.summary.manifest_pedestrian_signal_distribution || {{}}).slice(0, 8);
       const sourceVegetationSignals = Object.entries(report.summary.source_vegetation_signal_distribution || {{}}).slice(0, 8);
+      const sourceTreeSpecies = Object.entries(report.summary.source_tree_species_distribution || {{}}).slice(0, 8);
       const pedestrianWays = Object.entries(report.summary.pedestrian_way_distribution || {{}}).slice(0, 8);
       const roadSubkinds = Object.entries(report.summary.road_subkind_distribution || {{}}).slice(0, 8);
       const propKinds = Object.entries(report.summary.prop_kind_distribution || {{}}).slice(0, 8);
@@ -3608,11 +3934,13 @@ def write_html_report(report: dict[str, Any], destination: Path) -> None:
       document.getElementById("pedestrian-diagnostics-list").innerHTML = [
         ...sourceHighwaySignals.map(([key, value]) => `<li><span>source highway · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...sourcePedestrianSignals.map(([key, value]) => `<li><span>source pedestrian · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
+        ...manifestPedestrianSignals.map(([key, value]) => `<li><span>manifest pedestrian signal · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...pedestrianWays.map(([key, value]) => `<li><span>manifest pedestrian · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...roadSubkinds.map(([key, value]) => `<li><span>manifest road subkind · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
       ].join("") || "<li><span>No pedestrian diagnostics recorded.</span><span>n/a</span></li>";
       document.getElementById("vegetation-diagnostics-list").innerHTML = [
         ...sourceVegetationSignals.map(([key, value]) => `<li><span>source vegetation · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
+        ...sourceTreeSpecies.map(([key, value]) => `<li><span>source tree species · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...vegetationSignals.map(([key, value]) => `<li><span>manifest vegetation · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...propKinds.map(([key, value]) => `<li><span>manifest props · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),
         ...treeSpecies.map(([key, value]) => `<li><span>tree species · <code>${{key}}</code></span><span>${{fmtInt.format(value)}}</span></li>`),

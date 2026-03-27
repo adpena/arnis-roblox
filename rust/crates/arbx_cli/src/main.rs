@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use arbx_geo::{
@@ -12,7 +12,8 @@ use arbx_pipeline::{
     run_pipeline, ElevationEnrichmentStage, NormalizeStage, TriangulateStage, ValidateStage,
 };
 use arbx_roblox_export::{
-    build_sample_multi_chunk, export_to_chunks, ExportConfig, SatelliteTileProvider,
+    build_sample_multi_chunk, export_to_chunks, read_manifest_sqlite_all, write_manifest_sqlite,
+    ChunkManifest, ExportConfig, SatelliteTileProvider, StoredManifestSubset,
 };
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -53,6 +54,7 @@ fn print_help() {
     println!("  --bbox S,W,N,E         Bounding box: min_lat,min_lon,max_lat,max_lon");
     println!("                         Example: --bbox 30.26,-97.75,30.27,-97.74 (Austin TX)");
     println!("  --out PATH             Output manifest file (default: stdout)");
+    println!("  --sqlite-out PATH      Also write a SQLite manifest store");
     println!("  --world-name NAME      World name in manifest metadata (default: ExportedWorld)");
     println!("  --meters-per-stud N    Scale factor (default: 0.3 = Roblox humanoid proportional)");
     println!("  --terrain-cell-size N  Terrain grid precision in studs (default: 2, range: 1-32)");
@@ -72,6 +74,7 @@ fn print_help() {
     println!();
     println!("SAMPLE OPTIONS:");
     println!("  --out PATH             Output file (default: stdout)");
+    println!("  --sqlite-out PATH      Also write a SQLite manifest store");
     println!("  --grid X,Z             Multi-chunk grid dimensions (default: 1,1)");
     println!();
     println!("OTHER:");
@@ -98,9 +101,13 @@ fn print_help() {
     println!(
         "  arbx_cli scene-index --manifest out/austin.json --json-out out/austin.scene-index.json"
     );
+    println!(
+        "  arbx_cli scene-index --manifest-sqlite out/austin.sqlite --json-out out/austin.scene-index.json"
+    );
     println!();
     println!("  # Compare Studio scene markers against manifest truth");
     println!("  arbx_cli scene-audit --manifest-summary out/austin.scene-index.json --log studio.log --marker ARNIS_SCENE_EDIT");
+    println!("  arbx_cli scene-audit --manifest-sqlite out/austin.sqlite --log studio.log --marker ARNIS_SCENE_EDIT");
     println!();
     println!("  # Get pipeline info (for AI agents)");
     println!("  arbx_cli explain");
@@ -118,8 +125,43 @@ fn print_help() {
     println!("  1  Error (message on stderr)");
 }
 
+fn write_manifest_outputs(
+    manifest: &ChunkManifest,
+    json_out: Option<&PathBuf>,
+    sqlite_out: Option<&PathBuf>,
+    verb: &str,
+    duration: std::time::Duration,
+) -> Result<(), String> {
+    if let Some(path) = json_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        fs::write(path, manifest.to_json_pretty()).map_err(|err| format!("write failed: {err}"))?;
+        println!("{verb} and wrote {} in {:?}", path.display(), duration);
+    } else if sqlite_out.is_none() {
+        print!("{}", manifest.to_json_pretty());
+        eprintln!("{verb} in {:?}", duration);
+    }
+
+    if let Some(path) = sqlite_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        write_manifest_sqlite(manifest, path)
+            .map_err(|err| format!("sqlite write failed: {err}"))?;
+        println!(
+            "Wrote SQLite manifest store {} in {:?}",
+            path.display(),
+            duration
+        );
+    }
+
+    Ok(())
+}
+
 fn cmd_sample(args: &[String]) -> Result<(), String> {
     let mut out_path: Option<PathBuf> = None;
+    let mut sqlite_out_path: Option<PathBuf> = None;
     let mut grid = (1, 1);
 
     let mut i = 0;
@@ -128,6 +170,11 @@ fn cmd_sample(args: &[String]) -> Result<(), String> {
             "--out" => {
                 let value = args.get(i + 1).ok_or("--out requires a path")?;
                 out_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--sqlite-out" => {
+                let value = args.get(i + 1).ok_or("--sqlite-out requires a path")?;
+                sqlite_out_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--grid" => {
@@ -148,25 +195,21 @@ fn cmd_sample(args: &[String]) -> Result<(), String> {
     }
 
     let start = Instant::now();
-    let manifest = build_sample_multi_chunk(grid.0, grid.1).to_json_pretty();
+    let manifest = build_sample_multi_chunk(grid.0, grid.1);
     let duration = start.elapsed();
 
-    if let Some(path) = out_path {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
-        }
-        fs::write(&path, manifest).map_err(|err| format!("write failed: {err}"))?;
-        println!("Wrote {} in {:?}", path.display(), duration);
-    } else {
-        print!("{manifest}");
-        eprintln!("Generated in {:?}", duration);
-    }
-
-    Ok(())
+    write_manifest_outputs(
+        &manifest,
+        out_path.as_ref(),
+        sqlite_out_path.as_ref(),
+        "Generated",
+        duration,
+    )
 }
 
 fn cmd_compile(args: &[String]) -> Result<(), String> {
     let mut out_path: Option<PathBuf> = None;
+    let mut sqlite_out_path: Option<PathBuf> = None;
     let mut source_path: Option<PathBuf> = None;
     // Default bbox covers downtown Austin. Overridden by --bbox to match the OSM fetch area.
     let mut bbox = BoundingBox::new(30.26, -97.75, 30.27, -97.74);
@@ -189,6 +232,11 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
             "--out" => {
                 let value = args.get(i + 1).ok_or("--out requires a path")?;
                 out_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--sqlite-out" => {
+                let value = args.get(i + 1).ok_or("--sqlite-out requires a path")?;
+                sqlite_out_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--source" => {
@@ -454,22 +502,15 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         elevation.as_ref(),
         sat_provider.as_mut(),
     );
-    // Rust export remains the single authoritative partition function for additive chunkRefs metadata.
-    let manifest = manifest.to_json_pretty();
     let duration = start.elapsed();
-
-    if let Some(path) = out_path {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
-        }
-        fs::write(&path, manifest).map_err(|err| format!("write failed: {err}"))?;
-        println!("Compiled and wrote {} in {:?}", path.display(), duration);
-    } else {
-        print!("{manifest}");
-        eprintln!("Compiled in {:?}", duration);
-    }
-
-    Ok(())
+    // Rust export remains the single authoritative partition function for additive chunkRefs metadata.
+    write_manifest_outputs(
+        &manifest,
+        out_path.as_ref(),
+        sqlite_out_path.as_ref(),
+        "Compiled",
+        duration,
+    )
 }
 
 fn cmd_config(args: &[String]) -> Result<(), String> {
@@ -1004,9 +1045,66 @@ fn build_manifest_zone_summary(manifest: &Value, payload: &Value) -> Result<Valu
     }))
 }
 
+fn build_manifest_value_from_stored_subset(subset: StoredManifestSubset) -> Result<Value, String> {
+    let chunks = subset
+        .chunks
+        .into_iter()
+        .map(|record| {
+            serde_json::from_str::<Value>(&record.chunk_json)
+                .map_err(|err| format!("invalid chunk JSON in manifest store: {err}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(json!({
+        "schemaVersion": subset.meta.schema_version,
+        "meta": {
+            "worldName": subset.meta.world_name,
+            "generator": subset.meta.generator,
+            "source": subset.meta.source,
+            "metersPerStud": subset.meta.meters_per_stud,
+            "chunkSizeStuds": subset.meta.chunk_size_studs,
+            "bbox": {
+                "min": {
+                    "lat": subset.meta.bbox.min.lat,
+                    "lon": subset.meta.bbox.min.lon,
+                },
+                "max": {
+                    "lat": subset.meta.bbox.max.lat,
+                    "lon": subset.meta.bbox.max.lon,
+                },
+            },
+            "totalFeatures": subset.meta.total_features,
+            "notes": subset.meta.notes,
+        },
+        "chunks": chunks,
+    }))
+}
+
+fn build_scene_manifest_index_from_sqlite(path: &Path) -> Result<Value, String> {
+    let subset = read_manifest_sqlite_all(path)
+        .map_err(|err| format!("failed to read manifest store {}: {err}", path.display()))?;
+    let manifest = build_manifest_value_from_stored_subset(subset)?;
+    build_scene_manifest_index_from_value(&manifest)
+}
+
+fn build_scene_audit_report_from_sqlite(
+    path: &Path,
+    log_content: &str,
+    marker: &str,
+) -> Result<Value, String> {
+    let subset = read_manifest_sqlite_all(path)
+        .map_err(|err| format!("failed to read manifest store {}: {err}", path.display()))?;
+    let manifest = build_manifest_value_from_stored_subset(subset)?;
+    build_scene_audit_report_from_value(&manifest, log_content, marker)
+}
+
 fn build_scene_manifest_index_from_str(manifest_content: &str) -> Result<Value, String> {
     let manifest: Value = serde_json::from_str(manifest_content)
         .map_err(|err| format!("invalid manifest JSON: {err}"))?;
+    build_scene_manifest_index_from_value(&manifest)
+}
+
+fn build_scene_manifest_index_from_value(manifest: &Value) -> Result<Value, String> {
     let meta = manifest
         .get("meta")
         .and_then(Value::as_object)
@@ -1081,6 +1179,14 @@ fn build_scene_audit_report_from_str(
 ) -> Result<Value, String> {
     let manifest: Value = serde_json::from_str(manifest_content)
         .map_err(|err| format!("invalid manifest JSON: {err}"))?;
+    build_scene_audit_report_from_value(&manifest, log_content, marker)
+}
+
+fn build_scene_audit_report_from_value(
+    manifest: &Value,
+    log_content: &str,
+    marker: &str,
+) -> Result<Value, String> {
     let mut payload = parse_latest_marker_from_str(log_content, marker)?;
     let mut scene = payload
         .get("scene")
@@ -1337,6 +1443,7 @@ fn build_scene_audit_report_from_str(
 
 fn cmd_scene_index(args: &[String]) -> Result<(), String> {
     let mut manifest_path: Option<PathBuf> = None;
+    let mut manifest_sqlite_path: Option<PathBuf> = None;
     let mut json_out: Option<PathBuf> = None;
 
     let mut i = 0;
@@ -1345,6 +1452,12 @@ fn cmd_scene_index(args: &[String]) -> Result<(), String> {
             "--manifest" => {
                 manifest_path = Some(PathBuf::from(
                     args.get(i + 1).ok_or("--manifest requires a path")?,
+                ));
+                i += 2;
+            }
+            "--manifest-sqlite" => {
+                manifest_sqlite_path = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--manifest-sqlite requires a path")?,
                 ));
                 i += 2;
             }
@@ -1358,10 +1471,18 @@ fn cmd_scene_index(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let manifest_path = manifest_path.ok_or("--manifest is required")?;
-    let manifest_content = fs::read_to_string(&manifest_path)
-        .map_err(|err| format!("failed to read manifest {}: {err}", manifest_path.display()))?;
-    let index = build_scene_manifest_index_from_str(&manifest_content)?;
+    let index = match (manifest_path.as_ref(), manifest_sqlite_path.as_ref()) {
+        (Some(_), Some(_)) => {
+            return Err("provide only one of --manifest or --manifest-sqlite".to_string())
+        }
+        (Some(path), None) => {
+            let manifest_content = fs::read_to_string(path)
+                .map_err(|err| format!("failed to read manifest {}: {err}", path.display()))?;
+            build_scene_manifest_index_from_str(&manifest_content)?
+        }
+        (None, Some(path)) => build_scene_manifest_index_from_sqlite(path)?,
+        (None, None) => return Err("--manifest or --manifest-sqlite is required".to_string()),
+    };
     let output = serde_json::to_string_pretty(&index)
         .map_err(|err| format!("failed to encode scene index: {err}"))?;
 
@@ -1378,6 +1499,7 @@ fn cmd_scene_index(args: &[String]) -> Result<(), String> {
 
 fn cmd_scene_audit(args: &[String]) -> Result<(), String> {
     let mut manifest_path: Option<PathBuf> = None;
+    let mut manifest_sqlite_path: Option<PathBuf> = None;
     let mut manifest_summary_path: Option<PathBuf> = None;
     let mut log_path: Option<PathBuf> = None;
     let mut marker = "ARNIS_SCENE_PLAY".to_string();
@@ -1389,6 +1511,12 @@ fn cmd_scene_audit(args: &[String]) -> Result<(), String> {
             "--manifest" => {
                 manifest_path = Some(PathBuf::from(
                     args.get(i + 1).ok_or("--manifest requires a path")?,
+                ));
+                i += 2;
+            }
+            "--manifest-sqlite" => {
+                manifest_sqlite_path = Some(PathBuf::from(
+                    args.get(i + 1).ok_or("--manifest-sqlite requires a path")?,
                 ));
                 i += 2;
             }
@@ -1419,24 +1547,43 @@ fn cmd_scene_audit(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let manifest_source_path = manifest_summary_path
-        .clone()
-        .or(manifest_path.clone())
-        .ok_or("--manifest or --manifest-summary is required")?;
     let log_path = log_path.ok_or("--log is required")?;
-    let manifest_content = fs::read_to_string(&manifest_source_path).map_err(|err| {
-        format!(
-            "failed to read manifest source {}: {err}",
-            manifest_source_path.display()
-        )
-    })?;
     let log_content = fs::read_to_string(&log_path)
         .map_err(|err| format!("failed to read log {}: {err}", log_path.display()))?;
-    let mut report = build_scene_audit_report_from_str(&manifest_content, &log_content, &marker)?;
+    let (mut report, manifest_source_label) = if let Some(path) = manifest_summary_path.as_ref() {
+        if manifest_path.is_some() || manifest_sqlite_path.is_some() {
+            return Err(
+                "provide either --manifest-summary or a raw manifest source, not both".to_string(),
+            );
+        }
+        let manifest_content = fs::read_to_string(path)
+            .map_err(|err| format!("failed to read manifest source {}: {err}", path.display()))?;
+        (
+            build_scene_audit_report_from_str(&manifest_content, &log_content, &marker)?,
+            path.display().to_string(),
+        )
+    } else if let Some(path) = manifest_path.as_ref() {
+        if manifest_sqlite_path.is_some() {
+            return Err("provide only one of --manifest or --manifest-sqlite".to_string());
+        }
+        let manifest_content = fs::read_to_string(path)
+            .map_err(|err| format!("failed to read manifest source {}: {err}", path.display()))?;
+        (
+            build_scene_audit_report_from_str(&manifest_content, &log_content, &marker)?,
+            path.display().to_string(),
+        )
+    } else if let Some(path) = manifest_sqlite_path.as_ref() {
+        (
+            build_scene_audit_report_from_sqlite(path, &log_content, &marker)?,
+            path.display().to_string(),
+        )
+    } else {
+        return Err("--manifest, --manifest-sqlite, or --manifest-summary is required".to_string());
+    };
     if let Some(object) = report.as_object_mut() {
         object.insert(
             "manifestPath".to_string(),
-            Value::String(manifest_source_path.display().to_string()),
+            Value::String(manifest_source_label),
         );
         object.insert(
             "logPath".to_string(),
@@ -1636,6 +1783,146 @@ mod tests {
             f2.path().to_str().unwrap().to_string()
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn sample_command_writes_sqlite_manifest_store() {
+        let db = NamedTempFile::new().unwrap();
+        let db_path = db.path().to_path_buf();
+        drop(db);
+
+        cmd_sample(&[
+            "--grid".to_string(),
+            "2,2".to_string(),
+            "--sqlite-out".to_string(),
+            db_path.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        let subset = arbx_roblox_export::manifest_store::read_manifest_sqlite_subset(
+            &db_path,
+            &["0_0".to_string(), "1_1".to_string()],
+        )
+        .unwrap();
+        assert_eq!(subset.chunks.len(), 2);
+        assert_eq!(subset.chunks[0].chunk_id, "0_0");
+        assert_eq!(subset.chunks[1].chunk_id, "1_1");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn scene_index_reads_sqlite_manifest_store() {
+        let manifest = build_sample_multi_chunk(2, 1);
+        let db = NamedTempFile::new().unwrap();
+        let db_path = db.path().to_path_buf();
+        drop(db);
+        write_manifest_sqlite(&manifest, &db_path).unwrap();
+
+        let index = build_scene_manifest_index_from_sqlite(&db_path).unwrap();
+
+        assert_eq!(index["meta"]["worldName"], "SampleAustinLikeBlock");
+        assert_eq!(index["meta"]["schemaVersion"], "0.4.0");
+        assert_eq!(index["meta"]["sceneIndexVersion"], SCENE_INDEX_VERSION);
+        assert_eq!(index["chunks"].as_array().unwrap().len(), 2);
+        assert_eq!(index["chunks"][0]["id"], "0_0");
+        assert_eq!(index["chunks"][0]["roadCount"], 1);
+        assert_eq!(index["chunks"][0]["buildingCount"], 1);
+        assert_eq!(index["chunks"][1]["id"], "1_0");
+        assert_eq!(index["chunks"][1]["roadCount"], 0);
+        assert_eq!(index["chunks"][1]["buildingCount"], 0);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn scene_audit_reads_sqlite_manifest_store() {
+        let manifest = build_sample_multi_chunk(2, 1);
+        let db = NamedTempFile::new().unwrap();
+        let db_path = db.path().to_path_buf();
+        drop(db);
+        write_manifest_sqlite(&manifest, &db_path).unwrap();
+        let log = r#"2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {"phase":"edit","focus":{"x":64.0,"z":64.0},"radius":200.0,"rootName":"GeneratedWorld_AustinPreview","scene":{"chunkCount":1,"chunkIds":["0_0"],"buildingModelCount":1,"chunksWithBuildingModels":1,"roadTaggedPartCount":1,"chunksWithRoadGeometry":1,"roadMeshPartCount":1,"roadDetailPartCount":0}}"#;
+
+        let report =
+            build_scene_audit_report_from_sqlite(&db_path, log, "ARNIS_SCENE_EDIT").unwrap();
+
+        assert_eq!(report["manifest"]["chunkCount"], 1);
+        assert_eq!(report["manifest"]["roadCount"], 1);
+        assert_eq!(report["manifest"]["buildingCount"], 1);
+        assert_eq!(report["summary"]["chunk_ratio"], 1.0);
+        assert_eq!(report["summary"]["building_model_ratio"], 1.0);
+        assert_eq!(report["summary"]["road_geometry_ratio"], 1.0);
+        assert!(report["findings"].as_array().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn scene_index_command_accepts_manifest_sqlite() {
+        let manifest = build_sample_multi_chunk(2, 1);
+        let db = NamedTempFile::new().unwrap();
+        let db_path = db.path().to_path_buf();
+        drop(db);
+        write_manifest_sqlite(&manifest, &db_path).unwrap();
+        let out = NamedTempFile::new().unwrap();
+        let out_path = out.path().to_path_buf();
+        drop(out);
+
+        cmd_scene_index(&[
+            "--manifest-sqlite".to_string(),
+            db_path.to_string_lossy().into_owned(),
+            "--json-out".to_string(),
+            out_path.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        let index: Value =
+            serde_json::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+        assert_eq!(index["meta"]["worldName"], "SampleAustinLikeBlock");
+        assert_eq!(index["chunks"].as_array().unwrap().len(), 2);
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(out_path);
+    }
+
+    #[test]
+    fn scene_audit_command_accepts_manifest_sqlite() {
+        let manifest = build_sample_multi_chunk(2, 1);
+        let db = NamedTempFile::new().unwrap();
+        let db_path = db.path().to_path_buf();
+        drop(db);
+        write_manifest_sqlite(&manifest, &db_path).unwrap();
+        let mut log = NamedTempFile::new().unwrap();
+        writeln!(
+            log,
+            "2026-03-20 18:35:04.000  ARNIS_SCENE_EDIT {{\"phase\":\"edit\",\"focus\":{{\"x\":64.0,\"z\":64.0}},\"radius\":200.0,\"rootName\":\"GeneratedWorld_AustinPreview\",\"scene\":{{\"chunkCount\":1,\"chunkIds\":[\"0_0\"],\"buildingModelCount\":1,\"chunksWithBuildingModels\":1,\"roadTaggedPartCount\":1,\"chunksWithRoadGeometry\":1,\"roadMeshPartCount\":1,\"roadDetailPartCount\":0}}}}"
+        )
+        .unwrap();
+        let out = NamedTempFile::new().unwrap();
+        let out_path = out.path().to_path_buf();
+        drop(out);
+
+        cmd_scene_audit(&[
+            "--manifest-sqlite".to_string(),
+            db_path.to_string_lossy().into_owned(),
+            "--log".to_string(),
+            log.path().to_string_lossy().into_owned(),
+            "--marker".to_string(),
+            "ARNIS_SCENE_EDIT".to_string(),
+            "--json-out".to_string(),
+            out_path.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        let report: Value =
+            serde_json::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+        assert_eq!(report["manifest"]["chunkCount"], 1);
+        assert_eq!(report["manifest"]["roadCount"], 1);
+        assert_eq!(report["summary"]["chunk_ratio"], 1.0);
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(out_path);
     }
 
     #[test]
