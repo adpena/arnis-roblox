@@ -327,9 +327,21 @@ class SceneFidelityAuditTests(unittest.TestCase):
             self.assertIn("road_kind_scene_gap", codes)
             self.assertIn("road_subkind_scene_gap", codes)
             self.assertIn("water_kind_scene_gap", codes)
+            self.assertIn("water_type_scene_gap", codes)
             self.assertIn("prop_kind_scene_gap", codes)
             self.assertIn("explicit_wall_material_scene_gap", codes)
             self.assertIn("explicit_roof_material_scene_gap", codes)
+            self.assertEqual(
+                report["summary"]["waterTypeGaps"],
+                [
+                    {
+                        "bucket": "ribbon",
+                        "manifestCount": 1,
+                        "sceneCount": 0,
+                        "missingIds": ["water_ribbon_1"],
+                    }
+                ],
+            )
             self.assertEqual(
                 report["summary"]["roadKindGaps"],
                 [
@@ -422,7 +434,9 @@ class SceneFidelityAuditTests(unittest.TestCase):
             self.assertIn("Manifest Road Kinds", html)
             self.assertIn("Manifest Road Subkinds", html)
             self.assertIn("Water Surface Breakdown", html)
+            self.assertIn("Manifest Water Types", html)
             self.assertIn("Manifest Water Kinds", html)
+            self.assertIn("Water Type Gaps", html)
             self.assertIn("Water Surface By Kind", html)
             self.assertIn("Road Surface By Kind", html)
             self.assertIn("Road Surface By Subkind", html)
@@ -1226,6 +1240,242 @@ class SceneFidelityAuditTests(unittest.TestCase):
             codes = {finding["code"] for finding in report["findings"]}
             self.assertNotIn("road_kind_scene_gap", codes)
             self.assertNotIn("road_subkind_scene_gap", codes)
+
+    def test_attached_sidewalk_and_curb_gaps_use_manifest_sidewalk_truth(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "manifest.json"
+            log_path = root / "studio.log"
+            html_path = root / "scene-report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "SceneAuditTown",
+                    "metersPerStud": 0.3,
+                    "chunkSizeStuds": 256,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "roads": [
+                            {
+                                "id": "road_attached_a",
+                                "kind": "residential",
+                                "subkind": "none",
+                                "hasSidewalk": True,
+                                "sidewalk": "both",
+                            },
+                            {
+                                "id": "road_attached_b",
+                                "kind": "secondary",
+                                "subkind": "none",
+                                "hasSidewalk": True,
+                                "sidewalk": "left",
+                            },
+                            {
+                                "id": "road_separate",
+                                "kind": "secondary",
+                                "subkind": "none",
+                                "hasSidewalk": False,
+                                "sidewalk": "separate",
+                            },
+                        ],
+                        "buildings": [],
+                        "water": [],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            payload = {
+                "phase": "edit",
+                "focus": {"x": 32.0, "z": 32.0},
+                "radius": 350.0,
+                "rootName": "GeneratedWorld_AustinPreview",
+                "scene": {
+                    "chunkCount": 1,
+                    "buildingModelCount": 0,
+                    "chunksWithBuildingModels": 0,
+                    "chunksWithRoadGeometry": 1,
+                    "roadSurfacePartCountBySubkind": {
+                        "sidewalk": {
+                            "surfacePartCount": 1,
+                            "featureCount": 1,
+                            "sourceIds": ["road_attached_a"],
+                        },
+                        "curb": {
+                            "surfacePartCount": 0,
+                            "featureCount": 0,
+                            "sourceIds": [],
+                        },
+                    },
+                },
+            }
+            chunks_payload = {
+                "phase": "edit",
+                "rootName": "GeneratedWorld_AustinPreview",
+                "chunkIds": ["0_0"],
+            }
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "ARNIS_SCENE_EDIT_CHUNKS " + json.dumps(chunks_payload, separators=(",", ":")),
+                        "ARNIS_SCENE_EDIT " + json.dumps(payload, separators=(",", ":")),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, log_path, marker="ARNIS_SCENE_EDIT")
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("attached_sidewalk_scene_gap", codes)
+            self.assertIn("curb_scene_gap", codes)
+            self.assertEqual(
+                report["summary"]["attachedSidewalkGaps"],
+                [
+                    {
+                        "bucket": "attached_sidewalk",
+                        "manifestCount": 2,
+                        "sceneCount": 1,
+                        "missingIds": ["road_attached_b"],
+                    }
+                ],
+            )
+            self.assertEqual(
+                report["summary"]["curbGaps"],
+                [
+                    {
+                        "bucket": "curb",
+                        "manifestCount": 2,
+                        "sceneCount": 0,
+                        "missingIds": ["road_attached_a", "road_attached_b"],
+                    }
+                ],
+            )
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("Attached Sidewalk Gaps", html)
+            self.assertIn("Curb Gaps", html)
+            self.assertIn("road_attached_b", html)
+
+    def test_rail_kind_gaps_use_manifest_rail_truth_and_render_html_sections(self) -> None:
+        audit = load_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "manifest.json"
+            log_path = root / "studio.log"
+            html_path = root / "scene-report.html"
+
+            manifest = {
+                "schemaVersion": "0.4.0",
+                "meta": {
+                    "worldName": "SceneAuditTown",
+                    "metersPerStud": 0.3,
+                    "chunkSizeStuds": 256,
+                },
+                "chunks": [
+                    {
+                        "id": "0_0",
+                        "originStuds": {"x": 0, "y": 0, "z": 0},
+                        "roads": [],
+                        "buildings": [],
+                        "water": [],
+                        "props": [],
+                        "landuse": [],
+                        "barriers": [],
+                        "rails": [
+                            {
+                                "id": "osm_rail_1",
+                                "kind": "rail",
+                                "points": [{"x": 0, "y": 0, "z": 0}, {"x": 64, "y": 0, "z": 0}],
+                            },
+                            {
+                                "id": "osm_tram_1",
+                                "kind": "tram",
+                                "points": [{"x": 0, "y": 0, "z": 8}, {"x": 64, "y": 0, "z": 8}],
+                            },
+                        ],
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            chunks_payload = {
+                "phase": "edit",
+                "rootName": "GeneratedWorld_AustinPreview",
+                "chunkIds": ["0_0"],
+            }
+            scalar_payload = {
+                "phase": "edit",
+                "rootName": "GeneratedWorld_AustinPreview",
+                "key": "chunksWithRailGeometry",
+                "value": 1,
+            }
+            rail_bucket_payload = {
+                "phase": "edit",
+                "rootName": "GeneratedWorld_AustinPreview",
+                "bucket": "rail",
+                "stats": {"instanceCount": 1},
+            }
+            rail_ids_payload = {
+                "phase": "edit",
+                "rootName": "GeneratedWorld_AustinPreview",
+                "bucket": "rail",
+                "sourceIds": ["osm_rail_1"],
+            }
+            scene_payload = {
+                "phase": "edit",
+                "focus": {"x": 32.0, "z": 32.0},
+                "radius": 350.0,
+                "rootName": "GeneratedWorld_AustinPreview",
+                "scene": {
+                    "chunkCount": 1,
+                },
+            }
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "ARNIS_SCENE_EDIT_CHUNKS " + json.dumps(chunks_payload, separators=(",", ":")),
+                        "ARNIS_SCENE_EDIT_SCALAR " + json.dumps(scalar_payload, separators=(",", ":")),
+                        "ARNIS_SCENE_EDIT_RAIL_KIND_BUCKET " + json.dumps(rail_bucket_payload, separators=(",", ":")),
+                        "ARNIS_SCENE_EDIT_RAIL_KIND_IDS_BATCH " + json.dumps(rail_ids_payload, separators=(",", ":")),
+                        "ARNIS_SCENE_EDIT " + json.dumps(scene_payload, separators=(",", ":")),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            report = audit.build_report(manifest_path, log_path, marker="ARNIS_SCENE_EDIT")
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertIn("rail_kind_scene_gap", codes)
+            self.assertEqual(
+                report["summary"]["railKindGaps"],
+                [
+                    {
+                        "bucket": "tram",
+                        "manifestCount": 1,
+                        "sceneCount": 0,
+                        "missingIds": ["osm_tram_1"],
+                    }
+                ],
+            )
+            audit.write_html_report(report, html_path)
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("Manifest Rail Kinds", html)
+            self.assertIn("Rail Receipts By Kind", html)
+            self.assertIn("Rail Kind Gaps", html)
+            self.assertIn("osm_tram_1", html)
 
     def test_prop_and_vegetation_gaps_use_unique_source_ids_when_available(self) -> None:
         audit = load_module()

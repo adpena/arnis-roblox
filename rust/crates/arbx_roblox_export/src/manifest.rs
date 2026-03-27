@@ -286,6 +286,13 @@ impl ChunkManifest {
 }
 
 impl ChunkRef {
+    pub fn to_json_pretty(&self) -> String {
+        let mut out = String::new();
+        self.write_json(&mut out, 0);
+        out.push('\n');
+        out
+    }
+
     fn write_json(&self, out: &mut String, indent: usize) {
         write_indent(out, indent);
         out.push_str("{\n");
@@ -380,6 +387,13 @@ impl crate::subplans::SubplanBounds {
 }
 
 impl Chunk {
+    pub fn to_json_pretty(&self) -> String {
+        let mut out = String::new();
+        self.write_json(&mut out, 0);
+        out.push('\n');
+        out
+    }
+
     fn write_json(&self, out: &mut String, indent: usize) {
         write_indent(out, indent);
         out.push_str("{\n");

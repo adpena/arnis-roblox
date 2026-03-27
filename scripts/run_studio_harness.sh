@@ -36,6 +36,8 @@ HARD_RESTART=0
 SKIP_PLUGIN_SMOKE=0
 SCENE_INDEX_VERSION=2
 STUDIO_RELAUNCH_COOLDOWN_SECONDS=3
+HARNESS_LOCK_DIR="${HARNESS_LOCK_DIR:-/tmp/arnis-studio-harness.lock}"
+HARNESS_LOCK_OWNED=0
 MCP_BINARY="${RBX_STUDIO_MCP_BIN:-}"
 VSYNC_BINARY="${VSYNC_BIN:-}"
 VSYNC_SOURCE_REPO=0
@@ -43,6 +45,12 @@ VSYNC_SERVER_URL=""
 VSYNC_SERVER_PID=""
 VSYNC_SERVER_LOG=""
 MCP_READY=0
+MCP_SIDECAR_PID=""
+MCP_SIDECAR_FEED_PID=""
+MCP_SIDECAR_FIFO=""
+MCP_SIDECAR_LOG=""
+MCP_SIDECAR_DIR=""
+MCP_SIDECAR_OWNED=0
 SCENE_MARKER_LUAU=""
 read -r -d '' SCENE_MARKER_LUAU <<'LUA' || true
 local function cloneStatsWithoutSourceIds(stats)
@@ -342,6 +350,42 @@ ALLOWED_PLUGIN_FILES=(
   "VertigoSyncPlugin.lua"
 )
 
+mcp_sidecar_port_open() {
+  python3 - <<'PY'
+import socket
+sock = socket.socket()
+try:
+    sock.settimeout(0.5)
+    sock.connect(("127.0.0.1", 44755))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+}
+
+mcp_proxy_url_for_harness() {
+  if mcp_sidecar_port_open >/dev/null 2>&1; then
+    printf '%s\n' "http://127.0.0.1:44755/proxy"
+  fi
+}
+
+resolve_mcp_plugin_artifact() {
+  if [[ -n "${RBX_STUDIO_MCP_PLUGIN_PATH:-}" && -f "${RBX_STUDIO_MCP_PLUGIN_PATH:-}" ]]; then
+    printf '%s\n' "${RBX_STUDIO_MCP_PLUGIN_PATH}"
+    return 0
+  fi
+
+  local candidate=""
+  candidate="$(find "$HOME/.cargo/git/checkouts" -path '*/target/release/build/rbx-studio-mcp-*/out/MCPStudioPlugin.rbxm' -type f -print 2>/dev/null | tail -1)"
+  if [[ -n "$candidate" && -f "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage: scripts/run_studio_harness.sh [options]
@@ -509,6 +553,110 @@ ensure_vsync_plugin_installed() {
   fi
 }
 
+ensure_mcp_plugin_installed() {
+  if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$ROBLOX_PLUGIN_DIR"
+
+  local installed_plugin="$ROBLOX_PLUGIN_DIR/MCPStudioPlugin.rbxm"
+  local plugin_artifact=""
+  plugin_artifact="$(resolve_mcp_plugin_artifact || true)"
+  local needs_install=0
+  if [[ ! -f "$installed_plugin" ]]; then
+    needs_install=1
+  elif [[ -n "$plugin_artifact" && "$plugin_artifact" -nt "$installed_plugin" ]]; then
+    needs_install=1
+  elif [[ -z "$plugin_artifact" && "$MCP_BINARY" -nt "$installed_plugin" ]]; then
+    needs_install=1
+  elif [[ "${HARNESS_REFRESH_MCP_PLUGIN:-0}" == "1" ]]; then
+    needs_install=1
+  fi
+
+  if [[ $needs_install -eq 1 ]]; then
+    if [[ -n "$plugin_artifact" && -f "$plugin_artifact" ]]; then
+      log "installing Roblox Studio MCP plugin from built artifact"
+      cp "$plugin_artifact" "$installed_plugin"
+    else
+      log "installing Roblox Studio MCP plugin via MCP binary installer"
+      "$MCP_BINARY" >/dev/null
+    fi
+  fi
+}
+
+stop_mcp_sidecar() {
+  if [[ -n "$MCP_SIDECAR_PID" ]]; then
+    kill "$MCP_SIDECAR_PID" >/dev/null 2>&1 || true
+    wait "$MCP_SIDECAR_PID" >/dev/null 2>&1 || true
+    MCP_SIDECAR_PID=""
+  fi
+  if [[ -n "$MCP_SIDECAR_FEED_PID" ]]; then
+    kill "$MCP_SIDECAR_FEED_PID" >/dev/null 2>&1 || true
+    wait "$MCP_SIDECAR_FEED_PID" >/dev/null 2>&1 || true
+    MCP_SIDECAR_FEED_PID=""
+  fi
+  if [[ -n "$MCP_SIDECAR_FIFO" ]]; then
+    rm -f "$MCP_SIDECAR_FIFO"
+    MCP_SIDECAR_FIFO=""
+  fi
+  if [[ -n "$MCP_SIDECAR_DIR" ]]; then
+    rm -rf "$MCP_SIDECAR_DIR"
+    MCP_SIDECAR_DIR=""
+  fi
+  MCP_SIDECAR_LOG=""
+  MCP_SIDECAR_OWNED=0
+}
+
+start_mcp_sidecar() {
+  if [[ -z "$MCP_BINARY" || ! -x "$MCP_BINARY" ]]; then
+    return 0
+  fi
+
+  if mcp_sidecar_port_open >/dev/null 2>&1; then
+    MCP_SIDECAR_OWNED=0
+    return 0
+  fi
+
+  stop_mcp_sidecar
+
+  MCP_SIDECAR_DIR="$(mktemp -d -t arnis-mcp-sidecar)"
+  MCP_SIDECAR_FIFO="$MCP_SIDECAR_DIR/stdin.fifo"
+  MCP_SIDECAR_LOG="$MCP_SIDECAR_DIR/sidecar.log"
+  mkfifo "$MCP_SIDECAR_FIFO"
+
+  (
+    tail -f /dev/null >"$MCP_SIDECAR_FIFO"
+  ) &
+  MCP_SIDECAR_FEED_PID=$!
+
+  (
+    cat "$MCP_SIDECAR_FIFO" | "$MCP_BINARY" --stdio >"$MCP_SIDECAR_LOG" 2>&1
+  ) &
+  MCP_SIDECAR_PID=$!
+  MCP_SIDECAR_OWNED=1
+
+  local waited=0
+  while (( waited < MCP_READY_WAIT_SECONDS )); do
+    if mcp_sidecar_port_open >/dev/null 2>&1; then
+      log "started Studio MCP sidecar on localhost:44755"
+      return 0
+    fi
+    if [[ -n "$MCP_SIDECAR_PID" ]] && ! kill -0 "$MCP_SIDECAR_PID" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  log "Studio MCP sidecar failed to expose localhost:44755; continuing without persistent relay"
+  if [[ -n "$MCP_SIDECAR_LOG" && -f "$MCP_SIDECAR_LOG" ]]; then
+    tail -n 40 "$MCP_SIDECAR_LOG" >&2 || true
+  fi
+  stop_mcp_sidecar
+  return 1
+}
+
 auto_prepare_place() {
   local output_place=""
   local include_runtime_sample_data="true"
@@ -635,6 +783,47 @@ fi
 
 log() {
   printf '[harness] %s\n' "$*"
+}
+
+release_harness_lock() {
+  if [[ $HARNESS_LOCK_OWNED -ne 1 ]]; then
+    return
+  fi
+  rm -rf "$HARNESS_LOCK_DIR"
+  HARNESS_LOCK_OWNED=0
+}
+
+acquire_harness_lock() {
+  local owner_pid_file="$HARNESS_LOCK_DIR/pid"
+  local owner_cmd_file="$HARNESS_LOCK_DIR/command"
+
+  if mkdir "$HARNESS_LOCK_DIR" >/dev/null 2>&1; then
+    printf '%s\n' "$$" >"$owner_pid_file"
+    printf '%s\n' "$0 $*" >"$owner_cmd_file"
+    HARNESS_LOCK_OWNED=1
+    return 0
+  fi
+
+  if [[ -f "$owner_pid_file" ]]; then
+    local existing_pid=""
+    existing_pid="$(tr -d '[:space:]' <"$owner_pid_file" 2>/dev/null || true)"
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      echo "[harness] another harness run is already active (pid=$existing_pid lock=$HARNESS_LOCK_DIR)" >&2
+      return 1
+    fi
+  fi
+
+  log "removing stale harness lock: $HARNESS_LOCK_DIR"
+  rm -rf "$HARNESS_LOCK_DIR"
+  if mkdir "$HARNESS_LOCK_DIR" >/dev/null 2>&1; then
+    printf '%s\n' "$$" >"$owner_pid_file"
+    printf '%s\n' "$0 $*" >"$owner_cmd_file"
+    HARNESS_LOCK_OWNED=1
+    return 0
+  fi
+
+  echo "[harness] failed to acquire harness lock: $HARNESS_LOCK_DIR" >&2
+  return 1
 }
 
 preview_source_looks_heavy() {
@@ -880,42 +1069,7 @@ capture_preview_telemetry_artifacts() {
     return 0
   fi
 
-  python3 - "$plugin_state_json" "$telemetry_summary_txt" <<'PY'
-from pathlib import Path
-import json
-import sys
-
-plugin_state_path = Path(sys.argv[1])
-summary_path = Path(sys.argv[2])
-data = json.loads(plugin_state_path.read_text(encoding="utf-8"))
-runtime = data.get("preview_runtime") or {}
-project = data.get("preview_project") or {}
-project_counters = project.get("counters") or {}
-project_chunks = project.get("chunkTotals") or {}
-
-summary = (
-    "runtime="
-    f"schedule={runtime.get('schedule_count', 0)} "
-    f"run={runtime.get('run_count', 0)} "
-    f"success={runtime.get('success_count', 0)} "
-    f"failure={runtime.get('failure_count', 0)} "
-    f"skip={runtime.get('skip_count', 0)} "
-    f"retry={runtime.get('auto_retry_count', 0)} "
-    f"busy={runtime.get('queued_while_busy_count', 0)}; "
-    "project="
-    f"build={project_counters.get('build_scheduled', 0)} "
-    f"sync_complete={project_counters.get('sync_complete', 0)} "
-    f"sync_cancelled={project_counters.get('sync_cancelled', 0)} "
-    f"state_apply_succeeded={project_counters.get('state_apply_succeeded', 0)} "
-    f"state_apply_failed={project_counters.get('state_apply_failed', 0)} "
-    f"imported={project_chunks.get('imported', 0)} "
-    f"skipped={project_chunks.get('skipped', 0)} "
-    f"unloaded={project_chunks.get('unloaded', 0)}"
-)
-
-summary_path.write_text(summary, encoding="utf-8")
-print(summary)
-PY
+  python3 -m scripts.preview_telemetry_summary "$plugin_state_json" "$telemetry_summary_txt"
 
   log "preview telemetry saved: $plugin_state_json"
   if [[ -f "$telemetry_summary_txt" ]]; then
@@ -1091,19 +1245,29 @@ disable_runall_entry() {
   set_runall_config_modes false false
 }
 
+run_cleanup_helper_if_defined() {
+  local helper_name="$1"
+  shift || true
+  if declare -F "$helper_name" >/dev/null 2>&1; then
+    "$helper_name" "$@"
+  fi
+}
+
 cleanup() {
   local exit_code="${1:-0}"
   if [[ $CLEANUP_RUNNING -eq 1 ]]; then
     return
   fi
   CLEANUP_RUNNING=1
-  stop_log_pipe
-  stop_memory_monitor
+  run_cleanup_helper_if_defined stop_log_pipe
+  run_cleanup_helper_if_defined stop_memory_monitor
   if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" ]]; then
     rm -f "$LOG_SLICE_FILE"
   fi
   local session_status="not_running"
-  session_status="$(studio_session_status_value status 2>/dev/null || printf 'not_running')"
+  if declare -F studio_session_status_value >/dev/null 2>&1; then
+    session_status="$(studio_session_status_value status 2>/dev/null || printf 'not_running')"
+  fi
   local cleanup_decision=""
   cleanup_decision="$(python3 "$STUDIO_HARNESS_POLICY" cleanup-close \
     --exit-code "$exit_code" \
@@ -1117,19 +1281,23 @@ cleanup() {
     cleanup_reason="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("reason","policy_error"))' <<<"$cleanup_decision" 2>/dev/null || printf 'policy_error')"
   fi
 
-  if [[ "$should_close" == "true" ]]; then
+  if [[ "$should_close" == "true" ]] && declare -F quit_studio >/dev/null 2>&1; then
     quit_studio
   elif [[ $CLOSE_ON_EXIT -eq 1 && $HARNESS_OWNS_STUDIO -eq 1 ]]; then
     log "preserving harness-owned Studio session on exit (reason=$cleanup_reason status=$session_status exit=$exit_code)"
   fi
-  summarize_memory_monitor
-  stop_vsync_server
-  restore_runall_config
-  restore_foreign_plugins
+  run_cleanup_helper_if_defined summarize_memory_monitor
+  run_cleanup_helper_if_defined release_harness_lock
+  run_cleanup_helper_if_defined stop_mcp_sidecar
+  run_cleanup_helper_if_defined stop_vsync_server
+  run_cleanup_helper_if_defined restore_runall_config
+  run_cleanup_helper_if_defined restore_foreign_plugins
 }
 
 trap 'cleanup "$?"' EXIT
 trap 'exit 130' INT TERM
+
+acquire_harness_lock "$@" || exit 1
 
 enable_runall_entry() {
   local edit_enabled="true"
@@ -1150,6 +1318,27 @@ can_run_runall_entry_edit_fallback() {
   [[ $RUNALL_EDIT_ENABLED -eq 1 ]] || return 1
   [[ -n "$RUNALL_SPEC_FILTER" ]] || return 1
   if [[ "$RUNALL_SPEC_FILTER" == *Preview* ]]; then
+    return 1
+  fi
+  return 0
+}
+
+should_run_edit_probe_best_effort() {
+  [[ -z "$RUNALL_SPEC_FILTER" ]] && return 0
+  if [[ "$RUNALL_SPEC_FILTER" == *Preview* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+should_skip_edit_mode_actions_for_play() {
+  if [[ $DO_PLAY -ne 1 ]]; then
+    return 1
+  fi
+  if [[ $RUNALL_EDIT_ENABLED -ne 0 ]]; then
+    return 1
+  fi
+  if [[ -n "$RUNALL_SPEC_FILTER" ]]; then
     return 1
   fi
   return 0
@@ -1191,6 +1380,13 @@ quit_studio() {
 
   local waited=0
   while [[ -n "$(studio_pids)" ]]; do
+    local current_status="unknown"
+    current_status="$(studio_session_status_value status 2>/dev/null || printf 'unknown')"
+    if [[ "$current_status" == "blocked_dialog" ]]; then
+      log "Studio close dialog detected during quit; dismissing without saving"
+      dismiss_startup_dialogs || true
+      python3 "$STUDIO_UI_CONTROL" dismiss-dont-save >/dev/null 2>&1 || true
+    fi
     sleep 1
     waited=$((waited + 1))
     if [[ $waited -ge 3 ]]; then
@@ -1762,21 +1958,33 @@ wait_for_mcp_ready() {
   local waited=0
   while [[ $waited -lt $PATTERN_WAIT_SECONDS ]]; do
     dismiss_startup_dialogs
-    if MCP_BINARY_PATH="$MCP_BINARY" python3 - <<'PY' >/dev/null 2>&1
+    if MCP_BINARY_PATH="$MCP_BINARY" \
+      MCP_PROXY_URL="$(mcp_proxy_url_for_harness)" \
+      python3 - <<'PY' >/dev/null 2>&1
 import os
 import sys
+from pathlib import Path
 sys.path.insert(0, '/Users/adpena/Projects/vertigo/scripts/dev')
 from studio_mcp_direct_lib import JsonRpcStdioClient
+root = Path('/Users/adpena/Projects/arnis-roblox')
+sys.path.insert(0, str(root / 'scripts'))
+from studio_mcp_proxy_lib import build_mcp_client, run_code_in_play_session
 
-client = JsonRpcStdioClient(
-    os.environ["MCP_BINARY_PATH"],
-    timeout_seconds=8,
+client = build_mcp_client(
+    JsonRpcStdioClient,
+    mcp_bin=os.environ["MCP_BINARY_PATH"],
+    timeout_seconds=20,
     protocol_version='2025-11-25',
     client_name='arnis-studio-harness-ready',
 )
 try:
     client.initialize()
     client.call_tool("get_studio_mode", {})
+    client.call_tool(
+        "run_code",
+        {"command": 'print("ARNIS_MCP_READY")'},
+        timeout_seconds=20,
+    )
 finally:
     client.close()
 PY
@@ -2096,6 +2304,7 @@ capture_mcp_probe() {
 
   MCP_PHASE="$phase" \
   MCP_BINARY_PATH="$MCP_BINARY" \
+  MCP_PROXY_URL="$(mcp_proxy_url_for_harness)" \
   MCP_PREFLIGHT_SESSION_STATUS="$preflight_session_status" \
   MCP_LOG_INDICATES_PLAY="$preflight_log_indicates_play" \
   python3 - <<'PY'
@@ -2105,8 +2314,9 @@ import signal
 import sys
 
 sys.path.insert(0, '/Users/adpena/Projects/vertigo/scripts/dev')
-from studio_mcp_direct_lib import JsonRpcStdioClient, best_mode_from_payload
+from studio_mcp_direct_lib import JsonRpcStdioClient
 sys.path.insert(0, '/Users/adpena/Projects/arnis-roblox/scripts')
+from studio_mcp_proxy_lib import best_mode_from_payload, build_mcp_client
 from studio_harness_policy import mcp_mode_stop_decision
 
 phase = os.environ["MCP_PHASE"]
@@ -2115,7 +2325,8 @@ scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
 preflight_session_status = os.environ.get("MCP_PREFLIGHT_SESSION_STATUS", "unknown")
 log_indicates_play = os.environ.get("MCP_LOG_INDICATES_PLAY", "false").strip().lower() in {"1", "true", "yes", "on"}
 scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
-timeout_seconds = 8
+timeout_seconds = 20
+tool_timeout_seconds = 20
 
 def on_alarm(_signum, _frame):
     raise TimeoutError(f"capture_mcp_probe timed out after {timeout_seconds}s")
@@ -2126,9 +2337,10 @@ signal.alarm(timeout_seconds)
 client = None
 
 try:
-    client = JsonRpcStdioClient(
-        bin_path,
-        timeout_seconds=6,
+    client = build_mcp_client(
+        JsonRpcStdioClient,
+        mcp_bin=bin_path,
+        timeout_seconds=tool_timeout_seconds,
         protocol_version='2025-11-25',
         client_name='arnis-studio-harness',
     )
@@ -2252,7 +2464,9 @@ run_edit_actions_via_mcp() {
   fi
 
   local edit_readiness_target="preview"
-  if [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then
+  if [[ $DO_PLAY -eq 1 ]]; then
+    edit_readiness_target="edit_sync"
+  elif [[ -n "$RUNALL_SPEC_FILTER" && "$RUNALL_SPEC_FILTER" != *Preview* ]]; then
     edit_readiness_target="edit_sync"
   fi
   local edit_readiness_json=""
@@ -2314,11 +2528,13 @@ run_edit_actions_via_mcp() {
 
     (
     MCP_BINARY_PATH="$MCP_BINARY" \
+    MCP_PROXY_URL="$(mcp_proxy_url_for_harness)" \
     EDIT_WAIT_SECONDS="$EDIT_WAIT_SECONDS" \
     MCP_WALL_TIMEOUT="$mcp_wall_timeout" \
     MCP_PREFLIGHT_SESSION_STATUS="$preflight_status_for_mcp" \
     MCP_LOG_INDICATES_PLAY="$log_indicates_play_for_mcp" \
     HARNESS_HOST_PROBE_JSON="$host_probe_json" \
+    HARNESS_DO_PLAY="$DO_PLAY" \
     VSYNC_READINESS_JSON="$edit_readiness_json" \
     RUNALL_EDIT_ENABLED="$RUNALL_EDIT_ENABLED" \
     RUNALL_SPEC_FILTER="$RUNALL_SPEC_FILTER" \
@@ -2334,6 +2550,7 @@ from studio_mcp_direct_lib import JsonRpcStdioClient
 
 root = Path('/Users/adpena/Projects/arnis-roblox')
 sys.path.insert(0, str(root / 'scripts'))
+from studio_mcp_proxy_lib import build_mcp_client, run_code_in_play_session
 from studio_harness_policy import build_readiness_expectation, mcp_mode_stop_decision
 
 edit_wait_seconds = max(5, int(os.environ.get("EDIT_WAIT_SECONDS", "20")))
@@ -2345,7 +2562,8 @@ readiness_record = json.loads(os.environ["VSYNC_READINESS_JSON"])
 readiness = build_readiness_expectation(readiness_record)
 run_edit_tests = os.environ.get("RUNALL_EDIT_ENABLED", "0").strip().lower() not in {"0", "false", "no", "off"}
 runall_spec_filter = os.environ.get("RUNALL_SPEC_FILTER", "").strip()
-run_preview_probe = runall_spec_filter == "" or "Preview" in runall_spec_filter
+do_play = os.environ.get("HARNESS_DO_PLAY", "0").strip().lower() in {"1", "true", "yes", "on"}
+run_preview_probe = (not do_play) and (runall_spec_filter == "" or "Preview" in runall_spec_filter)
 host_probe_sample = json.loads(os.environ.get("HARNESS_HOST_PROBE_JSON", "{}"))
 
 def on_alarm(_signum, _frame):
@@ -2354,8 +2572,9 @@ def on_alarm(_signum, _frame):
 signal.signal(signal.SIGALRM, on_alarm)
 signal.alarm(wall_clock_timeout)
 
-client = JsonRpcStdioClient(
-    os.environ["MCP_BINARY_PATH"],
+client = build_mcp_client(
+    JsonRpcStdioClient,
+    mcp_bin=os.environ["MCP_BINARY_PATH"],
     timeout_seconds=max(edit_wait_seconds + 90, 120),
     protocol_version='2025-11-25',
     client_name='arnis-studio-harness-edit',
@@ -2375,6 +2594,7 @@ def extract_mode_label(mode_result):
 
 luau = (
     """
+local function __arnis_main__()
 local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
 local Workspace = game:GetService("Workspace")
@@ -2391,7 +2611,7 @@ local payload = {
 local runEditTests = """ + ("true" if run_edit_tests else "false") + """
 local runAllSpecFilter = """ + json.dumps(runall_spec_filter) + """
 local runPreviewProbe = """ + ("true" if run_preview_probe else "false") + """
-local hostProbeSample = """ + json.dumps(host_probe_sample, separators=(",", ":")) + """
+local hostProbeSample = HttpService:JSONDecode(""" + json.dumps(json.dumps(host_probe_sample, separators=(",", ":"))) + """)
 
 Workspace:SetAttribute("ArnisStreamingHostProbeAvailableBytes", hostProbeSample.availableBytes)
 Workspace:SetAttribute("ArnisStreamingHostProbePressureLevel", hostProbeSample.pressureLevel)
@@ -2414,6 +2634,16 @@ local function waitForPreviewSyncCompletion(timeoutSeconds)
         tostring(Workspace:GetAttribute("VertigoPreviewSyncActive")),
         tostring(Workspace:GetAttribute("VertigoPreviewSyncState"))
     )
+end
+
+local function currentPreviewSyncIsSettled()
+    local root = Workspace:FindFirstChild("GeneratedWorld_AustinPreview")
+    local syncActive = Workspace:GetAttribute("VertigoPreviewSyncActive")
+    local syncState = Workspace:GetAttribute("VertigoPreviewSyncState")
+    if root and syncActive == false and syncState == "idle" then
+        return root
+    end
+    return nil
 end
 
 if runEditTests then
@@ -2444,17 +2674,30 @@ if runPreviewProbe then
     if previewFolder then
         local previewBuilderModule = previewFolder:FindFirstChild("AustinPreviewBuilder")
         if previewBuilderModule then
-            local ok, previewResult = pcall(function()
-                return require(previewBuilderModule).Build()
-            end)
+            local existingRoot = currentPreviewSyncIsSettled()
+            local previewResult = nil
+            local ok = true
+            if not existingRoot then
+                ok, previewResult = pcall(function()
+                    return require(previewBuilderModule).Build()
+                end)
+            end
             if ok then
                 local root, waitError = waitForPreviewSyncCompletion(90)
                 local scene = SceneAudit.summarizeWorld(root)
+                local previewStatus = "ok"
+                if waitError then
+                    previewStatus = "timeout"
+                end
+                local childCount = 0
+                if root then
+                    childCount = #root:GetChildren()
+                end
                 payload.preview = {
-                    status = if waitError then "timeout" else "ok",
-                    resultType = typeof(previewResult),
+                    status = previewStatus,
+                    resultType = existingRoot and "existing" or typeof(previewResult),
                     rootExists = root ~= nil,
-                    children = root and #root:GetChildren() or 0,
+                    children = childCount,
                     sceneSummary = {
                         buildingModelCount = scene and scene.buildingModelCount or 0,
                         buildingModelsWithDirectRoof = scene and scene.buildingModelsWithDirectRoof or 0,
@@ -2486,6 +2729,15 @@ else
 end
 
 print("ARNIS_MCP_EDIT_ACTION " .. HttpService:JSONEncode(payload))
+end
+
+local ok, err = xpcall(__arnis_main__, function(runtimeError)
+    return debug.traceback(tostring(runtimeError), 2)
+end)
+
+if not ok then
+    print("ARNIS_MCP_EDIT_TRACEBACK " .. err)
+end
 """).strip()
 
 try:
@@ -2520,7 +2772,7 @@ try:
         sys.exit(3)
     result = client.call_tool(
         "run_code",
-        {"command": luau, "readiness": readiness},
+        {"command": luau},
         allow_is_error=True,
         timeout_seconds=max(edit_wait_seconds + 90, 120),
     )
@@ -2532,6 +2784,9 @@ try:
             action_text += "\n"
 
     for line in action_text.splitlines():
+        traceback_marker = "ARNIS_MCP_EDIT_TRACEBACK "
+        if traceback_marker in line:
+            raise RuntimeError(line.split(traceback_marker, 1)[1].strip())
         marker = "ARNIS_MCP_EDIT_ACTION "
         if marker not in line:
             continue
@@ -2651,14 +2906,19 @@ enter_play_mode() {
 
 stop_play_mode() {
   if [[ -n "$MCP_BINARY" && -x "$MCP_BINARY" ]]; then
-    MCP_BINARY_PATH="$MCP_BINARY" python3 - <<'PY' >/dev/null 2>&1 || true
+    MCP_BINARY_PATH="$MCP_BINARY" MCP_PROXY_URL="$(mcp_proxy_url_for_harness)" python3 - <<'PY' >/dev/null 2>&1 || true
 import os
 import sys
+from pathlib import Path
 sys.path.insert(0, '/Users/adpena/Projects/vertigo/scripts/dev')
 from studio_mcp_direct_lib import JsonRpcStdioClient
+root = Path('/Users/adpena/Projects/arnis-roblox')
+sys.path.insert(0, str(root / 'scripts'))
+from studio_mcp_proxy_lib import build_mcp_client, run_code_in_play_session
 
-client = JsonRpcStdioClient(
-    os.environ["MCP_BINARY_PATH"],
+client = build_mcp_client(
+    JsonRpcStdioClient,
+    mcp_bin=os.environ["MCP_BINARY_PATH"],
     timeout_seconds=12,
     protocol_version='2025-11-25',
     client_name='arnis-studio-harness-stop-play',
@@ -2684,26 +2944,29 @@ run_play_probe_via_mcp() {
     return 1
   fi
 
-  local mcp_wall_timeout=$((PLAY_WAIT_SECONDS + 25))
-  if [[ $mcp_wall_timeout -lt 35 ]]; then
-    mcp_wall_timeout=35
+  local mcp_wall_timeout=$((PLAY_WAIT_SECONDS + 55))
+  if [[ $mcp_wall_timeout -lt 100 ]]; then
+    mcp_wall_timeout=100
   fi
-  if [[ $mcp_wall_timeout -gt 75 ]]; then
-    mcp_wall_timeout=75
+  if [[ $mcp_wall_timeout -gt 150 ]]; then
+    mcp_wall_timeout=150
   fi
 
   (
-    MCP_BINARY_PATH="$MCP_BINARY" MCP_PLAY_WAIT="$PLAY_WAIT_SECONDS" python3 - <<'PY'
+    MCP_BINARY_PATH="$MCP_BINARY" MCP_PROXY_URL="$(mcp_proxy_url_for_harness)" MCP_PLAY_WAIT="$PLAY_WAIT_SECONDS" python3 - <<'PY'
 import json
 import os
 import signal
 import sys
+from pathlib import Path
 
 sys.path.insert(0, '/Users/adpena/Projects/vertigo/scripts/dev')
 from studio_mcp_direct_lib import JsonRpcStdioClient
+root = Path('/Users/adpena/Projects/arnis-roblox')
+sys.path.insert(0, str(root / 'scripts'))
+from studio_mcp_proxy_lib import build_mcp_client, run_code_in_play_session
 
 wait_seconds = max(5, int(os.environ.get("MCP_PLAY_WAIT", "25")))
-scene_marker_luau = os.environ["SCENE_MARKER_LUAU"]
 wall_clock_timeout = max(wait_seconds + 45, 90)
 
 def on_alarm(_signum, _frame):
@@ -2712,8 +2975,9 @@ def on_alarm(_signum, _frame):
 signal.signal(signal.SIGALRM, on_alarm)
 signal.alarm(wall_clock_timeout)
 
-client = JsonRpcStdioClient(
-    os.environ["MCP_BINARY_PATH"],
+client = build_mcp_client(
+    JsonRpcStdioClient,
+    mcp_bin=os.environ["MCP_BINARY_PATH"],
     timeout_seconds=max(wait_seconds + 30, 60),
     protocol_version='2025-11-25',
     client_name='arnis-studio-harness-play',
@@ -2724,51 +2988,211 @@ luau = (
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local ServerScriptService = game:GetService("ServerScriptService")
-local SceneAudit = require(ServerScriptService.ImportService.SceneAudit)
-"""
-    + scene_marker_luau
-    + """
 local function vectorToTable(v)
     if typeof(v) ~= "Vector3" then
         return nil
     end
-    return {{
+    return {
         x = math.round(v.X * 100) / 100,
         y = math.round(v.Y * 100) / 100,
         z = math.round(v.Z * 100) / 100,
-    }}
+    }
+end
+
+local function summarizeWorldRoot(root)
+    if not root then
+        return nil
+    end
+    local childNames = {}
+    for index, child in ipairs(root:GetChildren()) do
+        if index > 8 then
+            break
+        end
+        childNames[#childNames + 1] = child.Name
+    end
+    return {
+        name = root.Name,
+        path = root:GetFullName(),
+        childCount = #root:GetChildren(),
+        descendantCount = #root:GetDescendants(),
+        childNames = childNames,
+    }
+end
+
+local function summarizeNearbyOverheadRoofParts(worldRoot, origin, excludeInstances)
+    if not worldRoot or not origin then
+        return {}
+    end
+
+    local matches = {}
+    for _, descendant in ipairs(worldRoot:GetDescendants()) do
+        if descendant:IsA("BasePart") and string.find(descendant.Name, "_roof", 1, true) ~= nil then
+            local skip = false
+            if excludeInstances then
+                for _, excluded in ipairs(excludeInstances) do
+                    if excluded and descendant:IsDescendantOf(excluded) then
+                        skip = true
+                        break
+                    end
+                end
+            end
+            if not skip then
+                local position = descendant.Position
+                local horizontalDelta = Vector3.new(position.X - origin.X, 0, position.Z - origin.Z)
+                local horizontalDistance = horizontalDelta.Magnitude
+                local verticalOffset = position.Y - origin.Y
+                if horizontalDistance <= 320 and verticalOffset >= 12 then
+                    matches[#matches + 1] = {
+                        part = descendant,
+                        horizontalDistance = horizontalDistance,
+                        verticalOffset = verticalOffset,
+                    }
+                end
+            end
+        end
+    end
+
+    table.sort(matches, function(a, b)
+        if math.abs(a.horizontalDistance - b.horizontalDistance) > 0.01 then
+            return a.horizontalDistance < b.horizontalDistance
+        end
+        if math.abs(a.verticalOffset - b.verticalOffset) > 0.01 then
+            return a.verticalOffset < b.verticalOffset
+        end
+        return a.part:GetFullName() < b.part:GetFullName()
+    end)
+
+    local result = {}
+    for index, match in ipairs(matches) do
+        if index > 8 then
+            break
+        end
+        local part = match.part
+        result[#result + 1] = {
+            name = part.Name,
+            path = part:GetFullName(),
+            position = vectorToTable(part.Position),
+            size = vectorToTable(part.Size),
+            material = tostring(part.Material),
+            horizontalDistance = math.round(match.horizontalDistance * 100) / 100,
+            verticalOffset = math.round(match.verticalOffset * 100) / 100,
+            parent = part.Parent and part.Parent:GetFullName() or nil,
+        }
+    end
+    return result
+end
+
+local function summarizeNearbyBuildingModels(worldRoot, origin)
+    if not worldRoot or not origin then
+        return {}
+    end
+
+    local matches = {}
+    for _, descendant in ipairs(worldRoot:GetDescendants()) do
+        if descendant:IsA("Model") then
+            local sourceId = descendant:GetAttribute("ArnisImportSourceId")
+            if type(sourceId) == "string" and sourceId ~= "" then
+                local position = descendant:GetPivot().Position
+                local horizontalDelta = Vector3.new(position.X - origin.X, 0, position.Z - origin.Z)
+                local horizontalDistance = horizontalDelta.Magnitude
+                if horizontalDistance <= 320 then
+                    matches[#matches + 1] = {
+                        model = descendant,
+                        sourceId = sourceId,
+                        horizontalDistance = horizontalDistance,
+                    }
+                end
+            end
+        end
+    end
+
+    table.sort(matches, function(a, b)
+        if math.abs(a.horizontalDistance - b.horizontalDistance) > 0.01 then
+            return a.horizontalDistance < b.horizontalDistance
+        end
+        return a.model:GetFullName() < b.model:GetFullName()
+    end)
+
+    local result = {}
+    for index, match in ipairs(matches) do
+        if index > 8 then
+            break
+        end
+        local model = match.model
+        result[#result + 1] = {
+            name = model.Name,
+            path = model:GetFullName(),
+            sourceId = match.sourceId,
+            horizontalDistance = math.round(match.horizontalDistance * 100) / 100,
+            position = vectorToTable(model:GetPivot().Position),
+            buildingUsage = model:GetAttribute("ArnisImportBuildingUsage"),
+            roofShape = model:GetAttribute("ArnisImportRoofShape"),
+            topY = model:GetAttribute("ArnisImportBuildingTopY"),
+        }
+    end
+    return result
 end
 
 local function sample()
     local player = Players:GetPlayers()[1]
     local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    local generated = Workspace:FindFirstChild("GeneratedWorld_Austin")
+    local camera = Workspace.CurrentCamera
+    local generatedAustin = Workspace:FindFirstChild("GeneratedWorld_Austin")
+    local generatedGeneric = Workspace:FindFirstChild("GeneratedWorld")
     local spawn = Workspace:FindFirstChild("CongressAveSpawn")
     local loadingPad = Workspace:FindFirstChild("AustinLoadingPad")
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {{}}
+    raycastParams.FilterDescendantsInstances = {}
     if character then
         table.insert(raycastParams.FilterDescendantsInstances, character)
     end
-    local payload = {{
+    local payload = {
         player = player and player.Name or nil,
         root = root and vectorToTable(root.Position) or nil,
-        generatedExists = generated ~= nil,
-        generatedChildren = generated and #generated:GetChildren() or 0,
+        generatedExists = generatedAustin ~= nil or generatedGeneric ~= nil,
+        generatedChildren = generatedAustin and #generatedAustin:GetChildren()
+            or (generatedGeneric and #generatedGeneric:GetChildren() or 0),
+        generatedRoot = summarizeWorldRoot(generatedAustin or generatedGeneric),
+        generatedAustin = summarizeWorldRoot(generatedAustin),
+        generatedGeneric = summarizeWorldRoot(generatedGeneric),
         spawn = spawn and vectorToTable(spawn.Position) or nil,
         loadingPad = loadingPad and vectorToTable(loadingPad.Position) or nil,
-    }}
+        cameraType = camera and tostring(camera.CameraType) or nil,
+        cameraSubject = camera and camera.CameraSubject and camera.CameraSubject:GetFullName() or nil,
+        cameraFocus = camera and vectorToTable(camera.Focus.Position) or nil,
+        cameraPosition = camera and vectorToTable(camera.CFrame.Position) or nil,
+        clientCameraType = player and player:GetAttribute("ArnisClientCameraType") or nil,
+        clientCameraSubject = player and player:GetAttribute("ArnisClientCameraSubject") or nil,
+        clientCameraSubjectClass = player and player:GetAttribute("ArnisClientCameraSubjectClass") or nil,
+        clientCameraMode = player and player:GetAttribute("ArnisClientCameraMode") or nil,
+        minimapEnabled = player and player:GetAttribute("ArnisMinimapEnabled") or nil,
+        minimapGuiReady = player and player:GetAttribute("ArnisMinimapGuiReady") or nil,
+        minimapWorldRootName = player and player:GetAttribute("ArnisMinimapWorldRootName") or nil,
+        minimapSnapshotCount = player and player:GetAttribute("ArnisMinimapSnapshotCount") or nil,
+        minimapFullscreen = player and player:GetAttribute("ArnisMinimapFullscreen") or nil,
+        minimapError = player and player:GetAttribute("ArnisMinimapError") or nil,
+        vehicleControllerReady = player and player:GetAttribute("ArnisVehicleControllerReady") or nil,
+        humanoidState = humanoid and tostring(humanoid:GetState()) or nil,
+        humanoidFloorMaterial = humanoid and tostring(humanoid.FloorMaterial) or nil,
+        humanoidHealth = humanoid and humanoid.Health or nil,
+    }
     if root then
         local hit = Workspace:Raycast(root.Position + Vector3.new(0, 4, 0), Vector3.new(0, -2000, 0), raycastParams)
-        payload.ground = hit and {{
+        payload.ground = hit and {
             position = vectorToTable(hit.Position),
             distance = math.round((root.Position.Y - hit.Position.Y) * 100) / 100,
             instance = hit.Instance and hit.Instance:GetFullName() or nil,
             material = tostring(hit.Material),
-        }} or nil
+        } or nil
+        payload.nearbyOverheadRoofParts = summarizeNearbyOverheadRoofParts(
+            generatedAustin or generatedGeneric,
+            root.Position,
+            raycastParams.FilterDescendantsInstances
+        )
+        payload.nearbyBuildingModels = summarizeNearbyBuildingModels(generatedAustin or generatedGeneric, root.Position)
     end
     payload.timeTravelState = Workspace:GetAttribute("VertigoSyncTimeTravelState")
     payload.previewState = Workspace:GetAttribute("VertigoPreviewSyncState")
@@ -2778,33 +3202,46 @@ local function sample()
     payload.austinSpawnX = Workspace:GetAttribute("VertigoAustinSpawnX")
     payload.austinSpawnY = Workspace:GetAttribute("VertigoAustinSpawnY")
     payload.austinSpawnZ = Workspace:GetAttribute("VertigoAustinSpawnZ")
+    payload.austinStatus = Workspace:GetAttribute("VertigoAustinStatus")
+    payload.austinManifestName = Workspace:GetAttribute("VertigoAustinManifestName")
+    payload.austinWorldRootName = Workspace:GetAttribute("VertigoAustinWorldRootName")
+    payload.austinWorldRootExists = Workspace:GetAttribute("VertigoAustinWorldRootExists")
+    payload.austinWorldRootChildCount = Workspace:GetAttribute("VertigoAustinWorldRootChildCount")
+    payload.austinWorldRootDescendantCount = Workspace:GetAttribute("VertigoAustinWorldRootDescendantCount")
+    payload.bootstrapState = Workspace:GetAttribute("ArnisAustinBootstrapState")
+    payload.bootstrapStateTrace = Workspace:GetAttribute("ArnisAustinBootstrapStateTrace")
+    payload.bootstrapDuplicateCount = Workspace:GetAttribute("ArnisAustinBootstrapDuplicateCount")
+    payload.bootstrapEntryCount = Workspace:GetAttribute("ArnisAustinBootstrapEntryCount")
+    payload.bootstrapLastScriptPath = Workspace:GetAttribute("ArnisAustinBootstrapLastScriptPath")
+    payload.streamingLoadedChunkCount = Workspace:GetAttribute("ArnisStreamingLoadedChunkCount")
+    payload.streamingDesiredChunkCount = Workspace:GetAttribute("ArnisStreamingDesiredChunkCount")
+    payload.streamingCandidateChunkCount = Workspace:GetAttribute("ArnisStreamingCandidateChunkCount")
+    payload.streamingProcessedWorkItems = Workspace:GetAttribute("ArnisStreamingProcessedWorkItems")
+    payload.streamingLastFocalX = Workspace:GetAttribute("ArnisStreamingLastFocalX")
+    payload.streamingLastFocalZ = Workspace:GetAttribute("ArnisStreamingLastFocalZ")
     return payload
 end
 
 task.wait(__WAIT_SECONDS__)
 local firstSample = sample()
 print("ARNIS_MCP_PLAY " .. HttpService:JSONEncode(firstSample))
-emitSceneMarkers("ARNIS_SCENE_PLAY", "play", "GeneratedWorld_Austin", 1500, SceneAudit.summarizeWorld(Workspace:FindFirstChild("GeneratedWorld_Austin")))
 task.wait(2)
 local lateSample = sample()
 print("ARNIS_MCP_PLAY_LATE " .. HttpService:JSONEncode(lateSample))
-emitSceneMarkers("ARNIS_SCENE_PLAY", "play", "GeneratedWorld_Austin", 1500, SceneAudit.summarizeWorld(Workspace:FindFirstChild("GeneratedWorld_Austin")))
 """).strip()
 luau = luau.replace("__WAIT_SECONDS__", str(wait_seconds))
+play_probe_succeeded = False
 
 try:
     client.initialize()
-    try:
-        client.call_tool("start_stop_play", {"mode": "stop"}, allow_is_error=True)
-    except Exception:
-        pass
-    result = client.call_tool(
-        "run_script_in_play_mode",
-        {"mode": "start_play", "code": luau, "timeout": max(wait_seconds + 30, 60)},
+    result = run_code_in_play_session(
+        client,
+        luau,
+        requested_mode="start_play",
         allow_is_error=True,
         timeout_seconds=max(wait_seconds + 35, 70),
     )
-    print(f"[harness-mcp] phase=play run_script={json.dumps(result, separators=(',', ':'))}")
+    print(f"[harness-mcp] phase=play run_code={json.dumps(result, separators=(',', ':'))}")
     text_fragments = []
     if isinstance(result, dict):
         if result.get("isError"):
@@ -2817,12 +3254,14 @@ try:
     joined = "\n".join(text_fragments)
     if "Failed to run script in play mode" in joined or "Previous call to start play session has not been completed" in joined:
         raise RuntimeError(joined)
+    play_probe_succeeded = True
 finally:
     signal.alarm(0)
-    try:
-        client.call_tool("start_stop_play", {"mode": "stop"}, allow_is_error=True)
-    except Exception:
-        pass
+    if not play_probe_succeeded:
+        try:
+            client.call_tool("start_stop_play", {"mode": "stop"}, allow_is_error=True)
+        except Exception:
+            pass
     client.close()
 PY
   ) &
@@ -2845,13 +3284,270 @@ PY
   wait "$probe_pid"
 }
 
+log_effective_play_camera_state() {
+  local summary_source="${1:-$ACTIVE_LOG}"
+  if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" && "$summary_source" == "$ACTIVE_LOG" ]]; then
+    summary_source="$LOG_SLICE_FILE"
+  fi
+  if rg -q "ARNIS_CLIENT_CAMERA " "$summary_source"; then
+    local latest_client_camera=""
+    local camera_json=""
+    local camera_verdict=""
+    latest_client_camera="$(grep -E "ARNIS_CLIENT_CAMERA " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_client_camera" ]]; then
+      camera_json="${latest_client_camera#*ARNIS_CLIENT_CAMERA }"
+      camera_verdict="$(python3 - "$camera_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+camera_type = payload.get("cameraType")
+camera_subject = payload.get("cameraSubject")
+camera_mode = payload.get("cameraMode")
+subject_class = payload.get("cameraSubjectClass")
+
+parts = ["source=client_marker"]
+if isinstance(camera_type, str) and camera_type:
+    parts.append(f"cameraType={camera_type}")
+if isinstance(camera_subject, str) and camera_subject:
+    parts.append(f"cameraSubject={camera_subject}")
+if isinstance(subject_class, str) and subject_class:
+    parts.append(f"cameraSubjectClass={subject_class}")
+if isinstance(camera_mode, str) and camera_mode:
+    parts.append(f"cameraMode={camera_mode}")
+
+print(" ".join(parts))
+PY
+)"
+      log "play camera verdict (authoritative client): $camera_verdict"
+      return 0
+    fi
+  fi
+  if rg -q "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source"; then
+    local latest_server_camera=""
+    local server_json=""
+    local server_verdict=""
+    latest_server_camera="$(grep -E "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_server_camera" ]]; then
+      if [[ "$latest_server_camera" == *"ARNIS_MCP_PLAY_LATE "* ]]; then
+        server_json="${latest_server_camera#*ARNIS_MCP_PLAY_LATE }"
+      else
+        server_json="${latest_server_camera#*ARNIS_MCP_PLAY }"
+      fi
+      server_verdict="$(python3 - "$server_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+camera_type = payload.get("clientCameraType") or payload.get("cameraType")
+camera_subject = payload.get("clientCameraSubject") or payload.get("cameraSubject")
+camera_mode = payload.get("clientCameraMode")
+subject_class = payload.get("clientCameraSubjectClass")
+
+parts = ["source=server_probe_fallback"]
+if isinstance(camera_type, str) and camera_type:
+    parts.append(f"cameraType={camera_type}")
+if isinstance(camera_subject, str) and camera_subject:
+    parts.append(f"cameraSubject={camera_subject}")
+if isinstance(subject_class, str) and subject_class:
+    parts.append(f"cameraSubjectClass={subject_class}")
+if isinstance(camera_mode, str) and camera_mode:
+    parts.append(f"cameraMode={camera_mode}")
+
+print(" ".join(parts))
+PY
+)"
+      log "play camera verdict (server fallback): $server_verdict"
+    fi
+  fi
+}
+
+log_effective_play_minimap_state() {
+  local summary_source="${1:-$ACTIVE_LOG}"
+  if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" && "$summary_source" == "$ACTIVE_LOG" ]]; then
+    summary_source="$LOG_SLICE_FILE"
+  fi
+  if rg -q "ARNIS_CLIENT_MINIMAP " "$summary_source"; then
+    local latest_client_minimap=""
+    local minimap_json=""
+    local minimap_verdict=""
+    latest_client_minimap="$(grep -E "ARNIS_CLIENT_MINIMAP " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_client_minimap" ]]; then
+      minimap_json="${latest_client_minimap#*ARNIS_CLIENT_MINIMAP }"
+      minimap_verdict="$(python3 - "$minimap_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+parts = ["source=client_marker"]
+for key in ("enabled", "guiReady", "worldRootName", "snapshotCount", "fullscreen", "error"):
+    value = payload.get(key)
+    if value is not None and value != "":
+        parts.append(f"{key}={value}")
+print(" ".join(parts))
+PY
+)"
+      log "play minimap verdict (authoritative client): $minimap_verdict"
+      return 0
+    fi
+  fi
+  if rg -q "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source"; then
+    local latest_server_minimap=""
+    local minimap_json=""
+    local minimap_verdict=""
+    latest_server_minimap="$(grep -E "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_server_minimap" ]]; then
+      if [[ "$latest_server_minimap" == *"ARNIS_MCP_PLAY_LATE "* ]]; then
+        minimap_json="${latest_server_minimap#*ARNIS_MCP_PLAY_LATE }"
+      else
+        minimap_json="${latest_server_minimap#*ARNIS_MCP_PLAY }"
+      fi
+      minimap_verdict="$(python3 - "$minimap_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+parts = ["source=server_probe_fallback"]
+for key in ("minimapEnabled", "minimapGuiReady", "minimapWorldRootName", "minimapSnapshotCount", "minimapFullscreen", "minimapError"):
+    value = payload.get(key)
+    if value is not None and value != "":
+        parts.append(f"{key}={value}")
+print(" ".join(parts))
+PY
+)"
+      log "play minimap verdict (server fallback): $minimap_verdict"
+    fi
+  fi
+}
+
+log_effective_play_world_state() {
+  local summary_source="${1:-$ACTIVE_LOG}"
+  if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" && "$summary_source" == "$ACTIVE_LOG" ]]; then
+    summary_source="$LOG_SLICE_FILE"
+  fi
+  if rg -q "ARNIS_CLIENT_WORLD " "$summary_source"; then
+    local latest_client_world=""
+    local world_json=""
+    local world_verdict=""
+    latest_client_world="$(grep -E "ARNIS_CLIENT_WORLD " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_client_world" ]]; then
+      world_json="${latest_client_world#*ARNIS_CLIENT_WORLD }"
+      world_verdict="$(python3 - "$world_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+parts = ["source=client_marker"]
+for key in ("worldRootName", "worldRootExists", "nearbyBuildingModels", "nearbyRoofParts", "overheadRoofParts"):
+    value = payload.get(key)
+    if value is not None and value != "":
+        parts.append(f"{key}={value}")
+for key in ("nearestBuildingSourceIds", "overheadRoofSourceIds"):
+    value = payload.get(key)
+    if isinstance(value, list) and value:
+        parts.append(f"{key}={','.join(str(entry) for entry in value[:3])}")
+print(" ".join(parts))
+PY
+)"
+      log "play world verdict (authoritative client): $world_verdict"
+      return 0
+    fi
+  fi
+  if rg -q "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source"; then
+    local latest_server_world=""
+    local world_json=""
+    local world_verdict=""
+    latest_server_world="$(grep -E "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source" | tail -n 1 || true)"
+    if [[ -n "$latest_server_world" ]]; then
+      if [[ "$latest_server_world" == *"ARNIS_MCP_PLAY_LATE "* ]]; then
+        world_json="${latest_server_world#*ARNIS_MCP_PLAY_LATE }"
+      else
+        world_json="${latest_server_world#*ARNIS_MCP_PLAY }"
+      fi
+      world_verdict="$(python3 - "$world_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+parts = ["source=server_probe_fallback"]
+for key in ("generatedExists", "generatedChildren"):
+    value = payload.get(key)
+    if value is not None and value != "":
+        parts.append(f"{key}={value}")
+print(" ".join(parts))
+PY
+)"
+      log "play world verdict (server fallback): $world_verdict"
+    fi
+  fi
+}
+
+validate_play_bootstrap_trace() {
+  local summary_source="${1:-$ACTIVE_LOG}"
+  if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" && "$summary_source" == "$ACTIVE_LOG" ]]; then
+    summary_source="$LOG_SLICE_FILE"
+  fi
+  if ! rg -q "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source"; then
+    log "play bootstrap trace unavailable; skipping ordered bootstrap validation"
+    return 0
+  fi
+  local latest_server_world=""
+  local world_json=""
+  latest_server_world="$(grep -E "ARNIS_MCP_PLAY_LATE |ARNIS_MCP_PLAY " "$summary_source" | tail -n 1 || true)"
+  if [[ -z "$latest_server_world" ]]; then
+    log "play bootstrap trace unavailable; skipping ordered bootstrap validation"
+    return 0
+  fi
+  if [[ "$latest_server_world" == *"ARNIS_MCP_PLAY_LATE "* ]]; then
+    world_json="${latest_server_world#*ARNIS_MCP_PLAY_LATE }"
+  else
+    world_json="${latest_server_world#*ARNIS_MCP_PLAY }"
+  fi
+  if ! python3 - "$world_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+trace_text = payload.get("bootstrapStateTrace")
+if not isinstance(trace_text, str) or not trace_text:
+    raise SystemExit(1)
+duplicate_count = payload.get("bootstrapDuplicateCount")
+if duplicate_count not in (None, 0):
+    raise SystemExit(1)
+
+trace = [part for part in trace_text.split(",") if part]
+required = [
+    "loading_manifest",
+    "importing_startup",
+    "world_ready",
+    "streaming_ready",
+    "minimap_ready",
+    "gameplay_ready",
+]
+position = 0
+for state in required:
+    try:
+        index = trace.index(state, position)
+    except ValueError:
+        raise SystemExit(1)
+    position = index + 1
+PY
+  then
+    echo "[harness] ordered runtime bootstrap trace missing or invalid" >&2
+    return 1
+  fi
+}
+
 summarize_log() {
   local summary_source="$ACTIVE_LOG"
   if [[ -n "$LOG_SLICE_FILE" && -f "$LOG_SLICE_FILE" ]]; then
     summary_source="$LOG_SLICE_FILE"
   fi
+  log_effective_play_camera_state "$summary_source"
+  log_effective_play_minimap_state "$summary_source"
+  log_effective_play_world_state "$summary_source"
   log "summary from $(basename "$ACTIVE_LOG")"
-  grep -E "TestEZ tests complete|PASS |FAIL |Tests failed|BootstrapAustin|RunAustin|AustinPreviewBuilder|ArnisRoblox|VertigoSync|RunAll|Austin anchor|anchor resolved|ARNIS_MCP_PLAY|ARNIS_MCP_PLAY_LATE|ARNIS_MCP_EDIT|ARNIS_SCENE_EDIT|ARNIS_SCENE_PLAY|\\[harness-mcp\\]" "$summary_source" | tail -n 260 || true
+  grep -E "TestEZ tests complete|PASS |FAIL |Tests failed|BootstrapAustin|RunAustin|AustinPreviewBuilder|ArnisRoblox|VertigoSync|RunAll|Austin anchor|anchor resolved|ARNIS_CLIENT_WORLD|ARNIS_CLIENT_CAMERA|ARNIS_CLIENT_MINIMAP|ARNIS_MCP_PLAY|ARNIS_MCP_PLAY_LATE|ARNIS_MCP_EDIT|ARNIS_SCENE_EDIT|ARNIS_SCENE_PLAY|\\[harness-mcp\\]" "$summary_source" | tail -n 260 || true
 }
 
 run_scene_fidelity_audits() {
@@ -2988,6 +3684,11 @@ run_plugin_smoke_check() {
 
 enable_runall_entry
 ensure_vsync_plugin_installed
+ensure_mcp_plugin_installed || {
+  echo "[harness] failed to install/update the Roblox Studio MCP plugin" >&2
+  exit 1
+}
+start_mcp_sidecar || true
 auto_prepare_place
 ensure_vsync_server_running
 start_memory_monitor
@@ -3117,6 +3818,9 @@ elif [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && "$CURRENT_STUDIO_STATUS" == "ready
 fi
 
 if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || $ATTACHED_SESSION_ALREADY_PLAYING -eq 0 ]]; then
+  if should_skip_edit_mode_actions_for_play; then
+    log "skipping edit-mode actions before play-focused harness run"
+  else
   edit_mcp_status=0
   edit_actions_via_mcp=0
   edit_actions_via_runall_entry=0
@@ -3152,9 +3856,12 @@ if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 0 || $ATTACHED_SESSION_ALREADY_PLAYING -e
   fi
   if [[ $edit_actions_via_mcp -eq 1 ]] && edit_action_completed_successfully_in_log; then
     log "skipping redundant edit MCP probe after successful log-backed edit action"
+  elif ! should_run_edit_probe_best_effort; then
+    log "skipping redundant edit MCP probe for isolated non-preview spec"
   else
     log "capturing edit MCP probe"
     run_probe_best_effort "edit" 5
+  fi
   fi
 fi
 
@@ -3162,6 +3869,7 @@ if [[ $ATTACHED_TO_EXISTING_STUDIO -eq 1 && $ATTACHED_SESSION_ALREADY_PLAYING -e
   log "capturing attached play screenshot"
   capture_studio_screenshot "play"
   run_probe_best_effort "play" 8
+  validate_play_bootstrap_trace "$ACTIVE_LOG"
 elif [[ $DO_PLAY -eq 1 ]]; then
   if [[ $KEEP_RUNALL_ENABLED -eq 0 ]]; then
     log "disabling RunAll before play"
@@ -3183,8 +3891,9 @@ elif [[ $DO_PLAY -eq 1 ]]; then
       log "play-mode Austin markers not observed before timeout; continuing"
     fi
   fi
-  capture_studio_screenshot "play"
   run_probe_best_effort "play" 8
+  validate_play_bootstrap_trace "$ACTIVE_LOG"
+  capture_studio_screenshot "play"
   stop_play_mode || true
 fi
 

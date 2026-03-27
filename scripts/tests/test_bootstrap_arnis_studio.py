@@ -38,6 +38,7 @@ class BootstrapArnisStudioTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("default.project.json", result.stdout)
         self.assertIn("--open", result.stdout)
+        self.assertIn("--roblox-root", result.stdout)
 
     def test_build_place_uses_default_project_and_repo_out_dir(self) -> None:
         module = load_bootstrap_module()
@@ -55,6 +56,35 @@ class BootstrapArnisStudioTests(unittest.TestCase):
                 "build",
                 "--project",
                 "default.project.json",
+                "--output",
+                str(output_path),
+            ],
+            check=True,
+        )
+
+    def test_build_place_accepts_custom_project_name_and_roblox_root(self) -> None:
+        module = load_bootstrap_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            roblox_root = Path(temp_dir) / "roblox-copy"
+            output_path = Path(temp_dir) / "custom.rbxlx"
+            run = mock.Mock()
+            module.build_place(
+                "vsync-bin",
+                roblox_root,
+                output_path,
+                project_name="isolated.project.json",
+                run_command=run,
+            )
+
+        run.assert_called_once_with(
+            [
+                "vsync-bin",
+                "--root",
+                str(roblox_root),
+                "build",
+                "--project",
+                "isolated.project.json",
                 "--output",
                 str(output_path),
             ],

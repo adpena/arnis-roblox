@@ -52,20 +52,20 @@ return function()
     -- 3. Update with focal point at 0,0,0
     StreamingService.Update(Vector3.new(0, 0, 0))
 
-    local loaded = ChunkLoader.ListLoadedChunks()
+    local loaded = ChunkLoader.ListLoadedChunks(testOptions.worldRootName)
     Assert.equal(#loaded, 1, "expected 1 chunk loaded at origin")
     Assert.equal(loaded[1], "near_chunk", "expected near_chunk to be loaded")
 
     -- 4. Update with focal point near far_chunk
     StreamingService.Update(Vector3.new(2000, 0, 2000))
 
-    loaded = ChunkLoader.ListLoadedChunks()
+    loaded = ChunkLoader.ListLoadedChunks(testOptions.worldRootName)
     Assert.equal(#loaded, 1, "expected 1 chunk loaded at far point")
     Assert.equal(loaded[1], "far_chunk", "expected far_chunk to be loaded and near_chunk unloaded")
 
     -- 5. Update with focal point between them (radius 500 should see neither)
     StreamingService.Update(Vector3.new(1000, 0, 1000))
-    loaded = ChunkLoader.ListLoadedChunks()
+    loaded = ChunkLoader.ListLoadedChunks(testOptions.worldRootName)
     Assert.equal(#loaded, 0, "expected no chunks loaded in middle")
 
     -- Cleanup

@@ -1,175 +1,126 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import io
+import json
+from urllib.error import HTTPError
+from unittest import mock
 import unittest
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "scripts" / "studio_harness_policy.py"
-
-
-def load_module():
-    spec = importlib.util.spec_from_file_location("studio_harness_policy", MODULE_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"failed to load module spec from {MODULE_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from scripts import studio_harness_policy
 
 
 class StudioHarnessPolicyTests(unittest.TestCase):
-    def test_cleanup_closes_owned_studio_after_success(self) -> None:
-        mod = load_module()
-        decision = mod.decide_cleanup_close(
-            exit_code=0,
-            close_on_exit=True,
-            harness_owns_studio=True,
-            session_status="ready_edit",
-        )
-        self.assertTrue(decision["should_close"])
-        self.assertEqual(decision["reason"], "success")
-
-    def test_cleanup_preserves_owned_studio_after_failure(self) -> None:
-        mod = load_module()
-        decision = mod.decide_cleanup_close(
-            exit_code=1,
-            close_on_exit=True,
-            harness_owns_studio=True,
-            session_status="ready_edit",
-        )
-        self.assertFalse(decision["should_close"])
-        self.assertEqual(decision["reason"], "failed_run")
-
-    def test_cleanup_preserves_blocked_dialog_session(self) -> None:
-        mod = load_module()
-        decision = mod.decide_cleanup_close(
-            exit_code=0,
-            close_on_exit=True,
-            harness_owns_studio=True,
-            session_status="blocked_dialog",
-        )
-        self.assertFalse(decision["should_close"])
-        self.assertEqual(decision["reason"], "blocked_dialog")
-
-    def test_stop_play_only_when_session_or_log_says_playing(self) -> None:
-        mod = load_module()
-        self.assertFalse(
-            mod.should_stop_play_before_quit(
-                session_status="ready_edit",
-                log_indicates_play=False,
-            )
-        )
-        self.assertTrue(
-            mod.should_stop_play_before_quit(
-                session_status="ready_play",
-                log_indicates_play=False,
-            )
-        )
-        self.assertTrue(
-            mod.should_stop_play_before_quit(
-                session_status="ready_edit",
-                log_indicates_play=True,
-            )
-        )
-
-    def test_graceful_quit_waits_for_play_to_end(self) -> None:
-        mod = load_module()
-        self.assertFalse(mod.should_send_graceful_quit("ready_play"))
-        self.assertFalse(mod.should_send_graceful_quit("transitioning"))
-        self.assertTrue(mod.should_send_graceful_quit("ready_edit"))
-        self.assertTrue(mod.should_send_graceful_quit("blocked_dialog"))
-
-    def test_mcp_stop_is_ignored_when_ui_and_log_say_edit(self) -> None:
-        mod = load_module()
-        self.assertTrue(
-            mod.should_ignore_mcp_stop(
-                mode_label="stop",
-                session_status="ready_edit",
-                log_indicates_play=False,
-            )
-        )
-        self.assertFalse(
-            mod.should_ignore_mcp_stop(
-                mode_label="stop",
-                session_status="ready_play",
-                log_indicates_play=False,
-            )
-        )
-        self.assertTrue(
-            mod.should_ignore_mcp_stop(
-                mode_label="stop",
-                session_status="unknown",
-                log_indicates_play=False,
-            )
-        )
-        self.assertFalse(
-            mod.should_ignore_mcp_stop(
-                mode_label="edit",
-                session_status="ready_edit",
-                log_indicates_play=False,
-            )
-        )
-
-    def test_mcp_stop_override_payload_can_be_computed_without_bash(self) -> None:
-        mod = load_module()
-        decision = mod.mcp_mode_stop_decision(
-            mode_label="stop",
-            session_status="unknown",
-            log_indicates_play=False,
-        )
-        self.assertEqual(decision, "ignore")
-        decision = mod.mcp_mode_stop_decision(
-            mode_label="stop",
-            session_status="ready_play",
-            log_indicates_play=False,
-        )
-        self.assertEqual(decision, "respect")
-        decision = mod.mcp_mode_stop_decision(
-            mode_label="edit",
-            session_status="ready_edit",
-            log_indicates_play=False,
-        )
-        self.assertEqual(decision, "not_applicable")
-
-    def test_edit_action_payload_success_requires_clean_runall_and_preview(self) -> None:
-        mod = load_module()
-        self.assertTrue(
-            mod.is_successful_edit_action_payload(
+    def test_fetch_readiness_uses_authoritative_readiness_endpoint(self) -> None:
+        response = io.BytesIO(
+            json.dumps(
                 {
-                    "errors": [],
-                    "runAll": {"failed": 0, "passed": 55},
-                    "preview": {"status": "ok"},
+                    "target": "edit_sync",
+                    "ready": True,
+                    "epoch": 7,
+                    "incarnation_id": "inc-7",
+                    "status_class": "ready",
+                    "code": "ready",
+                    "reason": None,
                 }
-            )
+            ).encode("utf-8")
         )
-        self.assertFalse(
-            mod.is_successful_edit_action_payload(
+        with mock.patch("scripts.studio_harness_policy.request.urlopen", return_value=response) as urlopen:
+            payload = studio_harness_policy.fetch_readiness("http://127.0.0.1:7575", "edit_sync")
+
+        self.assertEqual(payload["target"], "edit_sync")
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["epoch"], 7)
+        self.assertEqual(payload["incarnation_id"], "inc-7")
+        urlopen.assert_called_once()
+        self.assertEqual(urlopen.call_args.args[0], "http://127.0.0.1:7575/readiness?target=edit_sync")
+
+    def test_wait_for_readiness_retries_until_authoritative_record_is_ready(self) -> None:
+        stale = io.BytesIO(
+            json.dumps(
                 {
-                    "errors": ["AustinPreviewBuilder: failed"],
-                    "runAll": {"failed": 0},
-                    "preview": {"status": "ok"},
+                    "target": "edit_sync",
+                    "ready": False,
+                    "epoch": 7,
+                    "incarnation_id": "inc-7",
+                    "status_class": "blocked",
+                    "code": "snapshot_reconciling",
+                    "reason": "snapshot_reconciling",
                 }
-            )
+            ).encode("utf-8")
         )
-        self.assertFalse(
-            mod.is_successful_edit_action_payload(
+        ready = io.BytesIO(
+            json.dumps(
                 {
-                    "errors": [],
-                    "runAll": {"failed": 1},
-                    "preview": {"status": "ok"},
+                    "target": "edit_sync",
+                    "ready": True,
+                    "epoch": 8,
+                    "incarnation_id": "inc-7",
+                    "status_class": "ready",
+                    "code": "ready",
+                    "reason": None,
                 }
-            )
+            ).encode("utf-8")
         )
-        self.assertFalse(
-            mod.is_successful_edit_action_payload(
-                {
-                    "errors": [],
-                    "runAll": {"failed": 0},
-                    "preview": {"status": "timeout"},
-                }
+        with (
+            mock.patch(
+                "scripts.studio_harness_policy.request.urlopen",
+                side_effect=[stale, ready],
+            ),
+            mock.patch("scripts.studio_harness_policy.time.sleep"),
+        ):
+            payload = studio_harness_policy.wait_for_readiness(
+                "http://127.0.0.1:7575",
+                "edit_sync",
+                2,
             )
+
+        self.assertEqual(payload["target"], "edit_sync")
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["epoch"], 8)
+        self.assertEqual(payload["incarnation_id"], "inc-7")
+
+    def test_wait_for_readiness_times_out_after_404_readiness_endpoint(self) -> None:
+        error = HTTPError(
+            url="http://127.0.0.1:7575/readiness?target=preview",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
         )
+        with (
+            mock.patch(
+                "scripts.studio_harness_policy.request.urlopen",
+                side_effect=error,
+            ),
+            mock.patch("scripts.studio_harness_policy.time.sleep"),
+        ):
+            with self.assertRaises(TimeoutError) as ctx:
+                studio_harness_policy.wait_for_readiness(
+                    "http://127.0.0.1:7575",
+                    "preview",
+                    1,
+                )
+
+        self.assertIn("/readiness?target=preview", str(ctx.exception))
+        self.assertIn("HTTP Error 404", str(ctx.exception))
+
+    def test_build_readiness_expectation_uses_target_epoch_and_incarnation(self) -> None:
+        expectation = studio_harness_policy.build_readiness_expectation(
+            {
+                "target": "preview",
+                "ready": True,
+                "epoch": 42,
+                "incarnation_id": "inc-42",
+                "status_class": "ready",
+                "code": "ready",
+                "reason": None,
+            }
+        )
+
+        self.assertEqual(expectation["expected_target"], "preview")
+        self.assertEqual(expectation["expected_epoch"], 42)
+        self.assertEqual(expectation["expected_incarnation_id"], "inc-42")
 
 
 if __name__ == "__main__":

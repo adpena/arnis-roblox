@@ -14,6 +14,7 @@ import mmap
 import re
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +22,41 @@ from json_manifest_to_sharded_lua import CHUNK_LIST_FIELDS, INDEX_ONLY_FIELDS, l
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_generated_artifact_root(root: Path) -> Path:
+    artifact_dir = root / "rust" / "out"
+    if artifact_dir.exists():
+        return root
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return root
+
+    common_dir = Path(result.stdout.strip())
+    shared_root = common_dir.parent if common_dir.name == ".git" else common_dir
+    if (shared_root / "rust" / "out").exists():
+        return shared_root
+    return root
+
+
+ARTIFACT_ROOT = resolve_generated_artifact_root(ROOT)
 SOURCE_INDEX = ROOT / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestIndex.lua"
-SOURCE_JSON = ROOT / "rust" / "out" / "austin-manifest.json"
-SOURCE_SQLITE = ROOT / "rust" / "out" / "austin-manifest.sqlite"
+SOURCE_JSON = ARTIFACT_ROOT / "rust" / "out" / "austin-manifest.json"
+SOURCE_SQLITE = ARTIFACT_ROOT / "rust" / "out" / "austin-manifest.sqlite"
 PREVIEW_DIR = ROOT / "roblox" / "src" / "ServerScriptService" / "StudioPreview"
 PREVIEW_INDEX = PREVIEW_DIR / "AustinPreviewManifestIndex.lua"
 PREVIEW_SHARDS = PREVIEW_DIR / "AustinPreviewManifestChunks"
+CANONICAL_SAMPLE_DATA_DIR = ROOT / "roblox" / "src" / "ServerStorage" / "SampleData"
+CANONICAL_INDEX = CANONICAL_SAMPLE_DATA_DIR / "AustinCanonicalManifestIndex.lua"
+CANONICAL_SHARDS = CANONICAL_SAMPLE_DATA_DIR / "AustinCanonicalManifestChunks"
 MAX_PREVIEW_BYTES = 199_998
 
 TARGET_CHUNK_IDS = ["-1_-1", "0_-1", "-1_0", "0_0"]
@@ -692,6 +722,13 @@ def write_preview_index(
     *,
     canonical_anchor_position: tuple[float, float, float],
     chunk_size_studs: float,
+    output_path: Path = PREVIEW_INDEX,
+    world_name: str = "AustinPreviewDowntown",
+    shard_folder: str = "AustinPreviewManifestChunks",
+    notes: tuple[str, str] = (
+        "studio preview subset derived from rust/out/austin-manifest.json",
+        "kept in sync with runtime sample-data generation to avoid stale preview drift",
+    ),
 ) -> None:
     anchor_x, anchor_y, anchor_z = canonical_anchor_position
 
@@ -699,7 +736,7 @@ def write_preview_index(
         "return {",
         f'    schemaVersion = "{schema_version}",',
         "    meta = {",
-        '        worldName = "AustinPreviewDowntown",',
+        f'        worldName = "{world_name}",',
         '        generator = "arbx_roblox_export",',
         '        source = "pipeline-export",',
         "        metersPerStud = 1,",
@@ -715,11 +752,11 @@ def write_preview_index(
         "            lookDirectionStuds = { x = 0, y = 0, z = 1 },",
         "        },",
         "        notes = {",
-        '            "studio preview subset derived from rust/out/austin-manifest.json",',
-        '            "kept in sync with runtime sample-data generation to avoid stale preview drift",',
+        f'            "{notes[0]}",',
+        f'            "{notes[1]}",',
         "        },",
         "    },",
-        '    shardFolder = "AustinPreviewManifestChunks",',
+        f'    shardFolder = "{shard_folder}",',
         "    shards = {",
     ]
 
@@ -758,7 +795,38 @@ def write_preview_index(
         lines.append("        },")
 
     lines.extend(["    },", "}", ""])
-    PREVIEW_INDEX.write_text("\n".join(lines), encoding="utf-8")
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def clone_chunk_ref_entries(chunk_refs: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, dict[str, Any]]]:
+    cloned: list[tuple[str, dict[str, Any]]] = []
+    for chunk_id, chunk_ref in chunk_refs:
+        cloned.append((chunk_id, dict(chunk_ref)))
+    return cloned
+
+
+def write_preview_style_shards(
+    chunk_refs: list[tuple[str, dict[str, Any]]],
+    source_chunks: dict[str, dict[str, Any]],
+    *,
+    shards_dir: Path,
+    shard_prefix: str,
+) -> list[str]:
+    shutil.rmtree(shards_dir, ignore_errors=True)
+    shards_dir.mkdir(parents=True, exist_ok=True)
+
+    shard_names: list[str] = []
+    shard_index = 1
+    for chunk_id, chunk_ref in chunk_refs:
+        chunk = source_chunks[chunk_id]
+        fragments = fragment_preview_chunk(chunk, MAX_PREVIEW_BYTES)
+        for fragment in fragments:
+            shard_name = f"{shard_prefix}_{shard_index:03d}"
+            write_lua_module(shards_dir / f"{shard_name}.lua", {"chunks": [fragment]})
+            chunk_ref["shards"].append(shard_name)
+            shard_names.append(shard_name)
+            shard_index += 1
+    return shard_names
 
 
 def base_preview_chunk_fragment(chunk: dict) -> dict:
@@ -926,34 +994,50 @@ def main() -> int:
             )
         )
 
-    shutil.rmtree(PREVIEW_SHARDS, ignore_errors=True)
-    PREVIEW_SHARDS.mkdir(parents=True, exist_ok=True)
-
-    shard_names: list[str] = []
-    shard_index = 1
-    for chunk_id, chunk_ref in preview_chunk_refs:
-        chunk = source_chunks[chunk_id]
-        fragments = fragment_preview_chunk(chunk, MAX_PREVIEW_BYTES)
-        for fragment in fragments:
-            shard_name = f"AustinPreviewManifestIndex_{shard_index:03d}"
-            write_lua_module(PREVIEW_SHARDS / f"{shard_name}.lua", {"chunks": [fragment]})
-            chunk_ref["shards"].append(shard_name)
-            shard_names.append(shard_name)
-            shard_index += 1
-
+    preview_chunk_refs_for_index = clone_chunk_ref_entries(preview_chunk_refs)
+    canonical_chunk_refs_for_index = clone_chunk_ref_entries(preview_chunk_refs)
+    shard_names = write_preview_style_shards(
+        preview_chunk_refs_for_index,
+        source_chunks,
+        shards_dir=PREVIEW_SHARDS,
+        shard_prefix="AustinPreviewManifestIndex",
+    )
+    canonical_shard_names = write_preview_style_shards(
+        canonical_chunk_refs_for_index,
+        source_chunks,
+        shards_dir=CANONICAL_SHARDS,
+        shard_prefix="AustinCanonicalManifestIndex",
+    )
     total_features = compute_preview_total_features(preview_chunk_refs, source_chunks)
     write_preview_index(
         schema_version,
         total_features,
-        preview_chunk_refs,
+        preview_chunk_refs_for_index,
         shard_names,
         canonical_anchor_position=canonical_anchor_position,
         chunk_size_studs=chunk_size_studs,
+        output_path=PREVIEW_INDEX,
+    )
+    write_preview_index(
+        schema_version,
+        total_features,
+        canonical_chunk_refs_for_index,
+        canonical_shard_names,
+        canonical_anchor_position=canonical_anchor_position,
+        chunk_size_studs=chunk_size_studs,
+        output_path=CANONICAL_INDEX,
+        world_name="AustinCanonicalBounded",
+        shard_folder="AustinCanonicalManifestChunks",
+        notes=(
+            "bounded canonical full-bake subset derived from rust/out/austin-manifest.json",
+            "kept in sync with Studio preview generation to prevent edit/play/export drift",
+        ),
     )
 
     print(f"Refreshed StudioPreview from {SOURCE_JSON}")
     print(f"Selected {len(preview_chunk_ids)} preview chunks from AustinManifestIndex.lua")
     print(f"Wrote {len(shard_names)} preview shards to {PREVIEW_SHARDS}")
+    print(f"Wrote {len(canonical_shard_names)} canonical sample-data shards to {CANONICAL_SHARDS}")
     return 0
 
 

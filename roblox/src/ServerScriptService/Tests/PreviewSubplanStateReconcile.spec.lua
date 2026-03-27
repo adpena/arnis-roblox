@@ -13,6 +13,7 @@ return function()
     local originalGetSubplanState = ImportService.GetSubplanState
     local originalResetSubplanState = ImportService.ResetSubplanState
     local originalLoadNamedShardedSampleHandle = ManifestLoader.LoadNamedShardedSampleHandle
+    local originalLoadShardedModuleHandle = ManifestLoader.LoadShardedModuleHandle
     local originalSubplanRollout = table.clone(DefaultWorldConfig.SubplanRollout)
 
     local function ensureChunkFolder(worldRootName, chunkId)
@@ -104,7 +105,7 @@ return function()
             return chunkFolder, 0
         end
 
-        ManifestLoader.LoadNamedShardedSampleHandle = function()
+        local function makeHandle()
             local handle = {
                 schemaVersion = "0.4.0",
                 meta = {
@@ -193,6 +194,14 @@ return function()
             return handle
         end
 
+        ManifestLoader.LoadNamedShardedSampleHandle = function()
+            return makeHandle()
+        end
+
+        ManifestLoader.LoadShardedModuleHandle = function()
+            return makeHandle()
+        end
+
         local previewRoot = Instance.new("Folder")
         previewRoot.Name = AustinPreviewBuilder.WORLD_ROOT_NAME
         previewRoot.Parent = Workspace
@@ -225,6 +234,7 @@ return function()
     ImportService.GetSubplanState = originalGetSubplanState
     ImportService.ResetSubplanState = originalResetSubplanState
     ManifestLoader.LoadNamedShardedSampleHandle = originalLoadNamedShardedSampleHandle
+    ManifestLoader.LoadShardedModuleHandle = originalLoadShardedModuleHandle
     DefaultWorldConfig.SubplanRollout.Enabled = originalSubplanRollout.Enabled
     DefaultWorldConfig.SubplanRollout.AllowedLayers = originalSubplanRollout.AllowedLayers
     DefaultWorldConfig.SubplanRollout.AllowedChunkIds = originalSubplanRollout.AllowedChunkIds

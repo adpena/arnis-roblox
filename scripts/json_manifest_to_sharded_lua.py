@@ -14,6 +14,7 @@ chunk to its shard modules without loading the entire manifest up front.
 import argparse
 import json
 import io
+import sqlite3
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -206,9 +207,95 @@ def chunk_ref_metadata(chunk: dict[str, Any], metadata: dict[str, Any] | None = 
     return chunk_ref
 
 
+def load_manifest_from_sqlite(path: Path) -> dict[str, Any]:
+    connection = sqlite3.connect(path)
+    try:
+        meta_row = connection.execute(
+            """
+            SELECT
+                schema_version,
+                world_name,
+                generator,
+                source,
+                meters_per_stud,
+                chunk_size_studs,
+                bbox_min_lat,
+                bbox_min_lon,
+                bbox_max_lat,
+                bbox_max_lon,
+                total_features,
+                notes_json
+            FROM manifest_meta
+            WHERE singleton_id = 1
+            """
+        ).fetchone()
+        if meta_row is None:
+            raise SystemExit(f"manifest store {path} is missing manifest_meta")
+
+        notes = json.loads(meta_row[11])
+        chunk_rows = connection.execute(
+            """
+            SELECT
+                chunk_id,
+                origin_x,
+                origin_y,
+                origin_z,
+                feature_count,
+                streaming_cost,
+                partition_version,
+                subplans_json,
+                chunk_json
+            FROM manifest_chunks
+            ORDER BY chunk_id
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    chunks: list[dict[str, Any]] = []
+    chunk_refs: list[dict[str, Any]] = []
+    for row in chunk_rows:
+        chunk_json = json.loads(row[8])
+        if not isinstance(chunk_json, dict):
+            raise SystemExit(f"manifest store {path} contains malformed chunk JSON for {row[0]}")
+        chunks.append(chunk_json)
+        chunk_refs.append(
+            {
+                "id": row[0],
+                "originStuds": {"x": row[1], "y": row[2], "z": row[3]},
+                "featureCount": row[4],
+                "streamingCost": row[5],
+                "partitionVersion": row[6],
+                "subplans": json.loads(row[7]),
+            }
+        )
+
+    return {
+        "schemaVersion": meta_row[0],
+        "meta": {
+            "worldName": meta_row[1],
+            "generator": meta_row[2],
+            "source": meta_row[3],
+            "metersPerStud": meta_row[4],
+            "chunkSizeStuds": meta_row[5],
+            "bbox": {
+                "minLat": meta_row[6],
+                "minLon": meta_row[7],
+                "maxLat": meta_row[8],
+                "maxLon": meta_row[9],
+            },
+            "totalFeatures": meta_row[10],
+            "notes": notes,
+        },
+        "chunks": chunks,
+        "chunkRefs": chunk_refs,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Convert JSON manifest to sharded Lua modules")
-    parser.add_argument("--json", required=True, help="Input JSON manifest path")
+    parser.add_argument("--json", help="Input JSON manifest path")
+    parser.add_argument("--sqlite", help="Input SQLite manifest store path")
     parser.add_argument("--output-dir", required=True, help="Output Lua directory")
     parser.add_argument("--index-name", default="AustinManifestIndex", help="Index module name")
     parser.add_argument("--shard-folder", default="AustinManifestChunks", help="Shard folder name")
@@ -216,8 +303,14 @@ def main() -> int:
     parser.add_argument("--max-bytes", type=int, default=None, help="Maximum Lua module size in bytes")
     args = parser.parse_args()
 
-    with open(args.json, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    if bool(args.json) == bool(args.sqlite):
+        raise SystemExit("provide exactly one of --json or --sqlite")
+
+    if args.sqlite is not None:
+        data = load_manifest_from_sqlite(Path(args.sqlite))
+    else:
+        with open(args.json, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
     source_chunks = data.get("chunks", [])
     if not isinstance(source_chunks, list) or not source_chunks:

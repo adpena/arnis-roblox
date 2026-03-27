@@ -43,9 +43,258 @@ return function()
         },
     }
 
-    local spawnPoint = AustinSpawn.findSpawnPoint(manifest, 500)
-    Assert.near(spawnPoint.X, 25, 0.001, "expected nearby walkable road midpoint to win over primary road")
-    Assert.near(spawnPoint.Z, 0, 0.001, "expected spawn Z from selected road")
+    local previewAnchor = AustinSpawn.resolveAnchor(manifest, 500)
+    Assert.near(
+        previewAnchor.spawnPoint.X,
+        25,
+        0.001,
+        "expected preview anchor selection to keep the nearby walkable footway midpoint"
+    )
+    Assert.near(previewAnchor.spawnPoint.Z, 0, 0.001, "expected preview anchor Z from selected footway")
+
+    local runtimeSpawnPoint = AustinSpawn.findSpawnPoint(manifest, 500)
+    Assert.near(
+        runtimeSpawnPoint.X,
+        150,
+        0.001,
+        "expected runtime spawn selection to prefer the nearby driveable primary road over a footway"
+    )
+    Assert.near(runtimeSpawnPoint.Z, 0, 0.001, "expected runtime spawn Z from selected primary road")
+
+    local gameplaySpawnManifest = {
+        meta = {
+            chunkSizeStuds = 256,
+        },
+        chunks = {
+            {
+                id = "0_0",
+                originStuds = { x = 0, y = 0, z = 0 },
+                roads = {
+                    {
+                        kind = "footway",
+                        points = {
+                            { x = 0, y = 0, z = 0 },
+                            { x = 40, y = 0, z = 0 },
+                        },
+                    },
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 0, y = 0, z = 16 },
+                            { x = 40, y = 0, z = 16 },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    local gameplaySpawnPoint = AustinSpawn.findSpawnPoint(gameplaySpawnManifest, 500)
+    Assert.near(
+        gameplaySpawnPoint.X,
+        20,
+        0.001,
+        "expected gameplay spawn to stay on the local service road midpoint X when a nearby footway also exists"
+    )
+    Assert.near(
+        gameplaySpawnPoint.Z,
+        16,
+        0.001,
+        "expected gameplay spawn to prefer a nearby service road over a pedestrian footway"
+    )
+
+    local gameplayPreviewAnchor = AustinSpawn.resolveAnchor(gameplaySpawnManifest, 500)
+    Assert.near(
+        gameplayPreviewAnchor.spawnPoint.Z,
+        0,
+        0.001,
+        "expected preview anchor selection to preserve the previous footway-biased preview road focus"
+    )
+
+    local gameplayRuntimeAnchor = AustinSpawn.resolveRuntimeAnchor(gameplaySpawnManifest, 500)
+    Assert.near(
+        gameplayRuntimeAnchor.spawnPoint.Z,
+        16,
+        0.001,
+        "expected runtime anchor selection to use the gameplay-safe service-road spawn policy"
+    )
+
+    local openStreetManifest = {
+        meta = {
+            chunkSizeStuds = 256,
+        },
+        chunks = {
+            {
+                id = "0_0",
+                originStuds = { x = 0, y = 0, z = 0 },
+                roads = {
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 0, y = 0, z = 0 },
+                            { x = 40, y = 0, z = 0 },
+                        },
+                    },
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 96, y = 0, z = 0 },
+                            { x = 136, y = 0, z = 0 },
+                        },
+                    },
+                },
+                buildings = {
+                    {
+                        baseY = 0,
+                        height = 24,
+                        footprint = {
+                            { x = 0, z = 12 },
+                            { x = 40, z = 12 },
+                            { x = 40, z = 52 },
+                            { x = 0, z = 52 },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    local openStreetSpawn = AustinSpawn.findSpawnPoint(openStreetManifest, 500, Vector3.new(20, 0, 0))
+    Assert.near(
+        openStreetSpawn.X,
+        116,
+        0.001,
+        "expected runtime spawn to prefer the more open road segment over one that hugs a nearby building footprint"
+    )
+    Assert.near(openStreetSpawn.Z, 0, 0.001, "expected runtime spawn to remain on the open-road midpoint Z")
+
+    local openStreetPreviewFocus = AustinSpawn.findPreviewFocusPoint(openStreetManifest, 500, Vector3.new(20, 0, 0))
+    Assert.near(
+        openStreetPreviewFocus.X,
+        20,
+        0.001,
+        "expected preview focus to preserve the caller-provided load center even when runtime spawn avoids dense building edges"
+    )
+
+    local denseClusterManifest = {
+        meta = {
+            chunkSizeStuds = 256,
+        },
+        chunks = {
+            {
+                id = "0_0",
+                originStuds = { x = 0, y = 0, z = 0 },
+                roads = {
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 0, y = 0, z = 0 },
+                            { x = 40, y = 0, z = 0 },
+                        },
+                    },
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 120, y = 0, z = 0 },
+                            { x = 160, y = 0, z = 0 },
+                        },
+                    },
+                },
+                buildings = {
+                    {
+                        baseY = 0,
+                        height = 24,
+                        footprint = {
+                            { x = -10, z = 88 },
+                            { x = 50, z = 88 },
+                            { x = 50, z = 128 },
+                            { x = -10, z = 128 },
+                        },
+                    },
+                    {
+                        baseY = 0,
+                        height = 24,
+                        footprint = {
+                            { x = -10, z = -128 },
+                            { x = 50, z = -128 },
+                            { x = 50, z = -88 },
+                            { x = -10, z = -88 },
+                        },
+                    },
+                    {
+                        baseY = 0,
+                        height = 24,
+                        footprint = {
+                            { x = -116, z = -40 },
+                            { x = -76, z = -40 },
+                            { x = -76, z = 40 },
+                            { x = -116, z = 40 },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    local denseClusterSpawn = AustinSpawn.findSpawnPoint(denseClusterManifest, 500, Vector3.new(20, 0, 0))
+    Assert.near(
+        denseClusterSpawn.X,
+        140,
+        0.001,
+        "expected runtime spawn to avoid a service-road midpoint boxed in by several nearby buildings even when none crosses the direct clearance threshold"
+    )
+    Assert.near(denseClusterSpawn.Z, 0, 0.001, "expected dense-cluster avoidance to keep the open-road midpoint Z")
+
+    local roofOnlyHazardManifest = {
+        meta = {
+            chunkSizeStuds = 256,
+        },
+        chunks = {
+            {
+                id = "0_0",
+                originStuds = { x = 0, y = 0, z = 0 },
+                roads = {
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 0, y = 0, z = 0 },
+                            { x = 40, y = 0, z = 0 },
+                        },
+                    },
+                    {
+                        kind = "service",
+                        points = {
+                            { x = 120, y = 0, z = 0 },
+                            { x = 160, y = 0, z = 0 },
+                        },
+                    },
+                },
+                buildings = {
+                    {
+                        usage = "roof",
+                        baseY = 24,
+                        minHeight = 24,
+                        height = 12,
+                        footprint = {
+                            { x = -10, z = 130 },
+                            { x = 50, z = 130 },
+                            { x = 50, z = 170 },
+                            { x = -10, z = 170 },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    local roofOnlyHazardSpawn = AustinSpawn.findSpawnPoint(roofOnlyHazardManifest, 500, Vector3.new(20, 0, 0))
+    Assert.near(
+        roofOnlyHazardSpawn.X,
+        140,
+        0.001,
+        "expected runtime spawn to treat a nearby roof-only structure as a stronger hazard than a similarly distant open service road"
+    )
+    Assert.near(roofOnlyHazardSpawn.Z, 0, 0.001, "expected roof-only hazard avoidance to preserve the open-road midpoint Z")
 
     local tallBuildingManifest = {
         meta = {
@@ -229,9 +478,9 @@ return function()
     Assert.near(canonicalSpawn.X, 20, 0.001, "expected canonical Austin anchor to preserve road midpoint X")
     Assert.near(
         canonicalSpawn.Z,
-        -256,
+        0,
         0.001,
-        "expected canonical anchor metadata to move spawn to the south side of the current Capitol heuristic"
+        "expected canonical anchor metadata to bias road selection without moving the final spawn off-road"
     )
 
     local lookTarget = AustinSpawn.getPreferredLookTarget(canonicalAustinManifest, canonicalSpawn, Vector3.new(0, 0, 0))
@@ -240,35 +489,35 @@ return function()
     local canonicalPreviewFocus = AustinSpawn.findPreviewFocusPoint(canonicalAustinManifest, 500)
     Assert.near(
         canonicalPreviewFocus.X,
-        canonicalSpawn.X,
+        20,
         0.001,
-        "expected preview focus to preserve the canonical Austin spawn X"
+        "expected preview focus X to preserve the heuristic load center when using a relative spawn offset"
     )
     Assert.near(
         canonicalPreviewFocus.Z,
-        canonicalSpawn.Z,
+        0,
         0.001,
-        "expected preview focus to match the canonical Austin spawn Z exactly"
+        "expected preview focus Z to preserve the heuristic load center when using a relative spawn offset"
     )
 
     local canonicalAnchor = AustinSpawn.resolveAnchor(canonicalAustinManifest, 500)
     Assert.near(
         canonicalAnchor.focusPoint.X,
-        canonicalSpawn.X,
+        20,
         0.001,
-        "expected resolved anchor focus X to match the canonical spawn X"
+        "expected resolved anchor focus X to preserve the heuristic load center for relative offsets"
     )
     Assert.near(
         canonicalAnchor.focusPoint.Z,
-        canonicalSpawn.Z,
+        0,
         0.001,
-        "expected resolved anchor focus Z to match the canonical spawn Z"
+        "expected resolved anchor focus Z to preserve the heuristic load center for relative offsets"
     )
     Assert.near(
         canonicalAnchor.spawnPoint.Z,
         canonicalSpawn.Z,
         0.001,
-        "expected resolved anchor spawn Z to preserve canonical metadata positioning"
+        "expected resolved anchor spawn Z to stay on the selected road while preserving canonical bias"
     )
     Assert.truthy(
         canonicalAnchor.lookTarget.Z > canonicalAnchor.spawnPoint.Z,
@@ -306,29 +555,29 @@ return function()
     local handlePreviewFocus = AustinSpawn.findPreviewFocusPoint(shardedHandleLikeManifest, 500)
     Assert.near(
         handlePreviewFocus.X,
-        handleSpawn.X,
+        20,
         0.001,
-        "expected sharded handle preview focus X to match the exact runtime spawn anchor"
+        "expected sharded handle preview focus X to preserve the heuristic load center for relative offsets"
     )
     Assert.near(
         handlePreviewFocus.Z,
-        handleSpawn.Z,
+        0,
         0.001,
-        "expected sharded handle preview focus Z to match the exact runtime spawn anchor"
+        "expected sharded handle preview focus Z to preserve the heuristic load center for relative offsets"
     )
 
     local handleAnchor = AustinSpawn.resolveAnchor(shardedHandleLikeManifest, 500)
     Assert.near(
         handleAnchor.focusPoint.X,
-        handleSpawn.X,
+        20,
         0.001,
-        "expected sharded handle resolved anchor focus X to match runtime spawn"
+        "expected sharded handle resolved anchor focus X to preserve heuristic load center"
     )
     Assert.near(
         handleAnchor.focusPoint.Z,
-        handleSpawn.Z,
+        0,
         0.001,
-        "expected sharded handle resolved anchor focus Z to match runtime spawn"
+        "expected sharded handle resolved anchor focus Z to preserve heuristic load center"
     )
     Assert.equal(
         handleAnchor.selectedChunks,

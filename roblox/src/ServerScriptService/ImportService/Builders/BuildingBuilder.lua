@@ -679,8 +679,7 @@ local function addWallLoopToAccumulator(acc, loopPts, baseY, height)
             continue
         end
 
-        local wallCenter =
-            Vector3.new((p1.X + p2.X) * 0.5, baseY + height * 0.5, (p1.Z + p2.Z) * 0.5)
+        local wallCenter = Vector3.new((p1.X + p2.X) * 0.5, baseY + height * 0.5, (p1.Z + p2.Z) * 0.5)
         local forwardAxis = Vector3.new(dx / edgeLen, 0, dz / edgeLen)
         local rightAxis = Vector3.new(-forwardAxis.Z, 0, forwardAxis.X)
         addOrientedBox(
@@ -734,10 +733,7 @@ local function collectUniqueRoofPoints(roofPoly)
     for _, point in ipairs(roofPoly) do
         local isDuplicate = false
         for _, existing in ipairs(uniquePoints) do
-            if
-                math.abs(existing.x - point.x) <= 0.05
-                and math.abs(existing.z - point.z) <= 0.05
-            then
+            if math.abs(existing.x - point.x) <= 0.05 and math.abs(existing.z - point.z) <= 0.05 then
                 isDuplicate = true
                 break
             end
@@ -905,8 +901,7 @@ local function buildFlatRoofFromFootprint(
     local function emitStrip(centerX, width, runStartZ, runEndZ, gridSize)
         stripIndex += 1
         local localCenter = rightAxis * centerX + forwardAxis * ((runStartZ + runEndZ) * 0.5)
-        local worldCenter =
-            Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
+        local worldCenter = Vector3.new(centroid.X + localCenter.X, roofY, centroid.Z + localCenter.Z)
 
         local strip = Instance.new("Part")
         strip.Name = string.format("%s_%d", roofPartNameBase, stripIndex)
@@ -928,8 +923,7 @@ local function buildFlatRoofFromFootprint(
             local runEndZ
 
             while z <= maxZ + gridSize do
-                local inside = z <= maxZ
-                    and GeoUtils.pointInPolygonWithHoles(x, z, roofPoly, roofHoles)
+                local inside = z <= maxZ and GeoUtils.pointInPolygonWithHoles(x, z, roofPoly, roofHoles)
 
                 if inside then
                     if not runStartZ then
@@ -974,8 +968,7 @@ local function buildFlatRoofFromFootprint(
                 and math.abs(segment.centerX - expectedCenterX) <= 1e-6
             then
                 local combinedWidth = active.width + segment.width
-                active.centerX = (active.centerX * active.width + segment.centerX * segment.width)
-                    / combinedWidth
+                active.centerX = (active.centerX * active.width + segment.centerX * segment.width) / combinedWidth
                 active.width = combinedWidth
             else
                 flushActive()
@@ -1013,15 +1006,7 @@ local function buildFlatRoofFromFootprint(
     end
 end
 
-local function buildRoofClosureDeck(
-    bldgName,
-    footprint,
-    holeLoops,
-    topY,
-    roofColor,
-    roofMat,
-    parent
-)
+local function buildRoofClosureDeck(bldgName, footprint, holeLoops, topY, roofColor, roofMat, parent)
     buildFlatRoofFromFootprint(
         bldgName,
         footprint,
@@ -1091,14 +1076,7 @@ local function collectRenderableRoofLoop(footprint)
     return points
 end
 
-local function recordMeshBuildStats(
-    stats,
-    meshPartCount,
-    vertexCount,
-    triangleCount,
-    meshCreateMs,
-    roofMeshPartCount
-)
+local function recordMeshBuildStats(stats, meshPartCount, vertexCount, triangleCount, meshCreateMs, roofMeshPartCount)
     if type(stats) ~= "table" then
         return
     end
@@ -1135,10 +1113,7 @@ local function tryBuildRectangularHippedRoofMesh(
 
     local dirA = edgeA.Unit
     local dirB = edgeB.Unit
-    if
-        math.abs(dirA:Dot(dirB)) > 0.05
-        or math.abs(dirA:Dot((points[4] - points[3]).Unit)) < 0.95
-    then
+    if math.abs(dirA:Dot(dirB)) > 0.05 or math.abs(dirA:Dot((points[4] - points[3]).Unit)) < 0.95 then
         return false
     end
 
@@ -1270,18 +1245,7 @@ end
 
 -- Build roof geometry based on building.roof shape.
 -- footprint: array of world-space Vector3 points (worldPts)
-local function buildRoof(
-    building,
-    footprint,
-    bounds,
-    baseY,
-    height,
-    color,
-    mat,
-    parent,
-    stats,
-    meshCollisionPolicy
-)
+local function buildRoof(building, footprint, bounds, baseY, height, color, mat, parent, stats, meshCollisionPolicy)
     local bldgName = building.id or "Building"
     local roofShape = (building.roof or "flat"):lower()
     -- Resolve roof-specific color and material (may differ from wall color/mat)
@@ -1313,15 +1277,7 @@ local function buildRoof(
             )
             return
         end
-        buildRoofClosureDeck(
-            bldgName,
-            footprint,
-            bounds.holeWorldLoops,
-            baseY + height,
-            rc,
-            rm,
-            parent
-        )
+        buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
         -- Ridge runs along the longer axis; panels tilt inward from both shorter edges.
         -- gambrel approximated as gabled (two panels, similar silhouette)
         local ridgeAxisIsZ = footprintL >= footprintW
@@ -1350,19 +1306,15 @@ local function buildRoof(
         if ridgeAxisIsZ then
             -- Panels tilt around Z axis: left half (+angle), right half (-angle)
             p1.Size = Vector3.new(panelW, 0.8, longExtent)
-            p1.CFrame = CFrame.new(centerX - halfWidth * 0.5, cy, centerZ)
-                * CFrame.Angles(0, 0, angle)
+            p1.CFrame = CFrame.new(centerX - halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, angle)
             p2.Size = Vector3.new(panelW, 0.8, longExtent)
-            p2.CFrame = CFrame.new(centerX + halfWidth * 0.5, cy, centerZ)
-                * CFrame.Angles(0, 0, -angle)
+            p2.CFrame = CFrame.new(centerX + halfWidth * 0.5, cy, centerZ) * CFrame.Angles(0, 0, -angle)
         else
             -- Panels tilt around X axis: front half (-angle), back half (+angle)
             p1.Size = Vector3.new(longExtent, 0.8, panelW)
-            p1.CFrame = CFrame.new(centerX, cy, centerZ - halfWidth * 0.5)
-                * CFrame.Angles(-angle, 0, 0)
+            p1.CFrame = CFrame.new(centerX, cy, centerZ - halfWidth * 0.5) * CFrame.Angles(-angle, 0, 0)
             p2.Size = Vector3.new(longExtent, 0.8, panelW)
-            p2.CFrame = CFrame.new(centerX, cy, centerZ + halfWidth * 0.5)
-                * CFrame.Angles(angle, 0, 0)
+            p2.CFrame = CFrame.new(centerX, cy, centerZ + halfWidth * 0.5) * CFrame.Angles(angle, 0, 0)
         end
         p1.Parent = parent
         p2.Parent = parent
@@ -1384,15 +1336,7 @@ local function buildRoof(
                 meshCollisionPolicy
             )
         then
-            buildRoofClosureDeck(
-                bldgName,
-                footprint,
-                bounds.holeWorldLoops,
-                baseY + height,
-                rc,
-                rm,
-                parent
-            )
+            buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
             return
         end
         buildFallbackFlatClosureRoof(
@@ -1408,22 +1352,13 @@ local function buildRoof(
         )
         return
     elseif roofShape == "dome" or roofShape == "onion" then
-        buildRoofClosureDeck(
-            bldgName,
-            footprint,
-            bounds.holeWorldLoops,
-            baseY + height,
-            rc,
-            rm,
-            parent
-        )
+        buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
         local radius = math.min(footprintW, footprintL) * 0.5
         local dome = Instance.new("Part")
         dome.Name = bldgName .. "_roof"
         dome.Anchored = true
         dome.Shape = Enum.PartType.Ball
-        dome.Size =
-            Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
+        dome.Size = Vector3.new(radius * 2, roofShape == "onion" and radius * 1.4 or radius, radius * 2)
         dome.CFrame = CFrame.new(centerX, baseY + height + radius * 0.5, centerZ)
         dome.Material = rm
         dome.Color = rc
@@ -1445,15 +1380,7 @@ local function buildRoof(
             )
             return
         end
-        buildRoofClosureDeck(
-            bldgName,
-            footprint,
-            bounds.holeWorldLoops,
-            baseY + height,
-            rc,
-            rm,
-            parent
-        )
+        buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
         -- Single-slope wedge across the short axis
         local rise = math.min(footprintW, footprintL) * 0.35
         local ridgeAxisIsZ = footprintL >= footprintW
@@ -1486,15 +1413,7 @@ local function buildRoof(
             )
             return
         end
-        buildRoofClosureDeck(
-            bldgName,
-            footprint,
-            bounds.holeWorldLoops,
-            baseY + height,
-            rc,
-            rm,
-            parent
-        )
+        buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
         -- Flat deck (Slate) + four parapet/slope strips along the perimeter
         local slopeH = math.min(3.5, height * 0.35)
         local insetX = math.max(1, footprintW * 0.65)
@@ -1547,15 +1466,7 @@ local function buildRoof(
         end
         return
     elseif roofShape == "cone" then
-        buildRoofClosureDeck(
-            bldgName,
-            footprint,
-            bounds.holeWorldLoops,
-            baseY + height,
-            rc,
-            rm,
-            parent
-        )
+        buildRoofClosureDeck(bldgName, footprint, bounds.holeWorldLoops, baseY + height, rc, rm, parent)
         -- Conical roof: cylinder with cone SpecialMesh
         local rise = math.min(footprintW, footprintL) * 0.6
         local radius = math.min(footprintW, footprintL) * 0.5
@@ -1577,22 +1488,37 @@ local function buildRoof(
     end
 
     -- Default / flat → flat slab
-    buildFlatRoofFromFootprint(
-        bldgName,
-        footprint,
-        bounds.holeWorldLoops,
-        baseY + height,
-        color,
-        mat,
-        parent,
-        rc,
-        rm
-    )
+    buildFlatRoofFromFootprint(bldgName, footprint, bounds.holeWorldLoops, baseY + height, color, mat, parent, rc, rm)
 end
 
 local function isRoofOnlyStructure(building)
     local usage = string.lower(tostring(building.usage or building.kind or ""))
     return usage == "roof"
+end
+
+local function normalizeRoofOnlyPlacement(building, baseY, height)
+    if not isRoofOnlyStructure(building) then
+        return baseY, height, false
+    end
+
+    local explicitMinHeight = tonumber(building.minHeight)
+    if explicitMinHeight and explicitMinHeight > 0.25 then
+        return baseY, height, true
+    end
+
+    local explicitRoofHeight = tonumber(building.roofHeight)
+    local inferredRoofThickness = explicitRoofHeight
+    if not inferredRoofThickness or inferredRoofThickness <= 0 then
+        inferredRoofThickness = 3
+    end
+    inferredRoofThickness = math.max(2, inferredRoofThickness)
+
+    if height <= inferredRoofThickness + 6 then
+        return baseY, height, false
+    end
+
+    local inferredBaseY = baseY + math.max(0, height - inferredRoofThickness)
+    return inferredBaseY, inferredRoofThickness, true
 end
 
 local SIMPLE_SHELL_USAGES = {
@@ -1679,7 +1605,8 @@ local function buildRoofOnlyStructure(
     baseY,
     height,
     color,
-    mat
+    mat,
+    rooftopAttachment
 )
     local shellFolder = model:FindFirstChild("Shell")
     if not shellFolder then
@@ -1689,6 +1616,10 @@ local function buildRoofOnlyStructure(
     end
 
     buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
+
+    if rooftopAttachment then
+        return
+    end
 
     local supportHeight = math.max(2, height)
     local supportMidY = baseY + supportHeight * 0.5
@@ -1755,10 +1686,8 @@ local function buildCornice(parent, worldPts, topY)
         cornice.Anchored = true
         cornice.CanCollide = false
         cornice.CastShadow = false
-        cornice.CFrame = CFrame.lookAt(
-            mid + Vector3.new(0, topY, 0),
-            mid + Vector3.new(0, topY, 0) + dir
-        ) * CFrame.new(0, 0, -0.15)
+        cornice.CFrame = CFrame.lookAt(mid + Vector3.new(0, topY, 0), mid + Vector3.new(0, topY, 0) + dir)
+            * CFrame.new(0, 0, -0.15)
         cornice.Parent = parent
     end
 end
@@ -1770,11 +1699,8 @@ local function buildPilasters(parent, worldPts, baseY, height, material, color)
         pilaster.Size = Vector3.new(0.4, height, 0.4)
         pilaster.Material = material
         -- Slightly lighter than wall for contrast
-        pilaster.Color = Color3.new(
-            math.min(1, color.R * 1.15),
-            math.min(1, color.G * 1.15),
-            math.min(1, color.B * 1.15)
-        )
+        pilaster.Color =
+            Color3.new(math.min(1, color.R * 1.15), math.min(1, color.G * 1.15), math.min(1, color.B * 1.15))
         pilaster.Anchored = true
         pilaster.CanCollide = false
         pilaster.CastShadow = true
@@ -1881,18 +1807,13 @@ end
 local function setBuildingAuditAttributes(model, building, baseY, height)
     local wallMaterial = getMaterial(building)
     local roofMaterial = getRoofMaterial(building, wallMaterial)
-    local sourceId = if type(building.id) == "string" and building.id ~= ""
-        then building.id
-        else model.Name
+    local sourceId = if type(building.id) == "string" and building.id ~= "" then building.id else model.Name
 
     model:SetAttribute("ArnisImportBuildingBaseY", baseY)
     model:SetAttribute("ArnisImportBuildingHeight", height)
     model:SetAttribute("ArnisImportBuildingTopY", baseY + height)
     model:SetAttribute("ArnisImportSourceId", sourceId)
-    model:SetAttribute(
-        "ArnisImportBuildingUsage",
-        string.lower(tostring(building.usage or building.kind or "unknown"))
-    )
+    model:SetAttribute("ArnisImportBuildingUsage", string.lower(tostring(building.usage or building.kind or "unknown")))
     model:SetAttribute("ArnisImportRoofShape", string.lower(tostring(building.roof or "flat")))
     model:SetAttribute("ArnisImportWallMaterial", wallMaterial.Name)
     model:SetAttribute("ArnisImportRoofMaterial", roofMaterial.Name)
@@ -1909,6 +1830,11 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     local footprintData = buildFootprintData(fp, building.holes, originStuds)
     local baseY = resolveBuildingBaseY(building, originStuds, chunk)
     local height = getBuildingHeight(building)
+    local roofOnly = isRoofOnlyStructure(building)
+    local roofOnlyRooftopAttachment = false
+    if roofOnly then
+        baseY, height, roofOnlyRooftopAttachment = normalizeRoofOnlyPlacement(building, baseY, height)
+    end
     local mat = getMaterial(building)
     local color = getColor(building)
     local bldgName = building.id or "Building"
@@ -1931,12 +1857,21 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     for index, point in ipairs(worldPts) do
         worldPts[index] = Vector3.new(point.X, baseY, point.Z)
     end
-    local roofOnly = isRoofOnlyStructure(building)
     local preferSimpleShellDetail = shouldPreferSimpleShellDetail(building, #worldPts, height)
     local renderGlassFacadeBands = shouldRenderGlassFacadeBands(building, mat)
 
     if roofOnly then
-        buildRoofOnlyStructure(model, building, worldPts, footprintData, baseY, height, color, mat)
+        buildRoofOnlyStructure(
+            model,
+            building,
+            worldPts,
+            footprintData,
+            baseY,
+            height,
+            color,
+            mat,
+            roofOnlyRooftopAttachment
+        )
         return model
     end
 
@@ -2038,11 +1973,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
                     band.Size = Vector3.new(WALL_THICKNESS * 0.35, BAND_H * 0.8, bandLen)
                     band.CFrame = CFrame.lookAt(
                         Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
-                        Vector3.new(
-                            (p1w.X + p2w.X) * 0.5 + edgeUnitX,
-                            bandY,
-                            (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ
-                        )
+                        Vector3.new((p1w.X + p2w.X) * 0.5 + edgeUnitX, bandY, (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ)
                     )
                     band.Material = Enum.Material.Glass
                     band.Color = WIN_COLOR
@@ -2077,13 +2008,7 @@ function BuildingBuilder.FallbackBuild(parent, building, originStuds, chunk, win
     end
 
     -- Fill interior with terrain (uses terrain-safe floor materials only)
-    fillInterior(
-        footprintData.footprintXZ,
-        footprintData.holeXZ,
-        footprintData,
-        baseY,
-        getFloorMaterial(building)
-    )
+    fillInterior(footprintData.footprintXZ, footprintData.holeXZ, footprintData, baseY, getFloorMaterial(building))
 
     buildRoof(building, worldPts, footprintData, baseY, height, color, mat, shellFolder)
 
@@ -2150,15 +2075,7 @@ end
 -- shaped roofs use SpecialMesh/WedgePart).
 -- Returns builtModelsById for RoomBuilder integration.
 -------------------------------------------------------------------------------
-function BuildingBuilder.MeshBuildAll(
-    parent,
-    buildings,
-    originStuds,
-    chunk,
-    config,
-    maybeYield,
-    buildOptions
-)
+function BuildingBuilder.MeshBuildAll(parent, buildings, originStuds, chunk, config, maybeYield, buildOptions)
     if not buildings or #buildings == 0 then
         return {
             builtModelsById = {},
@@ -2173,9 +2090,7 @@ function BuildingBuilder.MeshBuildAll(
     end
 
     config = config or WorldConfig
-    local meshCollisionPolicy = if type(buildOptions) == "table"
-        then buildOptions.meshCollisionPolicy
-        else nil
+    local meshCollisionPolicy = if type(buildOptions) == "table" then buildOptions.meshCollisionPolicy else nil
 
     local windowBudget = {
         used = 0,
@@ -2200,6 +2115,11 @@ function BuildingBuilder.MeshBuildAll(
         local footprintData = buildFootprintData(fp, building.holes, originStuds)
         local baseY = resolveBuildingBaseY(building, originStuds, chunk)
         local height = getBuildingHeight(building)
+        local roofOnly = isRoofOnlyStructure(building)
+        local roofOnlyRooftopAttachment = false
+        if roofOnly then
+            baseY, height, roofOnlyRooftopAttachment = normalizeRoofOnlyPlacement(building, baseY, height)
+        end
         local mat = getMaterial(building)
         local color = getColor(building)
         local bldgName = building.id or "Building"
@@ -2233,13 +2153,8 @@ function BuildingBuilder.MeshBuildAll(
                         collisionFidelity = Enum.CollisionFidelity.Box,
                     }
                 end
-                buildingAccumulators[key] = MeshAccumulator.new(
-                    shellFolder,
-                    key,
-                    accumMaterial,
-                    accumColor,
-                    accumulatorOptions
-                )
+                buildingAccumulators[key] =
+                    MeshAccumulator.new(shellFolder, key, accumMaterial, accumColor, accumulatorOptions)
             end
             return buildingAccumulators[key]
         end
@@ -2285,7 +2200,6 @@ function BuildingBuilder.MeshBuildAll(
         for index, point in ipairs(worldPts) do
             worldPts[index] = Vector3.new(point.X, baseY, point.Z)
         end
-        local roofOnly = isRoofOnlyStructure(building)
         local preferSimpleShellDetail = shouldPreferSimpleShellDetail(building, #worldPts, height)
         local renderGlassFacadeBands = shouldRenderGlassFacadeBands(building, mat)
 
@@ -2298,7 +2212,8 @@ function BuildingBuilder.MeshBuildAll(
                 baseY,
                 height,
                 color,
-                mat
+                mat,
+                roofOnlyRooftopAttachment
             )
         else
             -- Glass buildings can't be merged (need per-face transparency)
@@ -2306,18 +2221,7 @@ function BuildingBuilder.MeshBuildAll(
 
             if isGlass then
                 -- Glass buildings: individual Parts (same as FallbackBuild shell)
-                buildWallLoopParts(
-                    shellFolder,
-                    bldgName,
-                    worldPts,
-                    baseY,
-                    height,
-                    mat,
-                    color,
-                    "outer",
-                    0.3,
-                    0.15
-                )
+                buildWallLoopParts(shellFolder, bldgName, worldPts, baseY, height, mat, color, "outer", 0.3, 0.15)
                 for holeIndex, holeLoop in ipairs(footprintData.holeWorldLoops) do
                     local liftedHoleLoop = table.create(#holeLoop)
                     for pointIndex, point in ipairs(holeLoop) do
@@ -2432,11 +2336,7 @@ function BuildingBuilder.MeshBuildAll(
                             band.Size = Vector3.new(WALL_THICKNESS * 0.35, BAND_H * 0.8, bandLen)
                             band.CFrame = CFrame.lookAt(
                                 Vector3.new((p1w.X + p2w.X) * 0.5, bandY, (p1w.Z + p2w.Z) * 0.5),
-                                Vector3.new(
-                                    (p1w.X + p2w.X) * 0.5 + edgeUnitX,
-                                    bandY,
-                                    (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ
-                                )
+                                Vector3.new((p1w.X + p2w.X) * 0.5 + edgeUnitX, bandY, (p1w.Z + p2w.Z) * 0.5 + edgeUnitZ)
                             )
                             band.Material = Enum.Material.Glass
                             band.Color = WIN_COLOR
@@ -2447,11 +2347,7 @@ function BuildingBuilder.MeshBuildAll(
                             band.Parent = detailFolder
 
                             local sillSize = Vector3.new(bandLen + 0.4, 0.2, 0.5)
-                            local sillCenter = (band.CFrame * CFrame.new(
-                                0,
-                                -BAND_H * 0.4 - 0.1,
-                                0.15
-                            )).Position
+                            local sillCenter = (band.CFrame * CFrame.new(0, -BAND_H * 0.4 - 0.1, 0.15)).Position
                             addOrientedBox(
                                 sillAcc,
                                 sillCenter,

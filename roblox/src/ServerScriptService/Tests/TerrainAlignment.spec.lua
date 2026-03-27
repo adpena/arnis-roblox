@@ -89,10 +89,30 @@ return function()
             child.Name == "BridgeSupport",
             "expected terrain-following roads to avoid accidental bridge parts"
         )
+        Assert.falsy(
+            string.find(child.Name, "Checker", 1, true) ~= nil,
+            "expected play roads to preserve canonical imported truth instead of checker placeholders"
+        )
     end
 
     local buildingModel = chunkFolder:FindFirstChild("Buildings"):FindFirstChild("ground_building")
     Assert.truthy(buildingModel, "expected ground building model")
+    Assert.equal(
+        buildingModel:GetAttribute("ArnisImportRoofShape"),
+        "flat",
+        "expected shellMesh buildings to preserve canonical flat roof evidence"
+    )
+
+    local shellFolder = buildingModel:FindFirstChild("Shell")
+    Assert.truthy(shellFolder, "expected shell folder for terrain alignment building")
+
+    local roofParts = {}
+    for _, descendant in ipairs(shellFolder:GetDescendants()) do
+        if descendant:IsA("BasePart") and string.find(descendant.Name, "_roof", 1, true) then
+            roofParts[#roofParts + 1] = descendant
+        end
+    end
+    Assert.truthy(#roofParts >= 1, "expected canonical shellMesh roof geometry to remain explicit")
 
     local groundY = GroundSampler.sampleWorldHeight(manifest.chunks[1], 64, 64)
     Assert.near(groundY, 20, 0.001, "expected sampled terrain ground height for reference")

@@ -149,6 +149,24 @@ return function()
     curbSurface:SetAttribute("ArnisRoadSourceCount", 2)
     curbSurface:SetAttribute("ArnisRoadSourceIds", "road_7\nroad_8")
 
+    local railsFolder = Instance.new("Folder")
+    railsFolder.Name = "Rails"
+    railsFolder.Parent = chunkFolder
+
+    local railRecordA = Instance.new("Configuration")
+    railRecordA.Name = "RailAudit_osm_rail_1"
+    railRecordA:SetAttribute("ArnisRailAuditRecord", true)
+    railRecordA:SetAttribute("ArnisRailKind", "rail")
+    railRecordA:SetAttribute("ArnisRailSourceId", "osm_rail_1")
+    railRecordA.Parent = railsFolder
+
+    local railRecordB = Instance.new("Configuration")
+    railRecordB.Name = "RailAudit_osm_tram_1"
+    railRecordB:SetAttribute("ArnisRailAuditRecord", true)
+    railRecordB:SetAttribute("ArnisRailKind", "tram")
+    railRecordB:SetAttribute("ArnisRailSourceId", "osm_tram_1")
+    railRecordB.Parent = railsFolder
+
     local roadDetail = Instance.new("Folder")
     roadDetail.Name = "Detail"
     roadDetail.Parent = roadsFolder
@@ -258,38 +276,18 @@ return function()
 
     Assert.equal(summary.chunkCount, 1, "expected one chunk in scene summary")
     Assert.equal(summary.buildingModelCount, 4, "expected four building models")
-    Assert.equal(
-        summary.buildingShellPartCount,
-        5,
-        "expected direct shell parts plus one shell mesh part"
-    )
+    Assert.equal(summary.buildingShellPartCount, 5, "expected direct shell parts plus one shell mesh part")
     Assert.equal(summary.buildingRoofPartCount, 1, "expected one direct roof part")
-    Assert.equal(
-        summary.buildingModelsWithRoofClosureDeck,
-        2,
-        "expected two buildings with roof closure decks"
-    )
+    Assert.equal(summary.buildingModelsWithRoofClosureDeck, 2, "expected two buildings with roof closure decks")
     Assert.equal(summary.buildingModelsWithRoof, 2, "expected two buildings with roof geometry")
-    Assert.equal(
-        summary.buildingModelsWithoutRoof,
-        2,
-        "expected two buildings without roof geometry"
-    )
-    Assert.equal(
-        summary.buildingModelsWithDirectRoof,
-        1,
-        "expected one building with direct roof parts"
-    )
+    Assert.equal(summary.buildingModelsWithoutRoof, 2, "expected two buildings without roof geometry")
+    Assert.equal(summary.buildingModelsWithDirectRoof, 1, "expected one building with direct roof parts")
     Assert.equal(
         summary.buildingModelsWithMergedRoofOnly,
         1,
         "expected one building that relies on merged roof geometry only"
     )
-    Assert.equal(
-        summary.buildingModelsWithNoRoofEvidence,
-        2,
-        "expected two buildings with no direct roof evidence"
-    )
+    Assert.equal(summary.buildingModelsWithNoRoofEvidence, 2, "expected two buildings with no direct roof evidence")
     Assert.equal(
         summary.buildingRoofCoverageByUsage.office.withRoofCount,
         1,
@@ -376,21 +374,9 @@ return function()
         "expected hipped closure-only coverage to preserve closure-deck evidence"
     )
     Assert.equal(summary.buildingFacadePartCount, 1, "expected one facade part")
-    Assert.equal(
-        summary.buildingModelsWithDirectShell,
-        3,
-        "expected three buildings with direct shell geometry"
-    )
-    Assert.equal(
-        summary.buildingModelsMissingDirectShell,
-        1,
-        "expected one building relying on merged geometry"
-    )
-    Assert.equal(
-        summary.buildingShellMeshPartCount,
-        1,
-        "expected one shell mesh part supporting merged shell geometry"
-    )
+    Assert.equal(summary.buildingModelsWithDirectShell, 3, "expected three buildings with direct shell geometry")
+    Assert.equal(summary.buildingModelsMissingDirectShell, 1, "expected one building relying on merged geometry")
+    Assert.equal(summary.buildingShellMeshPartCount, 1, "expected one shell mesh part supporting merged shell geometry")
     Assert.equal(summary.mergedBuildingMeshPartCount, 1, "expected one merged building mesh part")
     Assert.equal(
         summary.buildingModelCountByWallMaterial.concrete.buildingModelCount,
@@ -457,11 +443,7 @@ return function()
         3,
         "expected footway sidewalk+crossing feature-equivalent count"
     )
-    Assert.equal(
-        summary.roadSurfacePartCountByKind.footway.sourceIds[3],
-        "road_6",
-        "expected footway source ids"
-    )
+    Assert.equal(summary.roadSurfacePartCountByKind.footway.sourceIds[3], "road_6", "expected footway source ids")
     Assert.equal(
         summary.roadSurfacePartCountBySubkind.sidewalk.surfacePartCount,
         1,
@@ -472,11 +454,7 @@ return function()
         2,
         "expected sidewalk subkind feature-equivalent count"
     )
-    Assert.equal(
-        summary.roadSurfacePartCountBySubkind.sidewalk.sourceIds[2],
-        "road_5",
-        "expected sidewalk source ids"
-    )
+    Assert.equal(summary.roadSurfacePartCountBySubkind.sidewalk.sourceIds[2], "road_5", "expected sidewalk source ids")
     Assert.equal(
         summary.roadSurfacePartCountBySubkind.crossing.surfacePartCount,
         1,
@@ -487,75 +465,36 @@ return function()
         1,
         "expected crossing subkind feature-equivalent count"
     )
-    Assert.equal(
-        summary.roadSurfacePartCountBySubkind.curb.surfacePartCount,
-        1,
-        "expected one curb subkind surface"
-    )
+    Assert.equal(summary.roadSurfacePartCountBySubkind.curb.surfacePartCount, 1, "expected one curb subkind surface")
     Assert.equal(
         summary.roadSurfacePartCountBySubkind.curb.featureCount,
         2,
         "expected one curb feature-equivalent count"
     )
-    Assert.equal(
-        summary.roadSurfacePartCountBySubkind.curb.sourceIds[2],
-        "road_8",
-        "expected curb source ids"
-    )
+    Assert.equal(summary.roadSurfacePartCountBySubkind.curb.sourceIds[2], "road_8", "expected curb source ids")
     Assert.equal(summary.roadCrosswalkStripeCount, 1, "expected one crosswalk stripe")
     Assert.equal(summary.roadDetailPartCount, 1, "expected one road detail part")
     Assert.equal(summary.chunksWithSidewalkSurfaces, 1, "expected one chunk with sidewalk surfaces")
     Assert.equal(summary.chunksWithCrossingSurfaces, 1, "expected one chunk with crossing surfaces")
     Assert.equal(summary.chunksWithCurbSurfaces, 1, "expected one chunk with curb surfaces")
+    Assert.equal(summary.railReceiptCount, 2, "expected two rail audit receipts")
+    Assert.equal(summary.chunksWithRailGeometry, 1, "expected one chunk with rail receipts")
+    Assert.equal(summary.railReceiptCountByKind.rail.instanceCount, 1, "expected one rail receipt")
+    Assert.equal(summary.railReceiptCountByKind.rail.sourceIds[1], "osm_rail_1", "expected rail source id")
+    Assert.equal(summary.railReceiptCountByKind.tram.instanceCount, 1, "expected one tram receipt")
     Assert.equal(summary.propInstanceCount, 4, "expected four authored prop roots in the scene")
     Assert.equal(summary.propInstanceCountByKind.tree.instanceCount, 3, "expected three tree props")
-    Assert.equal(
-        summary.propInstanceCountByKind.tree.sourceIds[1],
-        "tree_oak_1",
-        "expected tree prop source id"
-    )
-    Assert.equal(
-        summary.propInstanceCountByKind.tree.sourceIds[3],
-        "tree_cedar_1",
-        "expected tree prop source ids"
-    )
-    Assert.equal(
-        summary.propInstanceCountByKind.fountain.instanceCount,
-        1,
-        "expected one fountain prop"
-    )
-    Assert.equal(
-        summary.propInstanceCountByKind.fountain.sourceIds[1],
-        "fountain_1",
-        "expected fountain source id"
-    )
+    Assert.equal(summary.propInstanceCountByKind.tree.sourceIds[1], "tree_oak_1", "expected tree prop source id")
+    Assert.equal(summary.propInstanceCountByKind.tree.sourceIds[3], "tree_cedar_1", "expected tree prop source ids")
+    Assert.equal(summary.propInstanceCountByKind.fountain.instanceCount, 1, "expected one fountain prop")
+    Assert.equal(summary.propInstanceCountByKind.fountain.sourceIds[1], "fountain_1", "expected fountain source id")
     Assert.equal(summary.treeInstanceCount, 3, "expected three tree instances")
-    Assert.equal(
-        summary.treeInstanceCountBySpecies.oak.instanceCount,
-        1,
-        "expected one oak tree instance"
-    )
-    Assert.equal(
-        summary.treeInstanceCountBySpecies.oak.sourceIds[1],
-        "tree_oak_1",
-        "expected oak source id"
-    )
-    Assert.equal(
-        summary.treeInstanceCountBySpecies.elm.instanceCount,
-        1,
-        "expected one elm tree instance"
-    )
-    Assert.equal(
-        summary.treeInstanceCountBySpecies.cedar.instanceCount,
-        1,
-        "expected one cedar tree instance"
-    )
+    Assert.equal(summary.treeInstanceCountBySpecies.oak.instanceCount, 1, "expected one oak tree instance")
+    Assert.equal(summary.treeInstanceCountBySpecies.oak.sourceIds[1], "tree_oak_1", "expected oak source id")
+    Assert.equal(summary.treeInstanceCountBySpecies.elm.instanceCount, 1, "expected one elm tree instance")
+    Assert.equal(summary.treeInstanceCountBySpecies.cedar.instanceCount, 1, "expected one cedar tree instance")
     Assert.equal(summary.vegetationInstanceCount, 3, "expected three vegetation instances")
-    Assert.equal(
-        summary.vegetationInstanceCountByKind.tree.instanceCount,
-        3,
-        "expected tree vegetation count"
-    )
+    Assert.equal(summary.vegetationInstanceCountByKind.tree.instanceCount, 3, "expected tree vegetation count")
     Assert.equal(
         summary.vegetationInstanceCountByKind.tree.sourceIds[2],
         "tree_elm_1",
@@ -565,21 +504,9 @@ return function()
     Assert.equal(summary.treeModelsMissingTrunk, 1, "expected one canopy-only tree")
     Assert.equal(summary.treeModelsMissingCanopy, 0, "expected no trunk-only trees")
     Assert.equal(summary.treeModelsWithDetachedCanopy, 1, "expected one detached-canopy tree")
-    Assert.equal(
-        summary.treeConnectivityBySpecies.oak.missingTrunkCount,
-        1,
-        "expected oak missing trunk count"
-    )
-    Assert.equal(
-        summary.treeConnectivityBySpecies.elm.connectedCount,
-        1,
-        "expected elm connected count"
-    )
-    Assert.equal(
-        summary.treeConnectivityBySpecies.cedar.detachedCanopyCount,
-        1,
-        "expected cedar detached count"
-    )
+    Assert.equal(summary.treeConnectivityBySpecies.oak.missingTrunkCount, 1, "expected oak missing trunk count")
+    Assert.equal(summary.treeConnectivityBySpecies.elm.connectedCount, 1, "expected elm connected count")
+    Assert.equal(summary.treeConnectivityBySpecies.cedar.detachedCanopyCount, 1, "expected cedar detached count")
     Assert.equal(summary.proceduralTreeInstanceCount, 1, "expected one procedural tree instance")
     Assert.equal(
         summary.proceduralTreeModelsWithConnectedTrunkCanopy,
@@ -623,36 +550,12 @@ return function()
 
     Assert.equal(summary.waterSurfacePartCount, 2, "expected two explicit water surface parts")
     Assert.equal(summary.chunksWithWaterGeometry, 1, "expected one chunk with water geometry")
-    Assert.equal(
-        summary.waterSurfacePartCountByType.polygon.surfacePartCount,
-        1,
-        "expected one polygon water surface"
-    )
-    Assert.equal(
-        summary.waterSurfacePartCountByType.ribbon.surfacePartCount,
-        1,
-        "expected one ribbon water surface"
-    )
-    Assert.equal(
-        summary.waterSurfacePartCountByKind.pond.surfacePartCount,
-        1,
-        "expected one pond water surface"
-    )
-    Assert.equal(
-        summary.waterSurfacePartCountByKind.stream.surfacePartCount,
-        1,
-        "expected one stream water surface"
-    )
-    Assert.equal(
-        summary.waterSurfacePartCountByKind.pond.sourceIds[1],
-        "water_poly_1",
-        "expected pond source id"
-    )
-    Assert.equal(
-        summary.waterSurfacePartCountByKind.stream.sourceIds[1],
-        "water_ribbon_1",
-        "expected stream source id"
-    )
+    Assert.equal(summary.waterSurfacePartCountByType.polygon.surfacePartCount, 1, "expected one polygon water surface")
+    Assert.equal(summary.waterSurfacePartCountByType.ribbon.surfacePartCount, 1, "expected one ribbon water surface")
+    Assert.equal(summary.waterSurfacePartCountByKind.pond.surfacePartCount, 1, "expected one pond water surface")
+    Assert.equal(summary.waterSurfacePartCountByKind.stream.surfacePartCount, 1, "expected one stream water surface")
+    Assert.equal(summary.waterSurfacePartCountByKind.pond.sourceIds[1], "water_poly_1", "expected pond source id")
+    Assert.equal(summary.waterSurfacePartCountByKind.stream.sourceIds[1], "water_ribbon_1", "expected stream source id")
 
     worldRoot:Destroy()
 end

@@ -20,6 +20,8 @@ sourcemap.json
 Packages/
 *.local.project.json
 roblox/out/
+roblox/.harness.build.project.json
+roblox/.harness.serve.project.json
 roblox/src/ServerStorage/SampleData/AustinManifest.lua
 
 # OS / editor

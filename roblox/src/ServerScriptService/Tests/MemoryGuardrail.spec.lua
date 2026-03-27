@@ -147,6 +147,11 @@ return function()
             "expected Pause() to keep the guardrail paused across benign updates"
         )
         Assert.equal(
+            snapshot.pauseOrigin,
+            "manual",
+            "expected manual pauses to record an explicit manual pause origin"
+        )
+        Assert.equal(
             snapshot.pauseReason,
             "manual",
             "expected benign updates not to replace a manual pause reason"
@@ -266,6 +271,34 @@ return function()
             snapshot.projectedUsageBytes,
             60,
             "expected host probe pressure not to replace deterministic projected usage accounting"
+        )
+    end
+
+    do
+        local guardrail = makeGuardrail()
+
+        guardrail:SetProjectedUsageBytes(101)
+        local budgetSnapshot = guardrail:Snapshot()
+        Assert.equal(
+            budgetSnapshot.pauseReason,
+            "budget",
+            "expected over-budget usage to enter a budget pause first"
+        )
+
+        guardrail:ObserveHostProbe({
+            availableBytes = 15,
+            pressureLevel = 0.95,
+        })
+        local hostProbeSnapshot = guardrail:Snapshot()
+        Assert.equal(
+            hostProbeSnapshot.pauseReason,
+            "host_probe",
+            "expected automatic pauses to update to host_probe when host pressure supersedes budget pressure"
+        )
+        Assert.equal(
+            hostProbeSnapshot.pauseOrigin,
+            "automatic",
+            "expected automatic-cause promotion to keep an automatic pause origin"
         )
     end
 

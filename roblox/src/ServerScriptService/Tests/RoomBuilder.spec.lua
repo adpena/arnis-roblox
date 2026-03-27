@@ -96,8 +96,7 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected room truth world root")
 
-    local building =
-        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("room_building")
+    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("room_building")
     Assert.truthy(building, "expected room building model")
     Assert.near(
         building:GetAttribute("ArnisImportBuildingBaseY"),
@@ -118,12 +117,8 @@ return function()
         CollectionService:HasTag(roomsFolder, "LOD_InteriorGroup"),
         "expected Rooms folder to be tagged as an interior LOD group"
     )
-    Assert.equal(
-        roomsFolder:GetAttribute("ArnisLodGroupKind"),
-        "interior",
-        "expected interior group kind"
-    )
-    local chunkEntry = ChunkLoader.GetChunkEntry("0_0")
+    Assert.equal(roomsFolder:GetAttribute("ArnisLodGroupKind"), "interior", "expected interior group kind")
+    local chunkEntry = ChunkLoader.GetChunkEntry("0_0", worldRootName)
     Assert.truthy(chunkEntry, "expected chunk entry for room truth world")
     Assert.truthy(
         chunkEntry.lodGroups and #chunkEntry.lodGroups.interior >= 1,
@@ -180,11 +175,7 @@ return function()
             roomWallParts[#roomWallParts + 1] = partitionPart
         end
     end
-    Assert.equal(
-        #roomFloorParts,
-        2,
-        "expected rectangular rooms to collapse to one floor slab each"
-    )
+    Assert.equal(#roomFloorParts, 2, "expected rectangular rooms to collapse to one floor slab each")
     Assert.equal(
         #roomCeilingParts,
         1,
@@ -204,12 +195,8 @@ return function()
 
     local function pointCovered(pointX, pointZ)
         for _, roomPart in ipairs(roomParts) do
-            local localPoint =
-                roomPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roomPart.Position.Y, pointZ))
-            if
-                math.abs(localPoint.X) <= roomPart.Size.X * 0.5
-                and math.abs(localPoint.Z) <= roomPart.Size.Z * 0.5
-            then
+            local localPoint = roomPart.CFrame:PointToObjectSpace(Vector3.new(pointX, roomPart.Position.Y, pointZ))
+            if math.abs(localPoint.X) <= roomPart.Size.X * 0.5 and math.abs(localPoint.Z) <= roomPart.Size.Z * 0.5 then
                 return true
             end
         end

@@ -6,9 +6,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from refresh_preview_from_sample_data import TARGET_CHUNK_IDS as PREVIEW_SELECTION_SEED_CHUNK_IDS
+from refresh_preview_from_sample_data import derive_preview_chunk_ids, parse_source_chunk_size_studs
+
 
 MAX_PREVIEW_BYTES = 199_999
-EXPECTED_PREVIEW_CHUNK_IDS = {"-1_-1", "0_-1", "-1_0", "0_0"}
 STALE_ROOMS_PATTERN = re.compile(r"\brooms\s*=\s*\{")
 STALE_FACADE_PATTERN = re.compile(r"\bfacadeStyle\s*=")
 PREVIEW_SPLIT_PATTERN = "AustinPreviewManifestIndex_*_*.lua"
@@ -261,8 +267,148 @@ def _validate_chunk_subplans(chunk_ref: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_index_total_features(
+    index_text: str,
+    chunk_ref_entries: list[dict[str, Any]],
+    *,
+    label: str,
+) -> list[str]:
+    errors: list[str] = []
+    meta_text = _extract_lua_table(index_text, "meta")
+    if meta_text is None:
+        return errors
+
+    parsed_meta = _parse_lua_table_value(meta_text)
+    if not isinstance(parsed_meta, dict):
+        errors.append(f"{label} index meta is malformed")
+        return errors
+
+    total_features = parsed_meta.get("totalFeatures")
+    if total_features is None:
+        if label == "preview":
+            errors.append(f"{label} index meta is missing totalFeatures")
+        return errors
+    if not _is_integer_scalar(total_features):
+        errors.append(f"{label} index meta has malformed totalFeatures")
+        return errors
+
+    expected_total_features = 0
+    has_expected_total = False
+    for chunk_ref in chunk_ref_entries:
+        feature_count = chunk_ref.get("featureCount")
+        if _is_integer_scalar(feature_count):
+            expected_total_features += int(feature_count)
+            has_expected_total = True
+
+    if has_expected_total and int(total_features) != expected_total_features:
+        errors.append(
+            f"{label} index meta totalFeatures is {total_features}, expected {expected_total_features}"
+        )
+
+    return errors
+
+
+def _coerce_int_scalar(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if _is_integer_scalar(value):
+        return int(value)
+    return None
+
+
+def _merge_fragment_value(existing: Any, incoming: Any) -> Any:
+    if isinstance(existing, list) and isinstance(incoming, list):
+        return [*existing, *incoming]
+    if isinstance(existing, dict) and isinstance(incoming, dict):
+        merged = dict(existing)
+        for key, value in incoming.items():
+            if key in merged:
+                merged[key] = _merge_fragment_value(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    return existing if existing is not None else incoming
+
+
+def _parse_preview_shard_chunks(path: Path) -> list[dict[str, Any]]:
+    shard_text = path.read_text(encoding="utf-8")
+    chunks_text = _extract_lua_table(shard_text, "chunks")
+    if chunks_text is None:
+        raise SystemExit(f"could not parse chunks table from {path}")
+
+    parsed_chunks = _parse_lua_table_value(chunks_text)
+    if not isinstance(parsed_chunks, list):
+        raise SystemExit(f"could not parse chunks table from {path}")
+
+    chunk_entries: list[dict[str, Any]] = []
+    for index, chunk in enumerate(parsed_chunks):
+        if not isinstance(chunk, dict):
+            raise SystemExit(f"could not parse chunk entry {index} from {path}")
+        chunk_entries.append(chunk)
+    return chunk_entries
+
+
+def _materialize_preview_chunk(chunk_id: str, shard_names: list[str], shard_paths_by_name: dict[str, Path]) -> dict[str, Any]:
+    materialized: dict[str, Any] = {}
+    for shard_name in shard_names:
+        shard_path = shard_paths_by_name.get(shard_name)
+        if shard_path is None:
+            continue
+        for chunk in _parse_preview_shard_chunks(shard_path):
+            if chunk.get("id") != chunk_id:
+                continue
+            for key, value in chunk.items():
+                if key == "id":
+                    materialized[key] = value
+                elif key in materialized:
+                    materialized[key] = _merge_fragment_value(materialized[key], value)
+                else:
+                    materialized[key] = value
+    return materialized
+
+
+def _validate_preview_terrain_payloads(
+    chunk_refs: dict[str, list[str]],
+    shard_paths_by_name: dict[str, Path],
+) -> list[str]:
+    errors: list[str] = []
+
+    for chunk_id, shard_names in chunk_refs.items():
+        materialized = _materialize_preview_chunk(chunk_id, shard_names, shard_paths_by_name)
+        terrain = materialized.get("terrain")
+        if not isinstance(terrain, dict):
+            continue
+
+        width = _coerce_int_scalar(terrain.get("width"))
+        depth = _coerce_int_scalar(terrain.get("depth"))
+        if width is None or depth is None:
+            continue
+
+        expected_cells = width * depth
+        heights = terrain.get("heights")
+        if not isinstance(heights, list):
+            errors.append(f"preview chunk {chunk_id} terrain is missing heights after shard merge")
+            continue
+        if len(heights) != expected_cells:
+            errors.append(
+                f"preview chunk {chunk_id} terrain heights length is {len(heights)}, expected {expected_cells}"
+            )
+
+        materials = terrain.get("materials")
+        if materials is not None:
+            if not isinstance(materials, list):
+                errors.append(f"preview chunk {chunk_id} terrain materials payload is malformed after shard merge")
+            elif len(materials) != expected_cells:
+                errors.append(
+                    f"preview chunk {chunk_id} terrain materials length is {len(materials)}, expected {expected_cells}"
+                )
+
+    return errors
+
+
 def collect_errors(root: Path) -> list[str]:
     errors: list[str] = []
+    expected_preview_chunk_ids: set[str] | None = None
 
     sample_shards = sorted(runtime_shard_dir(root).glob("AustinManifestIndex_*.lua"))
     if not sample_shards:
@@ -280,6 +426,32 @@ def collect_errors(root: Path) -> list[str]:
         runtime_index_text = runtime_index.read_text(encoding="utf-8")
         runtime_chunk_ref_entries = _parse_index_chunk_ref_entries(runtime_index_text)
         runtime_chunk_refs = _parse_preview_chunk_refs(runtime_index_text)
+        runtime_chunk_ref_map = {
+            chunk_ref["id"]: {
+                "x": chunk_ref.get("originStuds", {}).get("x"),
+                "y": chunk_ref.get("originStuds", {}).get("y"),
+                "z": chunk_ref.get("originStuds", {}).get("z"),
+                "shards": chunk_ref.get("shards") or [],
+            }
+            for chunk_ref in runtime_chunk_ref_entries
+            if isinstance(chunk_ref.get("id"), str)
+        }
+        if all(chunk_id in runtime_chunk_ref_map for chunk_id in PREVIEW_SELECTION_SEED_CHUNK_IDS):
+            runtime_chunk_size_studs = parse_source_chunk_size_studs(runtime_index_text)
+            expected_preview_chunk_ids = set(
+                derive_preview_chunk_ids(
+                    runtime_chunk_ref_map,
+                    seed_chunk_ids=PREVIEW_SELECTION_SEED_CHUNK_IDS,
+                    chunk_size_studs=runtime_chunk_size_studs,
+                )
+            )
+        errors.extend(
+            _validate_index_total_features(
+                runtime_index_text,
+                runtime_chunk_ref_entries,
+                label="runtime",
+            )
+        )
         for chunk_ref in runtime_chunk_ref_entries:
             errors.extend(_validate_chunk_scheduling_metadata(chunk_ref, label="runtime"))
             errors.extend(_validate_chunk_subplans(chunk_ref))
@@ -336,12 +508,20 @@ def collect_errors(root: Path) -> list[str]:
         errors.append("preview index does not contain any chunk refs")
         return errors
 
+    errors.extend(
+        _validate_index_total_features(
+            index_text,
+            preview_chunk_ref_entries,
+            label="preview",
+        )
+    )
+
     for chunk_ref in preview_chunk_ref_entries:
         errors.extend(_validate_chunk_scheduling_metadata(chunk_ref, label="preview"))
         errors.extend(_validate_chunk_subplans(chunk_ref))
 
     chunk_ids = set(chunk_refs)
-    if chunk_ids != EXPECTED_PREVIEW_CHUNK_IDS:
+    if expected_preview_chunk_ids is not None and chunk_ids != expected_preview_chunk_ids:
         errors.append(
             "preview index chunk ids drifted from the expected Austin preview subset: "
             + ", ".join(sorted(chunk_ids))
@@ -356,6 +536,9 @@ def collect_errors(root: Path) -> list[str]:
     unreferenced_shards = sorted(set(actual_shards) - set(referenced_shards))
     if unreferenced_shards:
         errors.append("preview shard directory contains unreferenced shard modules: " + ", ".join(unreferenced_shards))
+    else:
+        shard_paths_by_name = {path.stem: path for path in preview_shards}
+        errors.extend(_validate_preview_terrain_payloads(chunk_refs, shard_paths_by_name))
 
     chunk_count_match = CHUNK_COUNT_RE.search(index_text)
     if chunk_count_match is None:

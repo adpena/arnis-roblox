@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod manifest;
+pub mod manifest_store;
 pub mod materials;
 pub mod subplans;
 
@@ -14,6 +15,10 @@ pub use arbx_geo::satellite::SatelliteTileProvider;
 pub use manifest::{
     BarrierSegment, BuildingShell, Chunk, ChunkManifest, Color, GroundPoint, LanduseShell,
     ManifestMeta, PropInstance, RailSegment, RoadSegment, TerrainGrid, WaterFeature,
+};
+pub use manifest_store::{
+    read_manifest_sqlite_all, read_manifest_sqlite_subset, write_manifest_sqlite,
+    ManifestStoreResult, StoredChunkRecord, StoredManifestMeta, StoredManifestSubset,
 };
 use subplans::derive_chunk_ref;
 pub use subplans::{ChunkRef, ChunkSubplan, SubplanBounds, PARTITION_VERSION};
@@ -45,6 +50,17 @@ impl PartialEq for StyleMapper {
     fn eq(&self, _other: &Self) -> bool {
         true // Simplification for ExportConfig PartialEq
     }
+}
+
+fn chunk_total_feature_count(chunk: &Chunk) -> usize {
+    usize::from(chunk.terrain.is_some())
+        + chunk.roads.len()
+        + chunk.rails.len()
+        + chunk.buildings.len()
+        + chunk.water.len()
+        + chunk.props.len()
+        + chunk.landuse.len()
+        + chunk.barriers.len()
 }
 
 pub fn build_sample_manifest() -> ChunkManifest {
@@ -130,18 +146,7 @@ pub fn build_sample_multi_chunk(count_x: i32, count_z: i32) -> ChunkManifest {
 
     chunks.sort_by_key(|chunk| (chunk.id.z, chunk.id.x));
     let chunk_refs = chunks.iter().map(derive_chunk_ref).collect();
-    let total_features = chunks
-        .iter()
-        .map(|chunk| {
-            chunk.roads.len()
-                + chunk.rails.len()
-                + chunk.buildings.len()
-                + chunk.water.len()
-                + chunk.props.len()
-                + chunk.landuse.len()
-                + chunk.barriers.len()
-        })
-        .sum();
+    let total_features = chunks.iter().map(chunk_total_feature_count).sum();
 
     ChunkManifest {
         schema_version: "0.4.0".to_string(),
@@ -269,16 +274,7 @@ pub fn export_to_chunks(
         }
     }
 
-    let mut total_features = 0;
-    for chunk in &manifest.chunks {
-        total_features += chunk.roads.len();
-        total_features += chunk.rails.len();
-        total_features += chunk.buildings.len();
-        total_features += chunk.water.len();
-        total_features += chunk.props.len();
-        total_features += chunk.landuse.len();
-        total_features += chunk.barriers.len();
-    }
+    let total_features = manifest.chunks.iter().map(chunk_total_feature_count).sum();
 
     manifest.schema_version = "0.4.0".to_string();
     manifest.meta.total_features = total_features;
@@ -304,6 +300,8 @@ mod tests {
     use super::*;
     use arbx_geo::{FlatElevationProvider, Footprint, Vec2};
     use arbx_pipeline::{BuildingFeature, LanduseFeature};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn sample_manifest_serializes() {
@@ -389,7 +387,76 @@ mod tests {
         let manifest = build_sample_multi_chunk(2, 2);
         assert_eq!(manifest.chunks.len(), 4);
         assert_eq!(manifest.chunk_refs.len(), 4);
-        assert_eq!(manifest.meta.total_features, 2);
+        assert_eq!(manifest.meta.total_features, 6);
+    }
+
+    #[test]
+    fn manifest_meta_total_features_matches_chunk_ref_feature_counts() {
+        let manifest = build_sample_multi_chunk(2, 2);
+        let expected_total_features: usize = manifest
+            .chunk_refs
+            .iter()
+            .map(|chunk_ref| chunk_ref.feature_count)
+            .sum();
+
+        assert_eq!(manifest.meta.total_features, expected_total_features);
+    }
+
+    fn unique_temp_db_path(test_name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "arbx_manifest_store_{test_name}_{}_{}.sqlite",
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    #[test]
+    fn manifest_store_round_trips_requested_chunks() {
+        let manifest = build_sample_multi_chunk(2, 2);
+        let db_path = unique_temp_db_path("round_trip");
+
+        crate::manifest_store::write_manifest_sqlite(&manifest, &db_path).unwrap();
+        let subset = crate::manifest_store::read_manifest_sqlite_subset(
+            &db_path,
+            &["0_0".to_string(), "1_1".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(subset.meta.schema_version, manifest.schema_version);
+        assert_eq!(subset.meta.world_name, manifest.meta.world_name);
+        assert_eq!(subset.chunks.len(), 2);
+        assert_eq!(subset.chunks[0].chunk_id, "0_0");
+        assert_eq!(subset.chunks[1].chunk_id, "1_1");
+        assert!(subset.chunks[0].chunk_json.contains("\"id\": \"0_0\""));
+        assert!(subset.chunks[1].chunk_json.contains("\"id\": \"1_1\""));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn manifest_store_preserves_chunk_ref_streaming_metadata() {
+        let manifest = build_sample_multi_chunk(2, 2);
+        let db_path = unique_temp_db_path("streaming_metadata");
+
+        crate::manifest_store::write_manifest_sqlite(&manifest, &db_path).unwrap();
+        let subset =
+            crate::manifest_store::read_manifest_sqlite_subset(&db_path, &["0_0".to_string()])
+                .unwrap();
+
+        let chunk = &subset.chunks[0];
+        assert!(chunk.feature_count >= 2);
+        assert!(chunk.streaming_cost >= 20.0);
+        assert_eq!(chunk.partition_version, PARTITION_VERSION);
+        assert!(
+            chunk.subplans_json.contains("\"streamingCost\""),
+            "expected serialized subplans JSON to keep streaming metadata"
+        );
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]

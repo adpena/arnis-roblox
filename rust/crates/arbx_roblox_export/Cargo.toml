@@ -10,6 +10,7 @@ arbx_pipeline = { path = "../arbx_pipeline" }
 serde.workspace = true
 serde_json.workspace = true
 rayon.workspace = true
+rusqlite.workspace = true
 
 [lib]
 path = "src/lib.rs"

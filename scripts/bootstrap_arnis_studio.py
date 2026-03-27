@@ -47,6 +47,7 @@ def build_place(
     roblox_dir: Path,
     output_path: Path,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     run_command=subprocess.run,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +58,7 @@ def build_place(
             str(roblox_dir),
             "build",
             "--project",
-            DEFAULT_PROJECT_NAME,
+            project_name,
             "--output",
             str(output_path),
         ],
@@ -66,12 +67,12 @@ def build_place(
     return output_path
 
 
-def build_serve_command(vsync_binary: str) -> list[str]:
+def build_serve_command(vsync_binary: str, *, project_name: str = DEFAULT_PROJECT_NAME) -> list[str]:
     return [
         vsync_binary,
         "serve",
         "--project",
-        DEFAULT_PROJECT_NAME,
+        project_name,
     ]
 
 
@@ -122,6 +123,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open the built place in Roblox Studio after the build succeeds.",
     )
     parser.add_argument(
+        "--roblox-root",
+        type=Path,
+        default=ROBLOX_DIR,
+        help=f"Roblox project root to build from. Default: {ROBLOX_DIR}",
+    )
+    parser.add_argument(
+        "--project-name",
+        type=str,
+        default=DEFAULT_PROJECT_NAME,
+        help=f"Project file name relative to --roblox-root. Default: {DEFAULT_PROJECT_NAME}",
+    )
+    parser.add_argument(
         "--vsync-bin",
         type=str,
         default=None,
@@ -143,14 +156,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         vsync_binary = args.vsync_bin or resolve_vsync_binary()
         if args.serve:
-            subprocess.Popen(build_serve_command(vsync_binary), cwd=ROBLOX_DIR)
-        output_path = build_place(vsync_binary, ROBLOX_DIR, args.output.resolve())
+            subprocess.Popen(
+                build_serve_command(vsync_binary, project_name=args.project_name),
+                cwd=args.roblox_root.resolve(),
+            )
+        output_path = build_place(
+            vsync_binary,
+            args.roblox_root.resolve(),
+            args.output.resolve(),
+            project_name=args.project_name,
+        )
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         print(f"[bootstrap] {exc}", file=sys.stderr)
         return 1
 
     print(f"Built clean Arnis place: {output_path}")
-    print(f"Project source: {ROBLOX_DIR / DEFAULT_PROJECT_NAME}")
+    print(f"Project source: {args.roblox_root.resolve() / args.project_name}")
     if args.open:
         try:
             open_place_in_studio(output_path, studio_app=args.studio_app)

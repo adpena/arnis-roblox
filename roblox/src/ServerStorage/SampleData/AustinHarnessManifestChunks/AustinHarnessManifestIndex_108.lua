@@ -1,0 +1,1 @@
+return {chunks={{id="-35_15",water={{id="osm_1089014939",kind="river",material="Grass",color={r=94,g=160,b=68},widthStuds=8,points={{x=0,y=-2.2804,z=213.2994},{x=256,y=-2.3021,z=62.51}},width=8,intermittent=false}}}}}

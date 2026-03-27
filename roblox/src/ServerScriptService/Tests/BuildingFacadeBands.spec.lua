@@ -69,8 +69,7 @@ return function()
     local worldRoot = Workspace:FindFirstChild(worldRootName)
     Assert.truthy(worldRoot, "expected facade bands world root")
 
-    local building =
-        worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("office_tower")
+    local building = worldRoot:FindFirstChild("0_0"):FindFirstChild("Buildings"):FindFirstChild("office_tower")
     Assert.truthy(building, "expected office tower")
     local detailFolder = building:FindFirstChild("Detail")
     Assert.truthy(detailFolder, "expected shared detail folder under office tower")
@@ -80,17 +79,10 @@ return function()
         1e-6,
         "expected building shell metadata to retain resolved height"
     )
-    Assert.equal(
-        detailFolder:GetAttribute("ArnisLodGroupKind"),
-        "detail",
-        "expected detail folder lod group kind"
-    )
-    local chunkEntry = ChunkLoader.GetChunkEntry("0_0")
+    Assert.equal(detailFolder:GetAttribute("ArnisLodGroupKind"), "detail", "expected detail folder lod group kind")
+    local chunkEntry = ChunkLoader.GetChunkEntry("0_0", worldRootName)
     Assert.truthy(chunkEntry, "expected chunk entry for facade bands world")
-    Assert.truthy(
-        chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1,
-        "expected registered detail lod groups"
-    )
+    Assert.truthy(chunkEntry.lodGroups and #chunkEntry.lodGroups.detail >= 1, "expected registered detail lod groups")
     Assert.truthy(
         chunkEntry.reactives and #chunkEntry.reactives.nightWindows == 12,
         "expected facade bands to register exact night-window reactives"
@@ -107,11 +99,7 @@ return function()
     end
 
     Assert.equal(#facadeBands, 12, "expected one facade band per edge per upper floor")
-    Assert.equal(
-        #windowSills,
-        0,
-        "expected facade sill geometry to be merged instead of emitted per band"
-    )
+    Assert.equal(#windowSills, 0, "expected facade sill geometry to be merged instead of emitted per band")
     for _, band in ipairs(facadeBands) do
         Assert.falsy(
             CollectionService:HasTag(band, "LOD_Detail"),

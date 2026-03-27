@@ -7,10 +7,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SHARD_DIR = ROOT / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestChunks"
 SAMPLE_DATA_SHARD_DIR = ROOT / "roblox" / "src" / "ServerStorage" / "SampleData" / "AustinManifestChunks"
+PREVIEW_INDEX = ROOT / "roblox" / "src" / "ServerScriptService" / "StudioPreview" / "AustinPreviewManifestIndex.lua"
 PROJECT_FILE = ROOT / "roblox" / "default.project.json"
 MAX_LUA_SOURCE_LENGTH = 199_999
 STALE_ROOMS_PATTERN = re.compile(r"\brooms\s*=\s*\{")
 STALE_FACADE_PATTERN = re.compile(r"\bfacadeStyle\s*=")
+TOTAL_FEATURES_PATTERN = re.compile(r"\btotalFeatures\s*=\s*(\d+)")
 
 
 class PreviewManifestShardTests(unittest.TestCase):
@@ -81,6 +83,13 @@ class PreviewManifestShardTests(unittest.TestCase):
             [],
             f"expected preview shard folder to contain only one layout, found stale split files: {[path.name for path in split_paths]}",
         )
+
+    def test_preview_index_declares_total_features(self) -> None:
+        index_text = PREVIEW_INDEX.read_text(encoding="utf-8")
+        match = TOTAL_FEATURES_PATTERN.search(index_text)
+
+        self.assertIsNotNone(match, "expected preview index meta to declare totalFeatures")
+        self.assertGreater(int(match.group(1)), 0, "expected preview index totalFeatures to be positive")
 
 
 if __name__ == "__main__":

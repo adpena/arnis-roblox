@@ -40,11 +40,12 @@ local function normalizeResumeRatio(value)
 end
 
 local function normalizeConfig(config)
+    local hasExplicitConfig = type(config) == "table" and next(config) ~= nil
     config = if type(config) == "table" then config else {}
     local hostProbe = if type(config.HostProbe) == "table" then config.HostProbe else {}
 
     return {
-        Enabled = config.Enabled ~= false,
+        Enabled = if hasExplicitConfig then config.Enabled ~= false else false,
         EstimatedBudgetBytes = normalizeNonNegativeNumber(config.EstimatedBudgetBytes),
         ResumeBudgetRatio = normalizeResumeRatio(config.ResumeBudgetRatio),
         CountResidentChunkCost = config.CountResidentChunkCost ~= false,
@@ -62,6 +63,7 @@ local function createSnapshot(self)
         enabled = self.config.Enabled,
         state = self.state,
         pauseReason = self.pauseReason,
+        pauseOrigin = self.pauseOrigin,
         projectedUsageBytes = self.projectedUsageBytes,
         residentBytes = self.residentBytes,
         inFlightBytes = self.inFlightBytes,
@@ -81,15 +83,23 @@ local function createSnapshot(self)
     }
 end
 
-local function enterPausedState(self, reason)
+local function enterPausedState(self, reason, origin)
+    local pauseOrigin = if type(origin) == "string" and origin ~= "" then origin else "automatic"
     if self.state ~= GUARDED_PAUSE_STATE then
         self.state = GUARDED_PAUSE_STATE
         self.pauseReason = reason
+        self.pauseOrigin = pauseOrigin
         return true
     end
 
     if self.pauseReason == nil and reason ~= nil then
         self.pauseReason = reason
+    end
+    if self.pauseOrigin == nil then
+        self.pauseOrigin = pauseOrigin
+    elseif self.pauseOrigin ~= "manual" and pauseOrigin ~= "manual" then
+        self.pauseReason = reason
+        self.pauseOrigin = pauseOrigin
     end
 
     return false
@@ -104,6 +114,7 @@ function MemoryGuardrail.New(config)
     self.config = normalizeConfig(config)
     self.state = ACTIVE_STATE
     self.pauseReason = nil
+    self.pauseOrigin = nil
     self.projectedUsageBytes = 0
     self.residentBytes = 0
     self.inFlightBytes = 0
@@ -146,16 +157,17 @@ function MemoryGuardrail:SetProjectedUsageBytes(bytes)
     if not self.config.Enabled then
         self.state = ACTIVE_STATE
         self.pauseReason = nil
+        self.pauseOrigin = nil
         return self
     end
 
     if self.hostProbeCritical then
-        enterPausedState(self, "host_probe")
+        enterPausedState(self, "host_probe", "automatic")
         return self
     end
 
     if self.projectedUsageBytes > self.config.EstimatedBudgetBytes then
-        enterPausedState(self, "budget")
+        enterPausedState(self, "budget", "automatic")
     end
 
     return self
@@ -181,6 +193,7 @@ function MemoryGuardrail:Pause(reason)
 
     self.state = GUARDED_PAUSE_STATE
     self.pauseReason = if reason ~= nil then reason else "manual"
+    self.pauseOrigin = "manual"
     return true
 end
 
@@ -203,6 +216,7 @@ function MemoryGuardrail:Resume()
 
     self.state = ACTIVE_STATE
     self.pauseReason = nil
+    self.pauseOrigin = nil
     return true
 end
 
@@ -242,11 +256,12 @@ function MemoryGuardrail:ObserveHostProbe(sample)
     if not self.config.Enabled then
         self.state = ACTIVE_STATE
         self.pauseReason = nil
+        self.pauseOrigin = nil
         return self
     end
 
     if critical then
-        enterPausedState(self, "host_probe")
+        enterPausedState(self, "host_probe", "automatic")
     end
 
     return self
@@ -256,16 +271,17 @@ function MemoryGuardrail:Reevaluate()
     if not self.config.Enabled then
         self.state = ACTIVE_STATE
         self.pauseReason = nil
+        self.pauseOrigin = nil
         return self
     end
 
     if self.hostProbeCritical then
-        enterPausedState(self, "host_probe")
+        enterPausedState(self, "host_probe", "automatic")
         return self
     end
 
     if self.projectedUsageBytes > self.config.EstimatedBudgetBytes then
-        enterPausedState(self, "budget")
+        enterPausedState(self, "budget", "automatic")
     end
 
     return self

@@ -161,7 +161,9 @@ This is intentionally basic so the contract stabilizes before the representation
 ### Roads, rails, water, and barriers
 
 Polyline-based ribbons with width and points. Roads carry `hasSidewalk`, `surface`, `elevated` (bridge),
-`tunnel`, and `sidewalk` (both/left/right/no) flags. Additional optional OSM-derived road fields:
+`tunnel`, and `sidewalk` (both/left/right/no/separate) flags. `sidewalk=separate` means the source road
+declares sidewalks nearby, but not attached to the road ribbon itself, so attached sidewalk/curb scene
+geometry is not expected for that road ID. Additional optional OSM-derived road fields:
 `maxspeed` (integer km/h speed limit), `lit` (boolean street lighting), `oneway` (boolean direction
 constraint), and `layer` (integer vertical stacking level for overpasses/underpasses). Water polygons
 carry `holes` for islands/cutouts, `surfaceY` for authoritative surface elevation, `width` (real-world

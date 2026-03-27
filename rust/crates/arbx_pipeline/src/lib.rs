@@ -1723,32 +1723,45 @@ fn emit_area_way(
             .get("building:levels")
             .and_then(|l| l.parse::<u32>().ok());
         let roof_levels = tags.get("roof:levels").and_then(|l| l.parse::<u32>().ok());
-        let min_height: Option<f64> = tags.get("min_height").and_then(|h| h.parse().ok());
+        let explicit_min_height: Option<f64> = tags.get("min_height").and_then(|h| h.parse().ok());
         let raw_usage = infer_building_usage(tags);
-        let height: f64 = tags
+        let explicit_height: f64 = tags
             .get("height")
             .and_then(|h| h.parse::<f64>().ok())
             .unwrap_or_else(|| (levels.unwrap_or(1) as f64 * 3.5) + 2.0);
         let usage = match raw_usage.as_deref() {
             Some("building") | Some("yes") | None => {
-                refine_generic_building_usage(fp, height, levels, meters_per_stud).or(raw_usage)
+                refine_generic_building_usage(fp, explicit_height, levels, meters_per_stud)
+                    .or(raw_usage)
             }
             _ => raw_usage,
         };
-        let base_y: f64 = min_height
+        let inferred_roof_part_thickness = tags
+            .get("roof:height")
+            .and_then(|h| h.parse::<f64>().ok())
+            .or_else(|| roof_levels.map(|levels| levels as f64 * 3.5))
+            .unwrap_or(3.0);
+        let default_base_y: f64 = explicit_min_height
             .or_else(|| {
                 tags.get("building:min_level")
                     .and_then(|l| l.parse::<f64>().ok())
                     .map(|l| l * 3.5)
             })
             .unwrap_or(0.0);
+        let (base_y, height) = if usage.as_deref() == Some("roof") && explicit_min_height.is_none() {
+            let inferred_height = inferred_roof_part_thickness.min(explicit_height.max(1.0));
+            let inferred_base_y = (explicit_height - inferred_height).max(0.0);
+            (inferred_base_y, inferred_height)
+        } else {
+            (default_base_y, explicit_height - default_base_y)
+        };
         features.push(Feature::Building(BuildingFeature {
             id: id.to_string(),
             footprint: Footprint::new(fp.to_vec()),
             holes,
             indices: None,
             base_y,
-            height: height - base_y,
+            height,
             height_m: tags.get("height").and_then(|h| h.parse::<f64>().ok()),
             levels,
             roof_levels,
@@ -2547,6 +2560,42 @@ mod tests {
             .expect("expected building");
 
         assert_eq!(building.material_tag.as_deref(), Some("stone"));
+    }
+
+    #[test]
+    fn emit_area_way_infers_roof_part_base_from_top_height_when_min_height_missing() {
+        let mut tags = HashMap::new();
+        tags.insert("building:part".to_string(), "roof".to_string());
+        tags.insert("height".to_string(), "40".to_string());
+
+        let mut features = Vec::new();
+        emit_area_way(
+            "osm_roof_top_only",
+            &tags,
+            &[
+                Vec2::new(0.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(10.0, 10.0),
+                Vec2::new(0.0, 10.0),
+            ],
+            vec![],
+            1.0,
+            &mut features,
+        );
+
+        let building = features
+            .into_iter()
+            .find_map(|feature| match feature {
+                Feature::Building(building) => Some(building),
+                _ => None,
+            })
+            .expect("expected building");
+
+        assert_eq!(building.usage.as_deref(), Some("roof"));
+        assert_eq!(building.base_y, 37.0);
+        assert_eq!(building.min_height, Some(37.0));
+        assert_eq!(building.height, 3.0);
+        assert_eq!(building.base_y + building.height, 40.0);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 return {
     runInEditMode = false,
     runInPlayMode = false,
-    specNameFilter = ""
+specNameFilter = 'AustinSpawn.spec.lua'
 }

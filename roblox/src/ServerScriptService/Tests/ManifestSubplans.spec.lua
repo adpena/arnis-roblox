@@ -194,6 +194,109 @@ return function()
     ]]
     seededIndexModule.Parent = container
 
+    local splitTerrainShardBase = Instance.new("ModuleScript")
+    splitTerrainShardBase.Name = "SplitTerrainShard_001"
+    splitTerrainShardBase.Source = [[
+        return {
+            chunks = {
+                {
+                    id = "2_0",
+                    originStuds = { x = 512, y = 0, z = 0 },
+                    terrain = {
+                        cellSizeStuds = 4,
+                        width = 2,
+                        depth = 2,
+                        material = "Grass",
+                    },
+                    roads = {},
+                    rails = {},
+                    buildings = {},
+                    water = {},
+                    props = {},
+                    landuse = {},
+                    barriers = {},
+                },
+            },
+        }
+    ]]
+    splitTerrainShardBase.Parent = shardFolder
+
+    local splitTerrainShardHeights = Instance.new("ModuleScript")
+    splitTerrainShardHeights.Name = "SplitTerrainShard_002"
+    splitTerrainShardHeights.Source = [[
+        return {
+            chunks = {
+                {
+                    id = "2_0",
+                    terrain = {
+                        heights = { 1, 2 },
+                    },
+                },
+            },
+        }
+    ]]
+    splitTerrainShardHeights.Parent = shardFolder
+
+    local splitTerrainShardMaterials = Instance.new("ModuleScript")
+    splitTerrainShardMaterials.Name = "SplitTerrainShard_003"
+    splitTerrainShardMaterials.Source = [[
+        return {
+            chunks = {
+                {
+                    id = "2_0",
+                    terrain = {
+                        heights = { 3, 4 },
+                        materials = { "Grass", "Grass", "Rock", "Rock" },
+                    },
+                },
+            },
+        }
+    ]]
+    splitTerrainShardMaterials.Parent = shardFolder
+
+    local splitTerrainIndexModule = Instance.new("ModuleScript")
+    splitTerrainIndexModule.Name = "ManifestSubplansSplitTerrainIndex"
+    splitTerrainIndexModule.Source = [[
+        return {
+            schemaVersion = "0.4.0",
+            meta = {
+                worldName = "ManifestSubplansSplitTerrain",
+                generator = "test",
+                source = "test",
+                metersPerStud = 0.3,
+                chunkSizeStuds = 256,
+                bbox = {
+                    minLat = 0,
+                    minLon = 0,
+                    maxLat = 1,
+                    maxLon = 1,
+                },
+                totalFeatures = 1,
+            },
+            shardFolder = "ManifestSubplansChunks",
+            shards = { "SplitTerrainShard_001", "SplitTerrainShard_002", "SplitTerrainShard_003" },
+            chunkRefs = {
+                {
+                    id = "2_0",
+                    originStuds = { x = 512, y = 0, z = 0 },
+                    featureCount = 1,
+                    streamingCost = 8,
+                    partitionVersion = "subplans.v1",
+                    subplans = {
+                        {
+                            id = "terrain",
+                            layer = "terrain",
+                            featureCount = 1,
+                            streamingCost = 8,
+                        },
+                    },
+                    shards = { "SplitTerrainShard_001", "SplitTerrainShard_002", "SplitTerrainShard_003" },
+                },
+            },
+        }
+    ]]
+    splitTerrainIndexModule.Parent = container
+
     game:SetAttribute("ManifestSubplansShardRequireCount", 0)
 
     local ok, err = xpcall(function()
@@ -275,6 +378,32 @@ return function()
             game:GetAttribute("ManifestSubplansShardRequireCount"),
             0,
             "expected ResolveChunkRef to stay lazy when seed shard metadata is already authoritative"
+        )
+
+        local splitTerrainHandle =
+            ManifestLoader.LoadShardedModuleHandle(splitTerrainIndexModule, shardFolder, 0, {
+                freshRequire = true,
+            })
+        local splitTerrainChunk = splitTerrainHandle:GetChunk("2_0")
+        Assert.equal(
+            #splitTerrainChunk.terrain.heights,
+            4,
+            "expected split terrain height fragments to merge back into one terrain grid"
+        )
+        Assert.equal(
+            table.concat(splitTerrainChunk.terrain.heights, ","),
+            "1,2,3,4",
+            "expected split terrain height fragments to preserve source ordering"
+        )
+        Assert.equal(
+            #splitTerrainChunk.terrain.materials,
+            4,
+            "expected split terrain material fragments to merge back into one terrain grid"
+        )
+        Assert.equal(
+            table.concat(splitTerrainChunk.terrain.materials, ","),
+            "Grass,Grass,Rock,Rock",
+            "expected split terrain material fragments to preserve source ordering"
         )
 
         game:SetAttribute("ManifestSubplansShardRequireCount", 0)
@@ -428,6 +557,7 @@ return function()
     sampleIndexModule:Destroy()
     malformedIndexModule:Destroy()
     seededIndexModule:Destroy()
+    splitTerrainIndexModule:Destroy()
     if createdSampleData then
         sampleData:Destroy()
     end

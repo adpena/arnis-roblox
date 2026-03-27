@@ -1,0 +1,1 @@
+return {chunks={{id="-1_-3",props={{id="bikepark_12489371647",kind="bicycle_parking",position={x=91.9522,y=0.6241,z=125.8185},yawDegrees=0,scale=1},{id="tree_1281660103",kind="tree",position={x=15.253,y=0.2905,z=192.9331},yawDegrees=0,scale=1}}}}}

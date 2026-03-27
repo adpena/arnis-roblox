@@ -23,6 +23,21 @@ local function paintSegment(terrain, p1, p2, width)
     terrain:FillBlock(cf, Vector3.new(width, RAIL_THICKNESS, length), Enum.Material.Cobblestone)
 end
 
+local function emitAuditRecord(parent, rail, builtSegmentCount)
+    if parent == nil or builtSegmentCount <= 0 then
+        return
+    end
+    local record = Instance.new("Configuration")
+    local railId = tostring(rail.id or "rail")
+    record.Name = "RailAudit_" .. railId
+    record:SetAttribute("ArnisRailAuditRecord", true)
+    record:SetAttribute("ArnisRailKind", tostring(rail.kind or "unknown"))
+    record:SetAttribute("ArnisRailSourceId", railId)
+    record:SetAttribute("ArnisRailSegmentCount", builtSegmentCount)
+    record:SetAttribute("ArnisRailWidthStuds", tonumber(rail.widthStuds) or 4)
+    record.Parent = parent
+end
+
 function RailBuilder.BuildAll(parent, rails, originStuds)
     if not rails or #rails == 0 then
         return
@@ -36,14 +51,17 @@ function RailBuilder.Build(parent, rail, originStuds)
     RailBuilder.FallbackBuild(parent, rail, originStuds)
 end
 
-function RailBuilder.FallbackBuild(_parent, rail, originStuds)
+function RailBuilder.FallbackBuild(parent, rail, originStuds)
     local terrain = Workspace.Terrain
     local width = rail.widthStuds or 4
+    local builtSegmentCount = 0
     for i = 1, #rail.points - 1 do
         local p1 = offsetPoint(rail.points[i], originStuds)
         local p2 = offsetPoint(rail.points[i + 1], originStuds)
         paintSegment(terrain, p1, p2, width)
+        builtSegmentCount += 1
     end
+    emitAuditRecord(parent, rail, builtSegmentCount)
 end
 
 return RailBuilder

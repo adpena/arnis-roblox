@@ -39,6 +39,11 @@ def _append_bucket_id(container: dict[str, list[str]], bucket: str, source_id: A
         row.append(source_id)
 
 
+def _road_expects_attached_sidewalk(road: dict[str, Any]) -> bool:
+    sidewalk_mode = str(road.get("sidewalk") or "").strip().lower()
+    return bool(road.get("hasSidewalk")) or sidewalk_mode in {"both", "left", "right"}
+
+
 SOURCE_BUILDING_MATERIAL_TO_SCENE_BUCKET = {
     "asphalt": "asphalt",
     "brick": "brick",
@@ -104,6 +109,7 @@ def _merge_pending_scene_fragments(
     latest_vegetation_kind_buckets: dict[str, dict[str, Any]],
     latest_water_type_buckets: dict[str, dict[str, Any]],
     latest_water_kind_buckets: dict[str, dict[str, Any]],
+    latest_rail_kind_buckets: dict[str, dict[str, Any]],
     latest_road_kind_buckets: dict[str, dict[str, Any]],
     latest_road_subkind_buckets: dict[str, dict[str, Any]],
     latest_building_wall_material_buckets: dict[str, dict[str, Any]],
@@ -141,6 +147,8 @@ def _merge_pending_scene_fragments(
         scene["waterSurfacePartCountByType"] = dict(latest_water_type_buckets)
     if latest_water_kind_buckets:
         scene["waterSurfacePartCountByKind"] = dict(latest_water_kind_buckets)
+    if latest_rail_kind_buckets:
+        scene["railReceiptCountByKind"] = dict(latest_rail_kind_buckets)
     if latest_road_kind_buckets:
         scene["roadSurfacePartCountByKind"] = dict(latest_road_kind_buckets)
     if latest_road_subkind_buckets:
@@ -164,6 +172,7 @@ def _new_fragment_state() -> dict[str, Any]:
         "vegetation_kind_buckets": {},
         "water_type_buckets": {},
         "water_kind_buckets": {},
+        "rail_kind_buckets": {},
         "road_kind_buckets": {},
         "road_subkind_buckets": {},
         "building_wall_material_buckets": {},
@@ -193,6 +202,7 @@ def _merge_fragment_state(payload: dict[str, Any], state: dict[str, Any]) -> Non
         state["vegetation_kind_buckets"],
         state["water_type_buckets"],
         state["water_kind_buckets"],
+        state["rail_kind_buckets"],
         state["road_kind_buckets"],
         state["road_subkind_buckets"],
         state["building_wall_material_buckets"],
@@ -220,6 +230,8 @@ def _parse_latest_marker(log_path: Path, marker: str) -> dict[str, Any]:
     water_type_bucket_prefix = marker + "_WATER_TYPE_BUCKET "
     water_kind_bucket_prefix = marker + "_WATER_KIND_BUCKET "
     water_kind_ids_batch_prefix = marker + "_WATER_KIND_IDS_BATCH "
+    rail_kind_bucket_prefix = marker + "_RAIL_KIND_BUCKET "
+    rail_kind_ids_batch_prefix = marker + "_RAIL_KIND_IDS_BATCH "
     road_kind_bucket_prefix = marker + "_ROAD_KIND_BUCKET "
     road_kind_ids_batch_prefix = marker + "_ROAD_KIND_IDS_BATCH "
     road_subkind_bucket_prefix = marker + "_ROAD_SUBKIND_BUCKET "
@@ -261,6 +273,10 @@ def _parse_latest_marker(log_path: Path, marker: str) -> dict[str, Any]:
                 matched_prefix = water_kind_bucket_prefix
             elif water_kind_ids_batch_prefix in line:
                 matched_prefix = water_kind_ids_batch_prefix
+            elif rail_kind_bucket_prefix in line:
+                matched_prefix = rail_kind_bucket_prefix
+            elif rail_kind_ids_batch_prefix in line:
+                matched_prefix = rail_kind_ids_batch_prefix
             elif road_kind_bucket_prefix in line:
                 matched_prefix = road_kind_bucket_prefix
             elif road_kind_ids_batch_prefix in line:
@@ -388,6 +404,19 @@ def _parse_latest_marker(log_path: Path, marker: str) -> dict[str, Any]:
                     stats = state["water_kind_buckets"].setdefault(bucket, {})
                     _append_stats_source_ids(stats, ids)
                 continue
+            if matched_prefix == rail_kind_bucket_prefix:
+                bucket = payload.get("bucket")
+                stats = payload.get("stats")
+                if isinstance(bucket, str) and isinstance(stats, dict):
+                    state["rail_kind_buckets"][bucket] = stats
+                continue
+            if matched_prefix == rail_kind_ids_batch_prefix:
+                bucket = payload.get("bucket")
+                ids = payload.get("sourceIds")
+                if isinstance(bucket, str) and isinstance(ids, list):
+                    stats = state["rail_kind_buckets"].setdefault(bucket, {})
+                    _append_stats_source_ids(stats, ids)
+                continue
             if matched_prefix == road_kind_bucket_prefix:
                 bucket = payload.get("bucket")
                 stats = payload.get("stats")
@@ -472,8 +501,10 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
     tree_count = 0
     vegetation_count = 0
     water_count = 0
+    rail_count = 0
     chunk_ids: list[str] = []
     chunks_with_roads = 0
+    chunks_with_rails = 0
     chunks_with_buildings = 0
     chunks_with_props = 0
     chunks_with_vegetation = 0
@@ -486,6 +517,7 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
     vegetation_ids_by_kind: dict[str, list[str]] = {}
     water_count_by_type: dict[str, int] = {}
     water_count_by_kind: dict[str, int] = {}
+    rail_count_by_kind: dict[str, int] = {}
     building_count_by_usage: dict[str, int] = {}
     building_count_by_roof_shape: dict[str, int] = {}
     building_count_by_explicit_wall_material: dict[str, int] = {}
@@ -496,6 +528,9 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
     road_count_by_subkind: dict[str, int] = {}
     road_ids_by_kind: dict[str, list[str]] = {}
     road_ids_by_subkind: dict[str, list[str]] = {}
+    rail_ids_by_kind: dict[str, list[str]] = {}
+    road_count_with_attached_sidewalk = 0
+    road_ids_with_attached_sidewalk: list[str] = []
     water_ids_by_kind: dict[str, list[str]] = {}
     water_ids_by_type: dict[str, list[str]] = {}
 
@@ -528,11 +563,13 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
         chunk_ids.append(chunk_id)
 
         roads = chunk.get("roads") if isinstance(chunk.get("roads"), list) else []
+        rails = chunk.get("rails") if isinstance(chunk.get("rails"), list) else []
         buildings = chunk.get("buildings") if isinstance(chunk.get("buildings"), list) else []
         props = chunk.get("props") if isinstance(chunk.get("props"), list) else []
         waters = chunk.get("water") if isinstance(chunk.get("water"), list) else []
 
         road_count += len(roads)
+        rail_count += len(rails)
         building_count += len(buildings)
         prop_count += len(props)
         water_count += len(waters)
@@ -548,6 +585,19 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
                 road_count_by_subkind[subkind] = road_count_by_subkind.get(subkind, 0) + 1
                 _append_bucket_id(road_ids_by_kind, kind, road.get("id"))
                 _append_bucket_id(road_ids_by_subkind, subkind, road.get("id"))
+                if _road_expects_attached_sidewalk(road):
+                    road_count_with_attached_sidewalk += 1
+                    road_id = road.get("id")
+                    if isinstance(road_id, str) and road_id and road_id not in road_ids_with_attached_sidewalk:
+                        road_ids_with_attached_sidewalk.append(road_id)
+        if rails:
+            chunks_with_rails += 1
+            for rail in rails:
+                if not isinstance(rail, dict):
+                    continue
+                kind = str(rail.get("kind") or "unknown")
+                rail_count_by_kind[kind] = rail_count_by_kind.get(kind, 0) + 1
+                _append_bucket_id(rail_ids_by_kind, kind, rail.get("id"))
         if buildings:
             chunks_with_buildings += 1
             for building in buildings:
@@ -617,6 +667,11 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
         "roadCountBySubkind": road_count_by_subkind,
         "roadIdsByKind": road_ids_by_kind,
         "roadIdsBySubkind": road_ids_by_subkind,
+        "roadCountWithAttachedSidewalk": road_count_with_attached_sidewalk,
+        "roadIdsWithAttachedSidewalk": road_ids_with_attached_sidewalk,
+        "railCount": rail_count,
+        "railCountByKind": rail_count_by_kind,
+        "railIdsByKind": rail_ids_by_kind,
         "buildingCount": building_count,
         "buildingCountByUsage": building_count_by_usage,
         "buildingCountByRoofShape": building_count_by_roof_shape,
@@ -635,6 +690,7 @@ def _build_manifest_zone_summary(manifest: dict[str, Any], payload: dict[str, An
         "vegetationIdsByKind": vegetation_ids_by_kind,
         "waterCount": water_count,
         "chunksWithRoads": chunks_with_roads,
+        "chunksWithRails": chunks_with_rails,
         "chunksWithBuildings": chunks_with_buildings,
         "chunksWithProps": chunks_with_props,
         "chunksWithVegetation": chunks_with_vegetation,
@@ -769,9 +825,12 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
     scene_chunk_count = int(scene.get("chunkCount") or 0)
     scene_building_models = int(scene.get("buildingModelCount") or 0)
     scene_road_chunks = int(scene.get("chunksWithRoadGeometry") or 0)
+    scene_rail_chunks = int(scene.get("chunksWithRailGeometry") or 0)
     manifest_chunk_count = int(manifest_summary["chunkCount"])
     manifest_building_count = int(manifest_summary["buildingCount"])
     manifest_road_chunk_count = int(manifest_summary["chunksWithRoads"])
+    manifest_rail_chunk_count = int(manifest_summary["chunksWithRails"])
+    manifest_rail_count = int(manifest_summary["railCount"])
     manifest_prop_count = int(manifest_summary["propCount"])
     manifest_vegetation_count = int(manifest_summary["vegetationCount"])
     manifest_water_chunk_count = int(manifest_summary["chunksWithWater"])
@@ -784,6 +843,7 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
         "chunk_ratio": _ratio(scene_chunk_count, manifest_chunk_count),
         "building_model_ratio": _ratio(scene_building_models, manifest_building_count),
         "road_geometry_ratio": _ratio(scene_road_chunks, manifest_road_chunk_count),
+        "rail_geometry_ratio": _ratio(scene_rail_chunks, manifest_rail_chunk_count),
         "prop_instance_ratio": _ratio(scene_prop_count, manifest_prop_count),
         "vegetation_instance_ratio": _ratio(scene_vegetation_count, manifest_vegetation_count),
         "water_geometry_ratio": _ratio(scene_water_chunks, manifest_water_chunk_count),
@@ -791,6 +851,8 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
         "sceneRoadSurfaceSubkinds": scene.get("roadSurfacePartCountBySubkind") or {},
         "manifestRoadKinds": manifest_summary.get("roadCountByKind") or {},
         "manifestRoadSubkinds": manifest_summary.get("roadCountBySubkind") or {},
+        "sceneRailKinds": scene.get("railReceiptCountByKind") or {},
+        "manifestRailKinds": manifest_summary.get("railCountByKind") or {},
         "manifestWaterKinds": manifest_summary.get("waterCountByKind") or {},
         "manifestWaterTypes": manifest_summary.get("waterCountByType") or {},
         "manifestPropKinds": manifest_summary.get("propCountByKind") or {},
@@ -802,6 +864,7 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
         "sceneBuildingRoofMaterials": scene.get("buildingModelCountByRoofMaterial") or {},
         "roadKindGaps": [],
         "roadSubkindGaps": [],
+        "railKindGaps": [],
         "waterKindGaps": [],
         "propKindGaps": [],
         "treeSpeciesGaps": [],
@@ -836,6 +899,16 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
                 "code": "missing_road_geometry",
                 "message": (
                     f"scene has road geometry in {scene_road_chunks} chunks but manifest expected {manifest_road_chunk_count}"
+                ),
+            }
+        )
+    if manifest_rail_chunk_count > 0 and scene_rail_chunks < manifest_rail_chunk_count:
+        findings.append(
+            {
+                "severity": "high",
+                "code": "missing_rail_geometry",
+                "message": (
+                    f"scene has rail receipts in {scene_rail_chunks} chunks but manifest expected {manifest_rail_chunk_count}"
                 ),
             }
         )
@@ -1097,9 +1170,108 @@ def build_report(manifest_path: Path, log_path: Path, *, marker: str) -> dict[st
             }
         )
 
+    manifest_rail_kinds = manifest_summary.get("railCountByKind") or {}
+    manifest_rail_ids_by_kind = manifest_summary.get("railIdsByKind")
+    scene_rail_kinds = scene.get("railReceiptCountByKind") or {}
+    rail_kind_gaps: list[tuple[str, int, int]] = []
+    for kind, expected_count in _sorted_manifest_count_rows(manifest_rail_kinds):
+        expected_feature_count = _manifest_bucket_feature_truth_count(
+            manifest_rail_kinds,
+            manifest_rail_ids_by_kind,
+            kind,
+        )
+        scene_count = _scene_bucket_feature_truth_count(scene_rail_kinds, kind, "instanceCount")
+        if expected_feature_count > 0 and scene_count < expected_feature_count:
+            rail_kind_gaps.append((kind, expected_feature_count, scene_count))
+    if rail_kind_gaps:
+        summary["railKindGaps"] = _gap_rows(rail_kind_gaps, manifest_rail_ids_by_kind, scene_rail_kinds)
+        findings.append(
+            {
+                "severity": "medium",
+                "code": "rail_kind_scene_gap",
+                "message": _format_bucket_gap_summary(rail_kind_gaps, "rail kind"),
+            }
+        )
+
+    manifest_attached_sidewalk_ids = manifest_summary.get("roadIdsWithAttachedSidewalk") or []
+    attached_sidewalk_expected_count = len(manifest_attached_sidewalk_ids)
+    attached_sidewalk_scene_bucket = {"attached_sidewalk": (scene_road_subkinds.get("sidewalk") or {})}
+    attached_sidewalk_scene_count = _scene_bucket_feature_truth_count(
+        attached_sidewalk_scene_bucket,
+        "attached_sidewalk",
+        "featureCount",
+    )
+    attached_sidewalk_gaps: list[dict[str, Any]] = []
+    if attached_sidewalk_expected_count > 0 and attached_sidewalk_scene_count < attached_sidewalk_expected_count:
+        attached_sidewalk_gaps = _gap_rows(
+            [("attached_sidewalk", attached_sidewalk_expected_count, attached_sidewalk_scene_count)],
+            {"attached_sidewalk": manifest_attached_sidewalk_ids},
+            attached_sidewalk_scene_bucket,
+        )
+        summary["attachedSidewalkGaps"] = attached_sidewalk_gaps
+        findings.append(
+            {
+                "severity": "medium",
+                "code": "attached_sidewalk_scene_gap",
+                "message": _format_bucket_gap_summary(
+                    [("attached_sidewalk", attached_sidewalk_expected_count, attached_sidewalk_scene_count)],
+                    "attached sidewalk",
+                ),
+            }
+        )
+    else:
+        summary["attachedSidewalkGaps"] = []
+
+    curb_scene_bucket = {"curb": (scene_road_subkinds.get("curb") or {})}
+    curb_scene_count = _scene_bucket_feature_truth_count(curb_scene_bucket, "curb", "featureCount")
+    curb_gaps: list[dict[str, Any]] = []
+    if attached_sidewalk_expected_count > 0 and curb_scene_count < attached_sidewalk_expected_count:
+        curb_gaps = _gap_rows(
+            [("curb", attached_sidewalk_expected_count, curb_scene_count)],
+            {"curb": manifest_attached_sidewalk_ids},
+            curb_scene_bucket,
+        )
+        summary["curbGaps"] = curb_gaps
+        findings.append(
+            {
+                "severity": "medium",
+                "code": "curb_scene_gap",
+                "message": _format_bucket_gap_summary(
+                    [("curb", attached_sidewalk_expected_count, curb_scene_count)],
+                    "curb",
+                ),
+            }
+        )
+    else:
+        summary["curbGaps"] = []
+
     manifest_water_kinds = manifest_summary.get("waterCountByKind") or {}
     manifest_water_ids_by_kind = manifest_summary.get("waterIdsByKind")
     scene_water_kinds = scene.get("waterSurfacePartCountByKind") or {}
+    manifest_water_types = manifest_summary.get("waterCountByType") or {}
+    manifest_water_ids_by_type = manifest_summary.get("waterIdsByType")
+    scene_water_types = scene.get("waterSurfacePartCountByType") or {}
+    water_type_gaps: list[tuple[str, int, int]] = []
+    for water_type, expected_count in _sorted_manifest_count_rows(manifest_water_types):
+        expected_feature_count = _manifest_bucket_feature_truth_count(
+            manifest_water_types,
+            manifest_water_ids_by_type,
+            water_type,
+        )
+        scene_count = _scene_bucket_feature_truth_count(scene_water_types, water_type, "surfacePartCount")
+        if expected_feature_count > 0 and scene_count < expected_feature_count:
+            water_type_gaps.append((water_type, expected_feature_count, scene_count))
+    if water_type_gaps:
+        summary["waterTypeGaps"] = _gap_rows(water_type_gaps, manifest_water_ids_by_type, scene_water_types)
+        findings.append(
+            {
+                "severity": "medium",
+                "code": "water_type_scene_gap",
+                "message": _format_bucket_gap_summary(water_type_gaps, "water type"),
+            }
+        )
+    else:
+        summary["waterTypeGaps"] = []
     water_kind_gaps: list[tuple[str, int, int]] = []
     for kind, expected_count in _sorted_manifest_count_rows(manifest_water_kinds):
         expected_feature_count = _manifest_bucket_feature_truth_count(manifest_water_kinds, manifest_water_ids_by_kind, kind)
@@ -1336,6 +1508,28 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
         )
         for bucket, count in _sorted_manifest_count_rows(report["manifest"].get("waterCountByKind"))
     )
+    manifest_water_type_rows = "".join(
+        (
+            f"<tr><td>{escape(bucket)}</td>"
+            f"<td>{escape(str(count))}</td></tr>"
+        )
+        for bucket, count in _sorted_manifest_count_rows(report["manifest"].get("waterCountByType"))
+    )
+    rail_kind_rows = "".join(
+        (
+            f"<tr><td>{escape(bucket)}</td>"
+            f"<td>{escape(str(row.get('instanceCount', 0)))}</td></tr>"
+        )
+        for bucket, row in sorted((report["scene"].get("railReceiptCountByKind") or {}).items())
+        if isinstance(bucket, str) and isinstance(row, dict)
+    )
+    manifest_rail_kind_rows = "".join(
+        (
+            f"<tr><td>{escape(bucket)}</td>"
+            f"<td>{escape(str(count))}</td></tr>"
+        )
+        for bucket, count in _sorted_manifest_count_rows(report["manifest"].get("railCountByKind"))
+    )
     road_kind_rows = "".join(
         (
             f"<tr><td>{escape(bucket)}</td>"
@@ -1431,6 +1625,10 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
     )
     road_kind_gap_rows = render_gap_rows(report["summary"].get("roadKindGaps"))
     road_subkind_gap_rows = render_gap_rows(report["summary"].get("roadSubkindGaps"))
+    rail_kind_gap_rows = render_gap_rows(report["summary"].get("railKindGaps"))
+    attached_sidewalk_gap_rows = render_gap_rows(report["summary"].get("attachedSidewalkGaps"))
+    curb_gap_rows = render_gap_rows(report["summary"].get("curbGaps"))
+    water_type_gap_rows = render_gap_rows(report["summary"].get("waterTypeGaps"))
     water_kind_gap_rows = render_gap_rows(report["summary"].get("waterKindGaps"))
     prop_kind_gap_rows = render_gap_rows(report["summary"].get("propKindGaps"))
     tree_species_gap_rows = render_gap_rows(report["summary"].get("treeSpeciesGaps"))
@@ -1561,6 +1759,7 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
     <div class="metric-strip">
       <div class="metric"><div class="metric-label">building_model_ratio</div><div class="metric-value">{float(report["summary"].get("building_model_ratio", 0.0)):.3f}</div></div>
       <div class="metric"><div class="metric-label">road_geometry_ratio</div><div class="metric-value">{float(report["summary"].get("road_geometry_ratio", 0.0)):.3f}</div></div>
+      <div class="metric"><div class="metric-label">rail_geometry_ratio</div><div class="metric-value">{float(report["summary"].get("rail_geometry_ratio", 0.0)):.3f}</div></div>
       <div class="metric"><div class="metric-label">prop_instance_ratio</div><div class="metric-value">{float(report["summary"].get("prop_instance_ratio", 0.0)):.3f}</div></div>
       <div class="metric"><div class="metric-label">vegetation_instance_ratio</div><div class="metric-value">{float(report["summary"].get("vegetation_instance_ratio", 0.0)):.3f}</div></div>
       <div class="metric"><div class="metric-label">water_geometry_ratio</div><div class="metric-value">{float(report["summary"].get("water_geometry_ratio", 0.0)):.3f}</div></div>
@@ -1598,11 +1797,21 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
 
     {'<h2>Manifest Road Subkinds</h2><table><thead><tr><th>Road Subkind</th><th>Manifest Roads</th></tr></thead><tbody>' + manifest_road_subkind_rows + '</tbody></table>' if manifest_road_subkind_rows else ''}
 
+    {'<h2>Manifest Rail Kinds</h2><table><thead><tr><th>Rail Kind</th><th>Manifest Rails</th></tr></thead><tbody>' + manifest_rail_kind_rows + '</tbody></table>' if manifest_rail_kind_rows else ''}
+
+    {'<h2>Rail Receipts By Kind</h2><table><thead><tr><th>Rail Kind</th><th>Scene Receipts</th></tr></thead><tbody>' + rail_kind_rows + '</tbody></table>' if rail_kind_rows else ''}
+
+    {'<h2>Rail Kind Gaps</h2><table><thead><tr><th>Rail Kind</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + rail_kind_gap_rows + '</tbody></table>' if rail_kind_gap_rows else ''}
+
     {'<h2>Water Surface Breakdown</h2><table><thead><tr><th>Surface Type</th><th>Surface Parts</th></tr></thead><tbody>' + water_type_rows + '</tbody></table>' if water_type_rows else ''}
+
+    {'<h2>Manifest Water Types</h2><table><thead><tr><th>Water Type</th><th>Manifest Water Features</th></tr></thead><tbody>' + manifest_water_type_rows + '</tbody></table>' if manifest_water_type_rows else ''}
 
     {'<h2>Manifest Water Kinds</h2><table><thead><tr><th>Water Kind</th><th>Manifest Water Features</th></tr></thead><tbody>' + manifest_water_kind_rows + '</tbody></table>' if manifest_water_kind_rows else ''}
 
     {'<h2>Water Surface By Kind</h2><table><thead><tr><th>Water Kind</th><th>Surface Parts</th></tr></thead><tbody>' + water_kind_rows + '</tbody></table>' if water_kind_rows else ''}
+
+    {'<h2>Water Type Gaps</h2><table><thead><tr><th>Water Type</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + water_type_gap_rows + '</tbody></table>' if water_type_gap_rows else ''}
 
     {'<h2>Water Kind Gaps</h2><table><thead><tr><th>Water Kind</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + water_kind_gap_rows + '</tbody></table>' if water_kind_gap_rows else ''}
 
@@ -1613,6 +1822,10 @@ def write_html_report(report: dict[str, Any], html_path: Path) -> None:
     {'<h2>Road Surface By Subkind</h2><table><thead><tr><th>Road Subkind</th><th>Surface Parts</th></tr></thead><tbody>' + road_subkind_rows + '</tbody></table>' if road_subkind_rows else ''}
 
     {'<h2>Road Subkind Gaps</h2><table><thead><tr><th>Road Subkind</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + road_subkind_gap_rows + '</tbody></table>' if road_subkind_gap_rows else ''}
+
+    {'<h2>Attached Sidewalk Gaps</h2><table><thead><tr><th>Expectation</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + attached_sidewalk_gap_rows + '</tbody></table>' if attached_sidewalk_gap_rows else ''}
+
+    {'<h2>Curb Gaps</h2><table><thead><tr><th>Expectation</th><th>Manifest</th><th>Scene</th><th>Missing IDs</th></tr></thead><tbody>' + curb_gap_rows + '</tbody></table>' if curb_gap_rows else ''}
 
     {'<h2>Prop Breakdown</h2><table><thead><tr><th>Prop Kind</th><th>Instances</th></tr></thead><tbody>' + prop_kind_rows + '</tbody></table>' if prop_kind_rows else ''}
 

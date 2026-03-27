@@ -1,0 +1,1 @@
+return {chunks={{id="0_-3",buildings={{id="osm_206673559",material="Limestone",wallColor={r=216,g=209,b=196},roofShape="flat",usage="government",minHeight=0,footprint={{x=123.2307,z=101.7999},{x=119.4458,z=113.4011},{x=131.2086,z=117.2251},{x=134.9563,z=105.667}},indices={},baseY=-3.9735,height=18.3333,roof="flat",name="Capitol Checkpoint North"}}}}}
