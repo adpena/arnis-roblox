@@ -722,7 +722,7 @@ def write_preview_index(
     *,
     canonical_anchor_position: tuple[float, float, float],
     chunk_size_studs: float,
-    output_path: Path = PREVIEW_INDEX,
+    output_path: Path | None = None,
     world_name: str = "AustinPreviewDowntown",
     shard_folder: str = "AustinPreviewManifestChunks",
     notes: tuple[str, str] = (
@@ -730,6 +730,7 @@ def write_preview_index(
         "kept in sync with runtime sample-data generation to avoid stale preview drift",
     ),
 ) -> None:
+    output_path = PREVIEW_INDEX if output_path is None else output_path
     anchor_x, anchor_y, anchor_z = canonical_anchor_position
 
     lines = [
@@ -801,7 +802,7 @@ def write_preview_index(
 def clone_chunk_ref_entries(chunk_refs: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, dict[str, Any]]]:
     cloned: list[tuple[str, dict[str, Any]]] = []
     for chunk_id, chunk_ref in chunk_refs:
-        cloned.append((chunk_id, dict(chunk_ref)))
+        cloned.append((chunk_id, _parse_lua_value(_format_lua_value(chunk_ref))))
     return cloned
 
 

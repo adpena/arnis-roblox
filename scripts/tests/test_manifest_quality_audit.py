@@ -2367,6 +2367,9 @@ class ManifestQualityAuditTests(unittest.TestCase):
             ROOT / "rust" / "data" / "overture_buildings.geojson",
         ]
 
+        if not manifest_path.exists():
+            self.skipTest("requires generated rust/out/austin-manifest.json; run the Austin fidelity export lane to refresh it")
+
         report = audit.build_report(manifest_path, source_paths)
         codes = {finding["code"] for finding in report["findings"]}
 

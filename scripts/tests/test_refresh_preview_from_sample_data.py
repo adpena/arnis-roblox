@@ -347,6 +347,19 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             self.assertIn('bounds = { minX = 0, minY = 0, maxX = 128, maxY = 128 }', written)
             self.assertIn('id = "roads"', written)
 
+    def test_clone_chunk_ref_entries_deep_copies_shard_lists(self) -> None:
+        module = load_module()
+
+        original = [("0_0", {"shards": ["AustinPreviewManifestIndex_001"], "featureCount": "1"})]
+        cloned = module.clone_chunk_ref_entries(original)
+        cloned[0][1]["shards"].append("AustinCanonicalManifestIndex_001")
+
+        self.assertEqual(original[0][1]["shards"], ["AustinPreviewManifestIndex_001"])
+        self.assertEqual(
+            cloned[0][1]["shards"],
+            ["AustinPreviewManifestIndex_001", "AustinCanonicalManifestIndex_001"],
+        )
+
     def test_preview_shard_fragments_strip_index_only_subplan_metadata(self) -> None:
         module = load_module()
 
@@ -424,6 +437,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             preview_dir = temp_root / "StudioPreview"
             preview_index = preview_dir / "AustinPreviewManifestIndex.lua"
             preview_shards = preview_dir / "AustinPreviewManifestChunks"
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
 
             source_index.write_text(
                 "\n".join(
@@ -453,12 +469,18 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             original_preview_dir = module.PREVIEW_DIR
             original_preview_index = module.PREVIEW_INDEX
             original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_sample_data_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
             original_max_preview_bytes = module.MAX_PREVIEW_BYTES
             module.SOURCE_INDEX = source_index
             module.SOURCE_JSON = source_json
             module.PREVIEW_DIR = preview_dir
             module.PREVIEW_INDEX = preview_index
             module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
             module.MAX_PREVIEW_BYTES = 50_000
             try:
                 exit_code = module.main()
@@ -468,6 +490,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 module.PREVIEW_DIR = original_preview_dir
                 module.PREVIEW_INDEX = original_preview_index
                 module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_sample_data_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
                 module.MAX_PREVIEW_BYTES = original_max_preview_bytes
 
             self.assertEqual(exit_code, 0)
@@ -486,6 +511,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             preview_dir = temp_root / "StudioPreview"
             preview_index = preview_dir / "AustinPreviewManifestIndex.lua"
             preview_shards = preview_dir / "AustinPreviewManifestChunks"
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
 
             source_index.write_text(
                 "\n".join(
@@ -515,12 +543,18 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             original_preview_dir = module.PREVIEW_DIR
             original_preview_index = module.PREVIEW_INDEX
             original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_sample_data_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
             original_max_preview_bytes = module.MAX_PREVIEW_BYTES
             module.SOURCE_INDEX = source_index
             module.SOURCE_JSON = source_json
             module.PREVIEW_DIR = preview_dir
             module.PREVIEW_INDEX = preview_index
             module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
             module.MAX_PREVIEW_BYTES = 50_000
             try:
                 exit_code = module.main()
@@ -530,6 +564,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 module.PREVIEW_DIR = original_preview_dir
                 module.PREVIEW_INDEX = original_preview_index
                 module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_sample_data_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
                 module.MAX_PREVIEW_BYTES = original_max_preview_bytes
 
             self.assertEqual(exit_code, 0)
@@ -547,6 +584,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             preview_dir = temp_root / "StudioPreview"
             preview_index = preview_dir / "AustinPreviewManifestIndex.lua"
             preview_shards = preview_dir / "AustinPreviewManifestChunks"
+            canonical_dir = temp_root / "SampleData"
+            canonical_index = canonical_dir / "AustinCanonicalManifestIndex.lua"
+            canonical_shards = canonical_dir / "AustinCanonicalManifestChunks"
 
             source_index.write_text(
                 "\n".join(
@@ -577,12 +617,18 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
             original_preview_dir = module.PREVIEW_DIR
             original_preview_index = module.PREVIEW_INDEX
             original_preview_shards = module.PREVIEW_SHARDS
+            original_canonical_sample_data_dir = module.CANONICAL_SAMPLE_DATA_DIR
+            original_canonical_index = module.CANONICAL_INDEX
+            original_canonical_shards = module.CANONICAL_SHARDS
             original_max_preview_bytes = module.MAX_PREVIEW_BYTES
             module.SOURCE_INDEX = source_index
             module.SOURCE_JSON = source_json
             module.PREVIEW_DIR = preview_dir
             module.PREVIEW_INDEX = preview_index
             module.PREVIEW_SHARDS = preview_shards
+            module.CANONICAL_SAMPLE_DATA_DIR = canonical_dir
+            module.CANONICAL_INDEX = canonical_index
+            module.CANONICAL_SHARDS = canonical_shards
             module.MAX_PREVIEW_BYTES = 50_000
 
             original_read_text = Path.read_text
@@ -601,6 +647,9 @@ class RefreshPreviewFromSampleDataTests(unittest.TestCase):
                 module.PREVIEW_DIR = original_preview_dir
                 module.PREVIEW_INDEX = original_preview_index
                 module.PREVIEW_SHARDS = original_preview_shards
+                module.CANONICAL_SAMPLE_DATA_DIR = original_canonical_sample_data_dir
+                module.CANONICAL_INDEX = original_canonical_index
+                module.CANONICAL_SHARDS = original_canonical_shards
                 module.MAX_PREVIEW_BYTES = original_max_preview_bytes
 
             self.assertEqual(exit_code, 0)

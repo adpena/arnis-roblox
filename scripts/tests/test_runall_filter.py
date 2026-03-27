@@ -28,14 +28,14 @@ class RunAllFilterTests(unittest.TestCase):
     def test_runall_supports_exact_spec_name_filtering(self) -> None:
         self.assertIn("function RunAll.run(options)", self.runall_text)
         self.assertIn(
-            "local specNameFilter = normalizeSpecNameFilter(options and options.specNameFilter or nil)",
+            "local normalizedFilter = normalizeSpecNameFilter(options and options.specNameFilter)",
             self.runall_text,
         )
-        self.assertIn("if specNameFilter ~= nil then", self.runall_text)
+        self.assertIn("if normalizedFilter == nil or moduleScript.Name == normalizedFilter then", self.runall_text)
         self.assertIn("local function normalizeSpecNameFilter", self.runall_text)
-        self.assertIn('string.sub(specNameFilter, -4) == ".lua"', self.runall_text)
-        self.assertIn('specNameFilter = string.sub(specNameFilter, 1, -5)', self.runall_text)
-        self.assertIn("moduleScript.Name == specNameFilter", self.runall_text)
+        self.assertIn('string.sub(trimmed, -4) == ".lua"', self.runall_text)
+        self.assertIn('trimmed = string.sub(trimmed, 1, -5)', self.runall_text)
+        self.assertIn("moduleScript.Name == normalizedFilter", self.runall_text)
 
 
 if __name__ == "__main__":
