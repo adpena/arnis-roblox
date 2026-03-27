@@ -185,6 +185,18 @@ local function createNamedFolder(parent, name)
     return folder
 end
 
+local function setImportAuditAttributes(instance, chunkId, importRunId)
+    if instance == nil then
+        return
+    end
+    if type(chunkId) == "string" and chunkId ~= "" then
+        instance:SetAttribute("ArnisChunkId", chunkId)
+    end
+    if type(importRunId) == "string" and importRunId ~= "" then
+        instance:SetAttribute("ArnisImportRunId", importRunId)
+    end
+end
+
 local function countChunkArtifactNodes(chunkFolder)
     local total = 0
     for _, group in ipairs(chunkFolder:GetChildren()) do
@@ -616,6 +628,7 @@ local function makeImportChunkOptions(options, config)
     return {
         config = config,
         worldRootName = options.worldRootName,
+        importRunId = options.importRunId,
         meshCollisionPolicy = options.meshCollisionPolicy,
         frameBudgetSeconds = options.frameBudgetSeconds,
         nonBlocking = options.nonBlocking,
@@ -759,6 +772,7 @@ function ImportService.ImportChunk(chunk, options)
     local chunkFolder = if selectiveLayers
         then getOrCreateNamedFolder(worldRoot, chunk.id)
         else ensureChunkFolder(worldRoot, chunk.id)
+    setImportAuditAttributes(chunkFolder, chunk.id, options.importRunId)
     mutationStarted = true
     if checkpoint() then
         return cancelImport()
@@ -827,6 +841,7 @@ function ImportService.ImportChunk(chunk, options)
     if plan.folderSpecs.buildings then
         buildingsFolder = prepareLayerFolder(plan.folderSpecs.buildings.name, plan.folderSpecs.buildings.clearChildren)
     end
+    setImportAuditAttributes(buildingsFolder, chunk.id, options.importRunId)
     if buildingsFolder and checkpoint() then
         return cancelImport()
     end

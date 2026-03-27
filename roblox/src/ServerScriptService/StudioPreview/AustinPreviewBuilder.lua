@@ -31,6 +31,9 @@ AustinPreviewBuilder.SLOW_CHUNK_LOG_THRESHOLD_MS = 150
 AustinPreviewBuilder.TIME_TRAVEL_EPOCH_ATTR = "VertigoSyncTimeTravelEpoch"
 AustinPreviewBuilder.PREVIEW_INVALIDATION_EPOCH_ATTR = "VertigoSyncPreviewInvalidationEpoch"
 AustinPreviewBuilder.PREVIEW_STATE_EPOCH_ATTR = "VertigoSyncPreviewStateEpoch"
+AustinPreviewBuilder.BUILD_STATUS_COMPLETED = "completed"
+AustinPreviewBuilder.BUILD_STATUS_CANCELLED = "cancelled"
+AustinPreviewBuilder.BUILD_STATUS_DEFERRED = "deferred"
 
 local previewPerfState = {}
 local previewPerfLastFlushAt = 0
@@ -1598,7 +1601,7 @@ function AustinPreviewBuilder.Build(request)
                 projectFacts.full_bake.last_result = "cancelled"
             end
         end)
-        return { worldRoot }
+        return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_CANCELLED }
     end
 
     local buildTimings = {}
@@ -1616,7 +1619,7 @@ function AustinPreviewBuilder.Build(request)
                 projectFacts.full_bake.last_result = "cancelled"
             end
         end)
-        return { worldRoot }
+        return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_CANCELLED }
     end
 
     local boundedEnvelope = measureMs(buildTimings, "anchorMs", function()
@@ -1653,7 +1656,7 @@ function AustinPreviewBuilder.Build(request)
                 projectFacts.full_bake.last_result = "cancelled"
             end
         end)
-        return { worldRoot }
+        return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_CANCELLED }
     end
 
     local shouldRenderPreviewHelpers = normalizedRequest.mode == AustinPreviewRequest.MODE_PREVIEW
@@ -1679,7 +1682,7 @@ function AustinPreviewBuilder.Build(request)
 
     liveWorldRoot = getPreviewRoot()
     if not liveWorldRoot or liveWorldRoot:GetAttribute(AustinPreviewBuilder.BUILD_TOKEN_ATTR) ~= buildToken then
-        return { worldRoot }
+        return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_CANCELLED }
     end
 
     updatePreviewProjectFacts(function(projectFacts)
@@ -1707,9 +1710,10 @@ function AustinPreviewBuilder.Build(request)
         task.defer(function()
             AustinPreviewBuilder.Build(request)
         end)
+        return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_DEFERRED }
     end
 
-    return { worldRoot }
+    return { worldRoot, status = AustinPreviewBuilder.BUILD_STATUS_COMPLETED }
 end
 
 return AustinPreviewBuilder

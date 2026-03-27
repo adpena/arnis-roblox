@@ -1808,11 +1808,39 @@ local function setBuildingAuditAttributes(model, building, baseY, height)
     local wallMaterial = getMaterial(building)
     local roofMaterial = getRoofMaterial(building, wallMaterial)
     local sourceId = if type(building.id) == "string" and building.id ~= "" then building.id else model.Name
+    local chunkId = nil
+    local importRunId = nil
+    local cursor = model.Parent
+    while cursor do
+        if chunkId == nil then
+            local candidateChunkId = cursor:GetAttribute("ArnisChunkId")
+            if type(candidateChunkId) == "string" and candidateChunkId ~= "" then
+                chunkId = candidateChunkId
+            end
+        end
+        if importRunId == nil then
+            local candidateImportRunId = cursor:GetAttribute("ArnisImportRunId")
+            if type(candidateImportRunId) == "string" and candidateImportRunId ~= "" then
+                importRunId = candidateImportRunId
+            end
+        end
+        if chunkId ~= nil and importRunId ~= nil then
+            break
+        end
+        cursor = cursor.Parent
+    end
 
     model:SetAttribute("ArnisImportBuildingBaseY", baseY)
     model:SetAttribute("ArnisImportBuildingHeight", height)
     model:SetAttribute("ArnisImportBuildingTopY", baseY + height)
+    model:SetAttribute("ArnisSourceId", sourceId)
     model:SetAttribute("ArnisImportSourceId", sourceId)
+    if chunkId ~= nil then
+        model:SetAttribute("ArnisChunkId", chunkId)
+    end
+    if importRunId ~= nil then
+        model:SetAttribute("ArnisImportRunId", importRunId)
+    end
     model:SetAttribute("ArnisImportBuildingUsage", string.lower(tostring(building.usage or building.kind or "unknown")))
     model:SetAttribute("ArnisImportRoofShape", string.lower(tostring(building.roof or "flat")))
     model:SetAttribute("ArnisImportWallMaterial", wallMaterial.Name)

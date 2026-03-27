@@ -1,37 +1,76 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local TestEZ = require(ReplicatedStorage.Testing.TestEZ)
 
 local RunAll = {}
+RunAll.SUITE_ACTIVE_ATTR = "VertigoSyncRunAllActive"
 
 local function normalizeSpecNameFilter(specNameFilter)
-    if type(specNameFilter) ~= "string" or specNameFilter == "" then
+    if type(specNameFilter) ~= "string" then
         return nil
     end
-    if string.sub(specNameFilter, -4) == ".lua" then
-        specNameFilter = string.sub(specNameFilter, 1, -5)
+
+    local trimmed = string.match(specNameFilter, "^%s*(.-)%s*$")
+    if trimmed == nil or trimmed == "" then
+        return nil
     end
-    return specNameFilter
+
+    if string.sub(trimmed, -4) == ".lua" then
+        trimmed = string.sub(trimmed, 1, -5)
+    end
+
+    if trimmed == "" then
+        return nil
+    end
+
+    return trimmed
+end
+
+function RunAll.collectSpecModules(testsFolder, options)
+    local specModules = {}
+    local normalizedFilter = normalizeSpecNameFilter(options and options.specNameFilter)
+
+    for _, moduleScript in ipairs(testsFolder:GetChildren()) do
+        if moduleScript:IsA("ModuleScript") and moduleScript.Name:match("%.spec$") then
+            if normalizedFilter == nil or moduleScript.Name == normalizedFilter then
+                table.insert(specModules, moduleScript)
+            end
+        end
+    end
+
+    table.sort(specModules, function(left, right)
+        return left.Name < right.Name
+    end)
+
+    return specModules
+end
+
+function RunAll.withSuiteExecutionGuard(callback)
+    local previousValue = Workspace:GetAttribute(RunAll.SUITE_ACTIVE_ATTR)
+    Workspace:SetAttribute(RunAll.SUITE_ACTIVE_ATTR, true)
+
+    local ok, resultOrErr = xpcall(callback, debug.traceback)
+
+    Workspace:SetAttribute(RunAll.SUITE_ACTIVE_ATTR, previousValue)
+
+    if not ok then
+        error(resultOrErr, 0)
+    end
+
+    return resultOrErr
 end
 
 function RunAll.run(options)
-    local testsFolder = script.Parent
-    local allResults = {
-        passed = 0,
-        failed = 0,
-        total = 0,
-    }
-    local specNameFilter = normalizeSpecNameFilter(options and options.specNameFilter or nil)
-    if specNameFilter ~= nil then
-        Logger.info("Filtering tests to spec:", specNameFilter)
-    end
+    return RunAll.withSuiteExecutionGuard(function()
+        local testsFolder = options and options.testsFolder or script.Parent
+        local allResults = {
+            passed = 0,
+            failed = 0,
+            total = 0,
+        }
 
-    for _, moduleScript in ipairs(testsFolder:GetChildren()) do
-        if
-            moduleScript:IsA("ModuleScript")
-            and moduleScript.Name:match("%.spec$")
-            and (specNameFilter == nil or moduleScript.Name == specNameFilter)
-        then
+        for _, moduleScript in ipairs(RunAll.collectSpecModules(testsFolder, options)) do
             Logger.info("Running tests:", moduleScript.Name)
 
             local ok, testBlockOrFn = pcall(function()
@@ -70,21 +109,21 @@ function RunAll.run(options)
                 end
             end
         end
-    end
 
-    Logger.info(
-        ("TestEZ tests complete. total=%d passed=%d failed=%d"):format(
-            allResults.total,
-            allResults.passed,
-            allResults.failed
+        Logger.info(
+            ("TestEZ tests complete. total=%d passed=%d failed=%d"):format(
+                allResults.total,
+                allResults.passed,
+                allResults.failed
+            )
         )
-    )
 
-    if allResults.failed > 0 then
-        error(("Tests failed: %d"):format(allResults.failed))
-    end
+        if allResults.failed > 0 then
+            error(("Tests failed: %d"):format(allResults.failed))
+        end
 
-    return allResults
+        return allResults
+    end)
 end
 
 return RunAll

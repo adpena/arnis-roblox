@@ -33,8 +33,6 @@
     "**/.DS_Store",
     "src/ServerScriptService/StudioPreview/AustinPreviewManifestChunks/**",
     "src/ServerScriptService/StudioPreview/AustinPreviewManifestIndex.lua",
-    "src/ServerStorage/SampleData/AustinCanonicalManifestChunks/**",
-    "src/ServerStorage/SampleData/AustinCanonicalManifestIndex.lua",
     "src/ServerStorage/SampleData/AustinHDManifestChunks/**",
     "src/ServerStorage/SampleData/AustinHDManifestIndex.lua",
     "src/ServerStorage/SampleData/AustinHarnessManifestChunks/**",

@@ -9,11 +9,15 @@ return function()
     worldRoot.Name = "DayNightCycleSpecWorld"
     worldRoot.Parent = Workspace
 
+    local chunkFolder = Instance.new("Folder")
+    chunkFolder.Name = "day_night_chunk"
+    chunkFolder.Parent = worldRoot
+
     local detailFolder = Instance.new("Folder")
     detailFolder.Name = "Detail"
     detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
     CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
-    detailFolder.Parent = worldRoot
+    detailFolder.Parent = chunkFolder
 
     local glass = Instance.new("Part")
     glass.Name = "FacadeBand"
@@ -34,10 +38,12 @@ return function()
 
     local ChunkLoader = require(script.Parent.Parent.ImportService.ChunkLoader)
     ChunkLoader.Clear()
-    ChunkLoader.RegisterChunk("day_night_chunk", worldRoot, {
+    ChunkLoader.RegisterChunk("day_night_chunk", chunkFolder, {
         id = "day_night_chunk",
         originStuds = { x = 0, y = 0, z = 0 },
-    }, nil)
+    }, {
+        worldRootName = worldRoot.Name,
+    })
 
     local originalClockTime = Lighting.ClockTime
     DayNightCycle.SetTime(22)
@@ -45,12 +51,7 @@ return function()
     Assert.truthy(pointLight.Enabled, "expected street lights enabled at night")
 
     DayNightCycle.SetTime(12)
-    Assert.near(
-        glass.Transparency,
-        0.35,
-        1e-6,
-        "expected grouped glass detail to restore base transparency by day"
-    )
+    Assert.near(glass.Transparency, 0.35, 1e-6, "expected grouped glass detail to restore base transparency by day")
     Assert.falsy(pointLight.Enabled, "expected street lights disabled by day")
 
     Lighting.ClockTime = originalClockTime

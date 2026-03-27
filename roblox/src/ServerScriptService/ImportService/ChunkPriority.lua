@@ -472,10 +472,6 @@ local function compareWorkItemKeys(leftKey, rightKey)
         return leftKey.distanceBand < rightKey.distanceBand
     end
 
-    if leftIsWholeChunk ~= rightIsWholeChunk then
-        return not leftIsWholeChunk
-    end
-
     if bothWholeChunks and leftKey.distSq ~= rightKey.distSq then
         return leftKey.distSq < rightKey.distSq
     end
@@ -487,6 +483,9 @@ local function compareWorkItemKeys(leftKey, rightKey)
         local rightForwardBucket = if rightForward >= 0 then 0 else 1
         if leftForwardBucket ~= rightForwardBucket then
             return leftForwardBucket < rightForwardBucket
+        end
+        if leftForward ~= rightForward then
+            return leftForward > rightForward
         end
     end
 
@@ -502,6 +501,14 @@ local function compareWorkItemKeys(leftKey, rightKey)
         return leftKey.observedCost < rightKey.observedCost
     end
 
+    if normalizedForward then
+        local leftLateral = math.abs(leftKey.dx * normalizedForward.Z - leftKey.dz * normalizedForward.X)
+        local rightLateral = math.abs(rightKey.dx * normalizedForward.Z - rightKey.dz * normalizedForward.X)
+        if leftLateral ~= rightLateral then
+            return leftLateral < rightLateral
+        end
+    end
+
     if leftKey.streamingCost ~= rightKey.streamingCost then
         return leftKey.streamingCost < rightKey.streamingCost
     end
@@ -510,26 +517,12 @@ local function compareWorkItemKeys(leftKey, rightKey)
         return leftKey.featureCount < rightKey.featureCount
     end
 
-    if leftKey.chunkId == rightKey.chunkId and leftKey.sourceOrder ~= rightKey.sourceOrder then
-        return leftKey.sourceOrder < rightKey.sourceOrder
-    end
-
-    if normalizedForward then
-        local leftForward = leftKey.dx * normalizedForward.X + leftKey.dz * normalizedForward.Z
-        local rightForward = rightKey.dx * normalizedForward.X + rightKey.dz * normalizedForward.Z
-        if leftForward ~= rightForward then
-            return leftForward > rightForward
-        end
-
-        local leftLateral = math.abs(leftKey.dx * normalizedForward.Z - leftKey.dz * normalizedForward.X)
-        local rightLateral = math.abs(rightKey.dx * normalizedForward.Z - rightKey.dz * normalizedForward.X)
-        if leftLateral ~= rightLateral then
-            return leftLateral < rightLateral
-        end
-    end
-
     if leftKey.chunkId ~= rightKey.chunkId then
         return leftKey.chunkId < rightKey.chunkId
+    end
+
+    if leftKey.sourceOrder ~= rightKey.sourceOrder then
+        return leftKey.sourceOrder < rightKey.sourceOrder
     end
 
     return leftKey.subplanId < rightKey.subplanId

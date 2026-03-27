@@ -103,7 +103,7 @@ return function()
         "expected canonical registration chunk metadata to exclude materialized-only startup subplans"
     )
 
-    local subplanState = ImportService.GetSubplanState("0_0")
+    local subplanState = ImportService.GetSubplanState("0_0", worldRootName)
     Assert.truthy(
         subplanState.completedWorkItems["0_0:terrain"],
         "expected canonical terrain subplan to be marked complete"
@@ -118,5 +118,5 @@ return function()
         worldRoot:Destroy()
     end
     ChunkLoader.Clear()
-    ImportService.ResetSubplanState()
+    ImportService.ResetSubplanState(nil, worldRootName)
 end

@@ -64,7 +64,7 @@ return function()
     }
 
     local worldRootName = "GeneratedWorld_SubplanImportRetry"
-    ImportService.ResetSubplanState(chunk.id)
+    ImportService.ResetSubplanState(chunk.id, worldRootName)
     ImportService.ImportChunkSubplan(chunk, chunk.subplans[1], {
         worldRootName = worldRootName,
         config = config,
@@ -92,7 +92,7 @@ return function()
         "expected synthetic failure to surface"
     )
 
-    local failedState = ImportService.GetSubplanState(chunk.id)
+    local failedState = ImportService.GetSubplanState(chunk.id, worldRootName)
     Assert.truthy(failedState.failedWorkItems["0_0:roads"], "expected failed roads work item to be tracked")
 
     local failureActivity = findActivity(Profiler.generateReport(), "ImportChunkSubplan")
@@ -117,7 +117,7 @@ return function()
     Assert.equal(cancelledChunkFolder, nil, "expected cancelled roads subplan to return nil")
     Assert.equal(cancelledArtifactCount, nil, "expected cancelled roads subplan to return nil")
 
-    local cancelledState = ImportService.GetSubplanState(chunk.id)
+    local cancelledState = ImportService.GetSubplanState(chunk.id, worldRootName)
     Assert.truthy(
         cancelledState.failedWorkItems["0_0:roads"],
         "expected cancelled import to preserve prior failed work item state"
@@ -155,13 +155,13 @@ return function()
         config = config,
     })
 
-    local retriedState = ImportService.GetSubplanState(chunk.id)
+    local retriedState = ImportService.GetSubplanState(chunk.id, worldRootName)
     Assert.falsy(retriedState.failedWorkItems["0_0:roads"], "expected retry success to clear failed work item")
     Assert.truthy(retriedState.importedLayers.roads, "expected retry success to mark roads imported")
     Assert.truthy(chunkFolder:FindFirstChild("Roads"), "expected roads folder after successful retry")
     Assert.truthy(chunkFolder:FindFirstChild("Landuse"), "expected sibling landuse folder to remain after roads retry")
 
     worldRoot:Destroy()
-    ImportService.ResetSubplanState(chunk.id)
+    ImportService.ResetSubplanState(chunk.id, worldRootName)
     Profiler.clear()
 end
